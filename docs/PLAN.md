@@ -1,0 +1,551 @@
+# qqbot-course-schedule 项目计划
+
+> 版本：v0.1（待评审）
+> 来源：`astrbot_plugin_CourseSchedule` 全量功能抽象
+> 基座：Polarix 框架思路 + QQ 官方机器人 API v2 + Go
+> 评审重点：第 3 节功能规格是否遗漏、第 6 节里程碑是否符合预期、第 10 节待决策项
+
+---
+
+## 1. 项目定位
+
+### 1.1 一句话
+
+把 AstrBot 课表插件的能力完整迁移到一个**独立运行、只依赖 QQ 官方接口**的 Go 机器人上，
+不做 AstrBot / OneBot / NapCat 兼容层。
+
+### 1.2 目标
+
+1. 功能对等：插件现有的课程表存储、查询、图片、榜单、休假调休、ICS 导入、Web 管理台全部保留。
+2. 官方接口：事件走 Webhook，消息/媒体/按钮走 QQ 开放平台 v2 HTTP API。
+3. 独立部署：单二进制 + SQLite + 静态资源，一条 systemd 服务即可运行。
+4. 可演进：保留服务层接口，后续可接 LLM 工具、HTTP API、更多平台。
+
+### 1.3 非目标
+
+- 频道 / Guild / 子频道相关能力（用户群体在 QQ 群与单聊）。
+- OneBot v11 协议、群文件上传/下载、`get_group_member_list`。
+- AstrBot Star 插件形态、AstrBot WebUI Pages 桥接。
+- 多机器人实例、分布式部署（单实例设计，必要时再扩展）。
+
+---
+
+## 2. 功能总览
+
+从原插件抽象出 10 个功能域：
+
+| 编号 | 功能域 | 优先级 | 现状（插件） |
+| --- | --- | --- | --- |
+| F1 | 会话作用域与存储 | P0 | SQLite 三表 + revision 乐观锁 |
+| F2 | 成员与课程事件管理 | P0 | create/update/delete + ICS 重建 |
+| F3 | 课表查询与当日卡片 | P0 | `/今日课表` `/明日课表` `/课表` + Pillow 渲染 |
+| F4 | 上课时长榜 | P1 | `/上课时长榜` + union 去重口径 |
+| F5 | 休假 / 调休 | P1 | `/休假` `/调休` `/销假` `/假期` |
+| F6 | ICS 导入 / 导出 | P0 | 文件消息自动导入 + `schedule<QQ号>.ics` 约定 |
+| F7 | Web 管理台 | P1 | 5 个 Web API + 单页应用 |
+| F8 | 对话交互与权限 | P0 | 指令 + @ 提及 + 群成员角色 |
+| F9 | AI 查询/编辑工具 | P2 | `find` / `edit` LLM 工具 |
+| F10 | 定时推送与主动消息 | P2 | 插件无，来自 Polarix 定时任务 |
+
+---
+
+## 3. 功能规格（全量抽象）
+
+规格记述方式：
+- **行为**：用户可见的输入输出。
+- **规则**：边界、顺序、去重、上限。
+- **权限**：谁能对谁做什么。
+- **验收**：可写成测试或手工验证的条目。
+
+### F1 会话作用域与存储
+
+#### F1.1 作用域
+
+| 项 | 规格 |
+| --- | --- |
+| 群聊作用域 | `group:<group_openid>` |
+| 单聊作用域 | `private:<user_openid>` |
+| 成员主键 | 群聊 `member_openid`；单聊 `user_openid`（缺失时退 `union_openid`） |
+| 说明 | 官方接口不提供 QQ 号，成员身份只能用 OpenID；展示名来自事件 `author.username`，首次互动落库 |
+
+#### F1.2 数据表（照搬原插件 schema，语义等价）
+
+```
+metadata(key, value)                                    -- schema_version
+schedule_members(scope_id, user_id, data_json,
+                 updated_at, revision)                  -- PK(scope_id,user_id)
+course_events(scope_id, user_id, event_index, uid, summary,
+              location, description, dtstart, dtend,
+              dtstart_tzid, dtend_tzid, rrule, dtstamp,
+              event_json)                               -- PK(scope,user,index)
+schedule_day_overrides(scope_id, user_id, day, kind,
+                       source_day, created_by, created_at) -- PK(scope,user,day)
+```
+
+- `schedule_members.data_json`：成员元数据（name、source、event_count、时间戳等）。
+- `course_events.event_json`：规范化事件对象（含 `RAW_ICAL`），按 `event_index` 排序。
+- `schedule_day_overrides.user_id='*'` 表示"全体成员标记"；读取时**成员标记覆盖全体标记**。
+
+#### F1.3 写入一致性与并发
+
+| 规则 | 说明 |
+| --- | --- |
+| revision | 每次成功写入 +1 |
+| `expected_revision=None` | upsert（新增或覆盖） |
+| `expected_revision=0` | 仅允许新增，已存在则冲突 |
+| `expected_revision=N` | CAS，版本不符抛冲突 |
+| 冲突表现 | 聊天侧返回"课表已更新，请刷新后重试"；WebUI 返回 HTTP 409 |
+| 事务 | `BEGIN IMMEDIATE`；事件表整体删除重插；进程内单写锁（Go: `sync.Mutex` + `SetMaxOpenConns(1)`） |
+| 存储位置 | 默认 `data/course_schedule.sqlite3`（WAL、`busy_timeout=30s`、`synchronous=NORMAL`） |
+
+#### F1.4 全局上限（沿用插件常量）
+
+| 常量 | 值 | 用途 |
+| --- | --- | --- |
+| `MAX_ICS_BYTES` | 2 MiB | 单次导入 ICS 大小 |
+| `MAX_EVENTS_PER_FILE` | 120 | 单成员事件数；WebUI 单次保存节数 |
+| `MAX_MEMBERS_PER_CREATE` | 200 | 批量建课表上限 |
+| `MAX_DAY_OVERRIDES_PER_SCOPE` | 1000 | 单会话标记总数 |
+| `MAX_DAY_OVERRIDE_RANGE_DAYS` | 180 | 单次 `/休假` 可标记天数 |
+| `MAX_DAY_OVERRIDE_SPAN_DAYS` | 366 | 调休来源日与目标日最大间隔 |
+| 文本长度 | course/location/name ≤200，description ≤2000，rrule ≤500 | 创建/修改/WebUI 统一校验 |
+
+#### F1.5 时间规则
+
+| 项 | 规格 |
+| --- | --- |
+| 本地时区 | `Asia/Shanghai`，所有解析/展示/日界都用它（Go 用 `time/tzdata` 内嵌） |
+| 事件内部格式 | `DTSTART/DTEND` 归一化为 `YYYYMMDDTHHMMSS`，另存 `*_TZID` |
+| 时间戳字段 | `updated_at` 等记账字段用 UTC ISO（`_now_iso`） |
+| 日期解析入口 | **只有两个**：`day_off`（按天，支持相对词/范围）与 `time_range`（区间表达式），不得新增第三个 |
+
+### F2 成员与课程事件管理
+
+#### F2.1 事件对象
+
+- 内部规范形：UPPERCASE iCalendar 键（`SUMMARY/DTSTART/DTEND/RRULE/LOCATION/DESCRIPTION/UID/DTSTAMP/*_TZID`）**加** `RAW_ICAL`。
+- `RAW_ICAL` 保存原始 VEVENT 文本，用于保留 RDATE/EXDATE 及未建模属性；**任何重建都不得丢弃**。
+- `course_id` 是 `events` 数组中 1 起的位置序号，不是稳定 ID；每次写入按 `DTSTART` 重排，位置会变。
+
+#### F2.2 新增（create）
+
+| 项 | 规格 |
+| --- | --- |
+| 必填 | `course`、`start_time`、`end_time` |
+| 校验 | 时间可解析；`end > start`；`rrule` 可解析且含 `FREQ`；文本长度上限 |
+| 目标 | 默认发送者；管理员可指定 QQ 号/昵称/@；目标不存在时自动创建成员记录 |
+| UID | 传入则复用，否则 `uuid4@astrbot-course-schedule`（Go 版换成 `@qqbot-course-schedule`） |
+| 结果文案 | `已新增 <名>(<openid>) 的课程"<课名>"，当前共有 N 个课程事件。` |
+
+#### F2.3 修改（update）
+
+| 项 | 规格 |
+| --- | --- |
+| 定位 | `course_id`（来自查询结果）；仅改昵称可省略 |
+| 留空字段 | 保持原值 |
+| 清空字段 | `clear_fields` 支持 `location` / `description` / `rrule`（含中文名） |
+| UID | 保持原 UID；`RAW_ICAL` 保留 |
+| 结果文案 | `已更新 <名>(<openid>) 的课程 course_id=N，当前共有 N 个课程事件。` |
+
+#### F2.4 删除（delete）
+
+- 按 `course_id` 删除；越界返回 `course_id 必须是有效的课程编号，当前有效范围为 1..N。`
+- 结果文案：`已删除 <名>(<openid>) 的课程"<课名>"，剩余 N 个课程事件。`
+
+#### F2.5 昵称
+
+- 首次创建成员时按 `member_name` → 当前 @ 提及昵称 → 发送者昵称 → OpenID 取值。
+- 修改昵称不改变成员身份；`member_name` ≤200 字符。
+- Go 版新增：每次收到消息若 `author.username` 与库中不一致，可后台刷新（保留人工改名优先级，需在实现时定开关）。
+
+#### F2.6 每次写入后的派生数据
+
+写入事件列表后同步更新：`ics`（完整 ICS 文本）、`schedule`（事件行文本）、`event_count`、
+`source="ics"`、`updated_at`、`schedule_updated_at`、`last_modified_by`、`revision`。
+
+### F3 课表查询与当日卡片
+
+#### F3.1 指令
+
+| 指令 | 行为 |
+| --- | --- |
+| `/今日课表` | 当前会话今日卡片 |
+| `/明日课表` | 当前会话明日卡片 |
+| `/课表 [日期]` | 指定日期卡片；不带参数等于今天 |
+
+日期写法：`2026-09-17`、`2026/9/17`、`2026年9月17日`、`9.17`、`9月17日`、`前天/昨天/今天/明天/后天/大后天`，带虚词（"明天的课"）也可。
+规则：不带年份取离今天最近的一次；一次只能查一天；日期范围或多个日期报错并提示单日写法。
+
+#### F3.2 成员状态机（`daily_member_rows`）
+
+| 状态 key | 条件 | 卡片状态文案 | 倒计时 |
+| --- | --- | --- | --- |
+| `holiday` | 当天标记休假 | 今日休假 / 当天休假 | 当天课程全部取消 |
+| `active` | 今天且在课中 | 正在上课 | 距下课 + 进度条 |
+| `upcoming` | 今天未来最近一节 / 未来日期第一节 | 下一节即将上课 | 距上课 |
+| `finished` | 有课且目标日 ≤ 今天 | 今日课程已结束 / 当天课程已结束 | 已上完 |
+| `none` | 当天无课 | 今日无课 / 当天无课 | 休息日 |
+
+排序：`sort_priority`（active 0 → upcoming 1 → finished 2 → none/holiday 3）→ `sort_time` → 昵称 → OpenID。
+
+#### F3.3 收纳条带（`split_folded_rows`）
+
+- `finished` / `none` / `holiday` 的成员收进卡片下方"没有课的群友"网格，用小头像+昵称排列。
+- 判断依据是"那天还有没有剩余课程"，与查看哪一天无关；查过去日期时所有人都会收纳。
+- 条带标题：当天 `今天已经没有课的群友`，其它日期 `MM-DD 没有课的群友`。
+- 条带人数计入副标题总数；图例只列卡片实际出现的状态。
+
+#### F3.4 页面文案
+
+| 元素 | 规则 |
+| --- | --- |
+| 标题 | `课程表 · YYYY-MM-DD 周X` |
+| 副标题（非今天） | `昨天/明天/N 天后 · 共 N 位成员 · M 人有课` |
+| 页脚 | 过去日期显示"历史课表"，其余按 `schedule_footer` 规则 |
+| 调休提示 | 时间行前缀 `调休 · 按 MM-DD 的课表`；休假显示 `休假 · 无课程安排` |
+| 无数据 | `当前会话还没有可展示的今日课程表。` 等 |
+
+#### F3.5 渲染规范（原插件 `render.py`）
+
+- 字体：内置 Noto Sans CJK SC（Regular/Bold）绘制中英数符号；CJK 缺字形时按**字素簇**回退 Noto Color Emoji。
+- 富文本测量必须走 `_rich_width/_fit_rich_text/_wrap_rich_text` 等宽高统一函数；emoji 昵称不得破坏布局。
+- 绘制时合并连续同字体字素为一次 `draw.text` 调用（性能约束，见原测试）。
+- 输出 JPEG（quality 80、4:2:0、optimize），目录 `data/images`，超过 24h 自动清理。
+- 头像（原实现）：`q1.qlogo.cn`、3s 超时、并发 8：**官方接口无 QQ 号与头像字段，Go 版需替代方案（见第 4 节与第 10 节）。**
+
+### F4 上课时长榜
+
+| 项 | 规格 |
+| --- | --- |
+| 指令 | `/上课时长榜`，别名 `/上课排行` `/本周上课排行` `/学习时长榜` |
+| 默认范围 | 本周；支持 今日/明日/昨天/本周/上周/本月/上月/下周/下月/`YYYY-MM-DD..YYYY-MM-DD` |
+| 范围上限 | 366 天 |
+| 指标 | 默认 `union`：重叠时段只计一次（`merge_intervals`） |
+| 裁剪 | 展开后的 occurrence 先裁剪到统计窗口，跨天课程只计窗口内部分 |
+| 全天事件 | 只带日期的事件不计入 |
+| 展示 | `minutes` 全窗口（榜单稳定），`elapsed_minutes` 已上部分；节数、门数（去重课程名）、相对榜首进度 |
+| 名次 | 无课时长不排名；同分钟数并列 |
+| 展示数 | 默认前 20 名 |
+| 页脚 | `重复课程按 RRULE 展开 · 时间以本地时区为准 · 仅展示前 20 名` |
+| 空结果 | `当前会话还没有可统计的课程。` |
+| 设计依据 | `astrbot_plugin_CourseSchedule/docs/rank-board-design.md`（历史 bug 清单，移植前必读） |
+
+### F5 休假 / 调休
+
+#### F5.1 指令与日期
+
+| 指令 | 别名 | 语法 |
+| --- | --- | --- |
+| `/休假` | `/放假` | `/休假 <日期|范围> [成员]` |
+| `/调休` | `/补课` `/调课` | `/调休 <被覆盖日期> <来源日期> [成员]` |
+| `/销假` | `/取消休假` `/取消调休` | `/销假 <日期|范围> [成员]` |
+| `/假期` | `/假期列表` `/调休列表` `/休假列表` | 列出本会话标记（最多 50 条） |
+
+日期支持相对词、`10月1日至10月8日`、`10月1日 .. 10月8日`、`9.17` 等；范围两侧可带空格与填充词
+（`10月11日上10月8日的课` 也能解析），解析入口见 `split_day_override_args`。
+
+#### F5.2 语义
+
+| 项 | 规格 |
+| --- | --- |
+| 休假 | 目标成员当天的全部 occurrence 取消 |
+| 调休 | 目标日期的课程替换为来源日期的课程；来源日期本身不受影响；来源日期即使是休假也照样提供课程 |
+| 覆盖 | 同一天重复标记直接覆盖，提示"原有标记已被覆盖" |
+| 优先级 | 成员个人标记优先于 `*` 全体标记 |
+| 过去日期 | 允许标记，提示"包含已过去的日期，只影响查询与统计" |
+| 重新导入 ICS | **不清除**标记 |
+| 生效范围 | 卡片、`/课表`、时长榜、find 查询、SQL 查询全部一致 |
+
+#### F5.3 权限
+
+| 场景 | 规则 |
+| --- | --- |
+| 群聊管理员 | 不指定成员 = 全体（`*`）；可 QQ 号/完整昵称/@ 指定个人或 `全体` |
+| 群聊普通成员 | 只能标记自己；标记他人报权限错误 |
+| 单聊 | 只能标记自己 |
+| `/销假` | 普通成员不能取消 `*` 全体标记，提示请管理员操作 |
+| 上限 | 超过 `MAX_DAY_OVERRIDES_PER_SCOPE` 拒绝 |
+
+### F6 ICS 导入 / 导出
+
+#### F6.1 导入入口（三条）
+
+1. `/导入课表` + `.ics` 附件；
+2. 直接发送 `.ics` 文件消息（自动导入，带单次标记防止重复）；
+3. 原插件的 `schedule<QQ号>.ics` 群文件约定（**官方接口不提供 QQ 号，Go 版重设计**：仅支持导入自己，或管理员在 WebUI 指定成员）。
+
+#### F6.2 解析与序列化
+
+| 项 | 规格 |
+| --- | --- |
+| 解析 | icalendar 解析 VEVENT → 大写键字典 + `RAW_ICAL`；保留 RDATE/EXDATE 等未建模属性 |
+| 大小 | 单文件 ≤ 2 MiB；> 120 事件拒绝 |
+| 序列化 | 复用原文件的非 VEVENT 部分（`base_ics`），只重建 VEVENT |
+| 时区 | TZID 保留；无时区按本地时区处理 |
+| 失败文案 | 返回字符串给用户，不抛异常 |
+
+#### F6.3 导出（Go 版新增，可选）
+
+- `/导出课表 [成员]`：把某成员当前事件序列化为 `.ics`，通过富媒体接口以文件消息发送。
+- 需要富媒体分片上传或公开 URL 上传（见第 4 节）。
+
+### F7 Web 管理台
+
+#### F7.1 接口
+
+| 方法 | 路径 | 入参 | 出参 |
+| --- | --- | --- | --- |
+| GET | `/api/scopes` | — | `{scopes:[{scope_id,kind,target_id,label,member_count,event_count,members:[{user_id,name,event_count,revision}]}]}` |
+| GET | `/api/schedule` | `scope_id`,`user_id` | `{scope_id,user_id,name,revision,events:[{id,uid,course,location,description,start,end,rrule}]}` |
+| POST | `/api/schedule/save` | `{scope_id,user_id,revision,name?,events[]}` | `{scope_id,user_id,name,revision,event_count}`；revision 不符返回 409 |
+| GET | `/api/members` | `scope_id` | `{scope_id,members,member_count}`；平台不支持时返回提示 |
+| POST | `/api/schedule/create` | `{scope_id,members:[{user_id,name}]}` | `{scope_id,created,created_count}` |
+
+#### F7.2 页面功能
+
+- 左侧作用域列表（群/私聊）+ 搜索；右侧成员列表与课程编辑器。
+- 课程卡片增删改：课程名、开始/结束时间、地点、备注、重复规则。
+- 成员昵称编辑；"有未保存修改"提示与离开确认。
+- 保存时携带 revision，409 时提示"课表已更新，请刷新后再保存"。
+- "批量建课表"：选群 → 拉取未建档成员 → 勾选 → 创建空白课表（官方群成员接口内邀，需降级方案）。
+
+#### F7.3 鉴权
+
+- 独立管理页走 Basic Auth（沿用 Polarix：`admin_password`，未设置仅本机可访问）。
+- 管理台页面与图片静态资源使用 `embed.FS` 内嵌。
+
+### F8 对话交互与权限
+
+#### F8.1 指令汇总
+
+| 指令 | 参数 | 说明 |
+| --- | --- | --- |
+| `/今日课表` `/明日课表` | — | 卡片 |
+| `/课表` | `[日期]` | 卡片 |
+| `/上课时长榜` | `[范围]` | 榜单卡片 |
+| `/休假` `/调休` `/销假` `/假期` | 见 F5 | 标记管理 |
+| `/导入课表` | 附件 | ICS 导入 |
+| `/导出课表`（新增） | `[成员]` | ICS 导出 |
+| `/启用推送` `/关闭推送`（新增） | — | 主动推送开关 |
+
+#### F8.2 输入解析
+
+- 群聊：`GROUP_AT_MESSAGE_CREATE`（@机器人，content 已去除 @ 前缀）；开启全量模式后为 `GROUP_MESSAGE_CREATE`。
+- 单聊：`C2C_MESSAGE_CREATE`。
+- 指令前缀 + 首个空格后的完整尾巴作为参数（原插件的 `_full_command_tail` 问题在 Go 版不存在，需自定义多参数解析）。
+- @ 目标：解析事件 `mentions`（排除机器人与发送者），支持"完整昵称精确匹配 + 当前消息 @ 唯一"两条解析路径。
+
+#### F8.3 权限矩阵
+
+| 操作 | 群管理员 | 群成员 | 单聊 |
+| --- | --- | --- | --- |
+| 查询/看卡片 | ✅ | ✅ | ✅ |
+| 编辑自己课表 | ✅ | ✅ | ✅ |
+| 编辑他人课表 | ✅ | ❌ | ❌ |
+| 休假/调休自己 | ✅ | ✅ | ✅ |
+| 休假/调休他人/全体 | ✅ | ❌ | ❌ |
+| 销假全体标记 | ✅ | ❌ | ❌ |
+| Web 管理台 | 独立 Basic Auth，与群角色无关 | | |
+
+管理员判定：官方事件 `author.member_role ∈ {admin, owner}`（`owner` 视为管理员）。
+
+#### F8.4 文案约定
+
+- 所有用户可见文案为中文；失败以字符串返回，不抛异常到聊天层。
+- 未知成员、越界 course_id、非法日期、超限等均有独立文案（沿用插件措辞）。
+
+### F9 AI 查询 / 编辑工具（P2）
+
+原插件向 AstrBot Agent 暴露两个工具，Go 版先抽象为**服务层 + HTTP API**，是否接入 LLM 由第 10 节决策。
+
+#### F9.1 `find`
+
+| 参数 | 规则 |
+| --- | --- |
+| `person` | QQ 号/完整昵称精确匹配；空 = 发送者；`all/全部/所有` = 全部成员 |
+| `time_range` | 空/`all/全部` = 全部事件定义；否则走 `time_range` 解析；另支持完整日期时间范围 |
+| `field`/`value` | 支持 `course/location/description/status/date/weekday/start_time/end_time/duration/rrule/member/user_id/source_file`；文本字段包含匹配，其余精确匹配；也接受 `course:数学` 紧凑写法 |
+| 输出 | 文本行，最多 200 行；每条含 `course_id`、时间、状态、时长、地点/备注/重复 |
+| `status` | `current/future/past`，支持中文别名 |
+
+#### F9.2 `edit`
+
+参数：`action`（create/update/delete 及中文）、`person`、`course_id`、`course`、`start_time`、`end_time`、
+`location`、`description`、`rrule`、`member_name`、`clear_fields`；行为与 F2 完全一致。
+
+### F10 定时推送与主动消息（P2，新增）
+
+| 项 | 规格 |
+| --- | --- |
+| 用途 | 每天定时向已订阅的群/用户推送当日课表卡片，可选课前提醒 |
+| 调度 | Polarix `lib/schedule`：cron 5 段 + 固定间隔，任务可 Pause/Resume/Cancel |
+| 订阅 | `/启用推送` `/关闭推送` 记录意愿；平台侧还需群管理员在资料页开启（`GROUP_MSG_RECEIVE` / `C2C_MSG_RECEIVE` 事件） |
+| 频控 | 群 20 qpm、单群 1000 条/天、机器人按认证等级 30~60 qpm；失败必须有降级与提示 |
+| 目标 | 按 scope 存储（群/单聊），推送时读取最新课表渲染 |
+| 错误 | `40034100`/`40034105` 记录并暂停该目标，避免持续失败 |
+
+---
+
+## 4. 官方 API 能力映射
+
+| 功能 | 事件 / 接口 | 要点 |
+| --- | --- | --- |
+| 指令接收 | `GROUP_AT_MESSAGE_CREATE` / `GROUP_MESSAGE_CREATE` / `C2C_MESSAGE_CREATE` | 需订阅 Intent `GROUP_AND_C2C_EVENT (1<<25)`；相同 `msg_id` 可能重复推送，按 `id` 去重 |
+| 被动回复 | `POST /v2/groups/{openid}/messages`、`/v2/users/{openid}/messages` | 5 分钟内、同一 `msg_id` 最多 5 条、`msg_seq` 去重 |
+| 主动推送 | 同上，不带 `msg_id` | 需群管理员开启接收；受频控；错误码 `40034100`/`40034105` |
+| 卡片图片 | 富媒体上传 + `msg_type=7`，或 Markdown 内嵌公网图片 | 本地图片两条路：公开 URL 上传 / 分片上传（`upload_prepare` → PUT → `upload_part_finish` → `files` 合并） |
+| ICS 文件 | 事件 `attachments[]`（`content_type=file`）下载；导出走 `file_type=4` 上传 | 附件 URL 为临时地址，需实测直连下载 |
+| 群信息 | `GET /v2/groups/{openid}/info` | 群名/人数，用于管理台展示 |
+| 群成员列表 | `GET /v2/groups/{openid}/members` | **内邀能力**，公开机器人不可用；降级见 F7.2 |
+| 按钮交互 | `INTERACTION_CREATE` + `PUT /interactions/{id}` | 需 Intent `1<<26`；必须应答且只能一次 |
+| 主动接收开关 | `GROUP_MSG_RECEIVE` / `C2C_MSG_RECEIVE` | 用于更新本地订阅状态 |
+| 事件订阅变更 | `SUBSCRIBE_MESSAGE_STATUS` | 订阅消息模板授权，P2 可选 |
+| 验签 | Webhook Ed25519 + Op=13 回包 | 端口仅 80/443/8080/8443 |
+| 域名 | `api.bot.qq.com`（2026-08-10 起统一） | 旧 `api.sgroup.qq.com` 仅作兼容 |
+
+**身份差异（相对原插件）**
+
+| 原插件（OneBot） | Go 版（官方 API） |
+| --- | --- |
+| QQ 号 | OpenID（群 `member_openid` / 单聊 `user_openid` / `union_openid`） |
+| 群成员列表 `get_group_member_list` | 内邀接口，不可用 |
+| 头像 `q1.qlogo.cn` | 无头像字段 |
+| 群文件上传/下载 | 无；只有富媒体临时文件 |
+| `event.is_admin()` | `member_role` |
+
+---
+
+## 5. 技术方案
+
+### 5.1 架构分层
+
+```
+cmd/bot            启动装配
+internal/qqapi     官方 API 客户端（Token、消息、媒体、互动）
+internal/webhook   验签、Payload、事件分发、幂等
+internal/bot       上下文、消息构造、按钮、指令注册、权限、定时任务
+internal/config    配置加载/保存
+internal/store     SQLite（课表三表 + KV）
+internal/schedule  领域：ics / occurrences / dayoff / timerange / rank / service
+internal/render    卡片渲染
+internal/server    Web 管理台 API + 静态资源 + 图床
+assets/ fonts、模板
+web/    管理台前端
+```
+
+### 5.2 技术选型
+
+| 项 | 选择 | 理由 |
+| --- | --- | --- |
+| HTTP | `gin` | Polarix 同栈，webhook + 管理台复用 |
+| 存储 | `modernc.org/sqlite` | 纯 Go 无 CGO，Polarix 同栈 |
+| RRULE | `github.com/teambition/rrule-go` | 支持 `between` 有界展开 |
+| ICS | 自研极简 VEVENT 解析（保留 RAW_ICAL）+ `arran4/golang-ical` 参考 | 插件语义依赖原始文本 |
+| 渲染 | `fogleman/gg` + `x/image/font/opentype`（备选 `chromedp`） | 轻量 vs 高还原度，见第 10 节 |
+| 字素簇 | `rivo/uniseg` | emoji 昵称排版 |
+| 时区 | 标准库 `time/tzdata` | 免宿主 tzdata |
+| 静态资源 | 标准库 `embed` | 单二进制部署 |
+
+### 5.3 渲染方案对比（待决策）
+
+| 方案 | 优点 | 缺点 |
+| --- | --- | --- |
+| `gg` + `opentype` | 轻量、无外部依赖、启动快 | 彩色 emoji 需自己处理（CBDT/COLR 或降级） |
+| `chromedp` | 版式还原度最高、emoji 直接可用、改样式快 | 需装 Chromium（约 300MB）、内存占用高 |
+
+---
+
+## 6. 里程碑
+
+### M0 骨架打通（0.5~1 天）
+
+- Go module、配置、gin、`/webhook` 验签 + Op=13、Token 获取、发送一条文本消息。
+- 验收：QQ 群里 @机器人 得到文本回复；平台回调验证通过。
+
+### M1 存储 + ICS + 文字课表（3~5 天）
+
+- store（三表 + revision）、ICS 解析/序列化、occurrence 展开、日期解析、文字版 `/课表` `/今日课表`。
+- 验收：导入样例 ICS → `/课表` 返回正确文本；Python 侧 `test_ics/test_ics_import/test_schedule_day` 对应用例全部通过（Go 版）。
+
+### M2 卡片图片（3~5 天）
+
+- 渲染 + 媒体发送（图床或分片上传）、收纳条带、状态色、页脚。
+- 验收：群内收到卡片图片；状态/排序/收纳与 Python 版一致。
+
+### M3 休假调休 + 时长榜（3~4 天）
+
+- F5 全部指令与权限；F4 榜单。
+- 验收：`/休假` `/调休` `/销假` `/假期` 行为与文案对齐；榜单口径用例（重叠去重、跨天裁剪、全天忽略）通过。
+
+### M4 Web 管理台（3~5 天）
+
+- 5 个 API + 单页应用改造 + Basic Auth + 409 冲突。
+- 验收：浏览器可增删改课程并持久化；并发保存出现 409 提示。
+
+### M5 定时推送 + 按钮（2~4 天）
+
+- cron 任务、订阅开关、主动推送失败处理；日期切换按钮 + `INTERACTION_CREATE` 应答。
+- 验收：到点推送成功；按钮点击切换日期并应答 loading。
+
+### M6 收尾（2~3 天）
+
+- `/导出课表`、F9 服务层 + HTTP、日志与错误码、systemd 部署文档、README 完善。
+
+**总计约 3~4 周**（单人）。
+
+---
+
+## 7. 测试策略
+
+| 层 | 方式 |
+| --- | --- |
+| 纯逻辑 | Go 表格驱动测试，逐条翻译 Python 测试（`test_daily_schedule/test_day_override/test_rank/test_ics/test_ics_import/test_schedule_day`） |
+| 存储 | 临时目录 SQLite；覆盖 revision 冲突、全体/成员标记合并、级联删除 |
+| 渲染 | 尺寸/像素抽样断言 + 人工预览；保留"批量绘制性能"守卫用例 |
+| HTTP | `httptest` 假官方服务器：Token 刷新、消息发送、媒体上传、409/重试 |
+| Webhook | 构造带签名的 payload，覆盖验签失败、Op=13、重复 `msg_id`、未知事件 |
+| 端到端 | 官方沙箱群手工验收（M0/M2/M5） |
+
+**验收总则**：Python 版行为即规格；出现分歧时以"Python 测试 + README 语义"为准，并在 PR 说明。
+
+---
+
+## 8. 风险与开放问题
+
+| # | 风险 | 影响 | 应对 |
+| --- | --- | --- | --- |
+| R1 | 群成员列表内邀 | 批量建课表不可用 | 降级为"已互动/已导入成员"；提示管理员手动导入 |
+| R2 | 无头像/QQ 号 | 卡片视觉与原版不一致、数据不可迁移 | 首字字母头像；数据迁移靠重新导入 ICS |
+| R3 | 主动推送受限 | 定时推送可能失败 | 订阅开关 + 频控退避 + 错误码区分提示 |
+| R4 | 本地图片发送 | 需要公网 URL 或分片上传 | webhook 服务器兼作图床（配置 `public_base_url`）；或实现分片上传 |
+| R5 | 附件 URL 可下载性未实测 | ICS 导入可能不通 | M0 阶段实测；必要时提示用户改用 WebUI |
+| R6 | 彩色 emoji 渲染 | `gg` 路线降级 | 决策渲染方案；必要时 chromedp |
+| R7 | 域名/接口变更 | 调用失败 | 域名配置化；跟进 `docs/changelog.md` |
+| R8 | 限频与重试 | 消息丢失 | 客户端统一重试 + 429/5xx 退避 |
+| R9 | 许可证 | 开源合规 | 业务源自自有 AGPL 项目可改写；Polarix MIT 需保留声明；字体 OFL |
+| R10 | 构建环境无外网 | 依赖拉取失败 | `GOPROXY=https://goproxy.cn,direct`（已验证可用） |
+
+---
+
+## 9. 交付物
+
+1. 可执行二进制 + systemd unit + 示例 `config.json`。
+2. 数据库 schema 与迁移说明。
+3. 管理台前端（内嵌）。
+4. 本计划、开发手册、部署文档。
+5. Go 测试套件（对齐 Python 用例）。
+
+---
+
+## 10. 待评审决策项
+
+| # | 问题 | 建议 |
+| --- | --- | --- |
+| D1 | 渲染方案选 `gg` 还是 `chromedp`？ | 先 `gg`（轻量），emoji 接受降级；若视觉要求高再换 |
+| D2 | 图片发送走"公网 URL 图床"还是"分片上传"？ | 图床（服务器已有公网域名），实现成本低 |
+| D3 | Web 管理台路径与鉴权 | `/admin` 下 Basic Auth，复用 Polarix 机制 |
+| D4 | 是否保留 F9 AI 工具？ | 先做服务层 + HTTP，不接 LLM |
+| D5 | 是否需要历史数据迁移/绑定流程？ | 不做自动迁移，提供"重新导入 ICS"路径 |
+| D6 | 定时推送的默认策略 | 默认关闭，群内 `/启用推送` 后按 cron 推送 |
+| D7 | 许可证 | 建议 MIT（业务代码为自有版权） |
+| D8 | 是否需要频道（Guild）支持 | 不需要，明确排除 |

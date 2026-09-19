@@ -1,0 +1,11 @@
+{
+  "port": 8080,
+  "appid": "10000",
+  "secret": "请填写机器人 AppSecret",
+  "domain": "https://api.bot.qq.com",
+  "public_base_url": "https://bot.example.com",
+  "database": "data/course_schedule.sqlite3",
+  "data_dir": "data",
+  "admin_password": "",
+  "log_level": "info"
+}
