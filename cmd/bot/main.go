@@ -68,6 +68,7 @@ func run() error {
 	client := qqapi.New(cfg)
 	env := &bot.Env{
 		Client:        client,
+		Store:         storeHandle,
 		Service:       schedule.NewService(storeHandle),
 		Renderer:      renderer,
 		DataDir:       cfg.DataDir,
@@ -97,6 +98,7 @@ func run() error {
 	}
 
 	go refreshBotAvatar(client, env)
+	go syncCommandPanels(env, handler)
 
 	serveErr := make(chan error, 1)
 	go func() {
@@ -122,6 +124,17 @@ func run() error {
 		return fmt.Errorf("关闭 HTTP 服务失败: %w", err)
 	}
 	return nil
+}
+
+func syncCommandPanels(env *bot.Env, handler *bot.Handler) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	created, updated, err := bot.SyncPanels(ctx, env, handler)
+	if err != nil {
+		slog.Warn("同步指令面板失败", "err", err)
+		return
+	}
+	slog.Info("指令面板同步完成", "created", created, "updated", updated)
 }
 
 func refreshBotAvatar(client *qqapi.Client, env *bot.Env) {

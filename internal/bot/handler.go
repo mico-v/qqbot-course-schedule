@@ -14,6 +14,9 @@ type Command struct {
 	Prefix      string
 	Description string
 	Handle      func(ctx context.Context, msg *Message) error
+	// Ready marks a command that is implemented and safe to advertise in the
+	// platform command panel.
+	Ready bool
 }
 
 // Handler routes inbound messages to registered commands.
@@ -57,6 +60,14 @@ func (h *Handler) Commands() []*Command {
 	return result
 }
 
+// Command looks up one command by prefix.
+func (h *Handler) Command(prefix string) (*Command, bool) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	cmd, ok := h.commands[prefix]
+	return cmd, ok
+}
+
 // mentionPrefix strips leading "<@...>" mention markers some payloads keep.
 var mentionPrefix = regexp.MustCompile(`^(?:<@!?[0-9A-Za-z_=-]+>\s*)+`)
 
@@ -86,6 +97,11 @@ func (h *Handler) Dispatch(ctx context.Context, msg *Message) {
 
 	h.mu.RLock()
 	cmd, ok := h.commands[prefix]
+	// The platform command panel may drop the leading slash, so "课表" and
+	// "/课表" must both hit the same command.
+	if !ok && !strings.HasPrefix(prefix, "/") {
+		cmd, ok = h.commands["/"+prefix]
+	}
 	h.mu.RUnlock()
 	if !ok {
 		slog.Debug("未命中指令", "prefix", prefix, "origin", msg.Origin)

@@ -311,23 +311,22 @@ msg.Keyboard(kb)
 
 ### 6.8 指令面板与自定义菜单
 
-指令集合是单一事实来源：面板/菜单从已注册指令生成，不手写列表。
+指令集合是单一事实来源：面板从已注册指令生成，不手写列表。实现见 `internal/bot/panel.go`、`internal/qqapi/panel.go`。
 
 ```go
-// 启动后异步同步，失败只记日志
-if err := panel.Sync(ctx, client, handler.Commands()); err != nil {
-    slog.Warn("同步指令面板失败", "err", err)
-}
+// 启动后异步同步；失败只记日志。管理员可用 /同步面板 手动触发。
+created, updated, err := bot.SyncPanels(ctx, env, handler)
 ```
 
 | 规则 | 说明 |
 | --- | --- |
-| 面板数量 | 只创建 2 个：`scope=c2c`、`scope=group`，`target_type=all`；ID 存 KV，更新用 PUT |
-| 面板元素 | 每个指令一个 `type=command` item；`name` 必须是可直接发送的指令文本（≤14 字符）；`desc` ≤30 字符 |
-| 注册范围 | 只注册已实现的指令；占位/未完成指令不入面板（可用 `/help` 查看全部） |
-| 自定义菜单 | 仅单聊全局；一级 ≤10 项、二级 ≤5 项；`send_message` 点击后填入输入框 |
-| 限频 | 面板 10 QPM、菜单 5 QPM；同步只在启动或指令变化时执行，禁止轮询 |
-| 失败隔离 | 面板/菜单错误不影响启动与消息链路，仅记日志 |
+| 面板数量 | 只创建 2 个：`scope=c2c`、`scope=group`，`target_type=all`；ID + items hash 存 KV `global/panel/<scope>` |
+| 面板元素 | 来自 `panelOrder` 中标记 `Ready` 的指令；`name` ≤ 14 显示列、`desc` ≤ 30 显示列（CJK 算 2） |
+| 认领与重建 | 用 `remark=qqbot-course-schedule` 认领旧面板；KV 丢失时不重复创建；平台侧被删除时重建 |
+| 变更检测 | items 的 SHA-256 前 8 字节存 KV，未变化不调 PUT |
+| 平台行为 | 条目名会去掉前导 `/`，因此 `Dispatch` 同时接受 `/课表` 与 `课表` |
+| 自定义菜单 | `PUT /v2/menu` 仅单聊全局；一级 ≤10 项、二级 ≤5 项；待实现 |
+| 失败隔离 | 面板错误不影响启动与消息链路，仅记日志 |
 
 ---
 

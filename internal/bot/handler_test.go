@@ -23,6 +23,22 @@ func TestDispatchStripsMentionAndRoutes(t *testing.T) {
 	}
 }
 
+func TestDispatchAcceptsCommandWithoutSlash(t *testing.T) {
+	handler := NewHandler()
+	called := false
+	handler.Register(&Command{
+		Prefix: "/课表",
+		Handle: func(_ context.Context, _ *Message) error {
+			called = true
+			return nil
+		},
+	})
+	handler.Dispatch(context.Background(), &Message{Content: "课表 明天"})
+	if !called {
+		t.Fatal("slash-less command did not reach the handler")
+	}
+}
+
 func TestDispatchIgnoresUnknownCommand(t *testing.T) {
 	handler := NewHandler()
 	called := false

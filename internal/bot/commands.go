@@ -41,6 +41,7 @@ func NewDefaultHandler(env *Env) *Handler {
 		Prefix:      "/help",
 		Description: "查看指令列表",
 		Handle:      h.handleHelp,
+		Ready:       true,
 	})
 	h.Register(&Command{
 		Prefix:      "/帮助",
@@ -51,6 +52,7 @@ func NewDefaultHandler(env *Env) *Handler {
 	h.Register(&Command{
 		Prefix:      "/今日课表",
 		Description: "生成当前会话今日课程表图片",
+		Ready:       true,
 		Handle: func(ctx context.Context, msg *Message) error {
 			return handleDayCard(ctx, h.env, msg, nil)
 		},
@@ -58,6 +60,7 @@ func NewDefaultHandler(env *Env) *Handler {
 	h.Register(&Command{
 		Prefix:      "/明日课表",
 		Description: "生成当前会话明日课程表图片",
+		Ready:       true,
 		Handle: func(ctx context.Context, msg *Message) error {
 			tomorrow := h.env.now().AddDate(0, 0, 1)
 			return handleDayCard(ctx, h.env, msg, &tomorrow)
@@ -66,12 +69,19 @@ func NewDefaultHandler(env *Env) *Handler {
 	h.Register(&Command{
 		Prefix:      "/课表",
 		Description: "查询指定日期课程表",
+		Ready:       true,
 		Handle:      h.handleScheduleCommand,
 	})
 	h.Register(&Command{
 		Prefix:      "/导入课表",
 		Description: "导入 .ics 课程表文件",
+		Ready:       true,
 		Handle:      h.handleImportCommand,
+	})
+	h.Register(&Command{
+		Prefix:      "/同步面板",
+		Description: "同步机器人指令面板（管理员）",
+		Handle:      h.handleSyncPanelCommand,
 	})
 
 	for _, item := range planned {
@@ -112,6 +122,20 @@ func (h *Handler) handleScheduleCommand(ctx context.Context, msg *Message) error
 		return handleDayCard(ctx, h.env, msg, nil)
 	}
 	return handleDayCard(ctx, h.env, msg, day)
+}
+
+func (h *Handler) handleSyncPanelCommand(ctx context.Context, msg *Message) error {
+	if h.env == nil {
+		return msg.Reply(ctx, "课表功能未初始化。")
+	}
+	if !msg.IsAdmin() {
+		return msg.Reply(ctx, "只有群管理员可以同步指令面板。")
+	}
+	created, updated, err := SyncPanels(ctx, h.env, h)
+	if err != nil {
+		return msg.Reply(ctx, "同步指令面板失败："+err.Error())
+	}
+	return msg.Reply(ctx, fmt.Sprintf("指令面板已同步：新建 %d 个，更新 %d 个。", created, updated))
 }
 
 func (h *Handler) handleImportCommand(ctx context.Context, msg *Message) error {

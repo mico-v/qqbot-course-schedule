@@ -45,7 +45,8 @@ curl -s localhost:8080/healthz       # {"ok":true,"version":"dev"}
 - [x] M1 数据与图片：SQLite / ICS / RRULE / 图片渲染（`/课表` 全图片）
 - [ ] M2 休假调休 / 时长榜（图片）
 - [ ] M3 Web 管理台
-- [ ] M4 指令面板 / 按钮 / 定时推送
+- [x] M4 指令面板（c2c + group 已上线，`/同步面板` 可手动同步）
+- [ ] M4 按钮交互 / 定时推送
 
 ## 许可证
 
