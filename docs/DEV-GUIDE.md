@@ -521,3 +521,4 @@ docs(plan): 补充主动推送错误码处理
 | 中文显示为方框 | 字体缺失 | 确认 `assets/fonts` 被 `embed` 且路径正确 |
 | 时间差 8 小时 | 用了 UTC | 统一 `schedule.LocalTZ`；`_now_iso` 仅记账 |
 | `go build` 卡住 | proxy.golang.org 不可达 | `go env -w GOPROXY=https://goproxy.cn,direct` |
+| 导入课表提示解析失败 | 文件不是 iCalendar / 编码异常 | 查看 `journalctl -u qqbot-course-schedule`，失败原件留存于 `data/failed_ics/`；支持 UTF-8/GBK/UTF-16 |

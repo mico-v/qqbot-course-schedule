@@ -217,3 +217,31 @@ func TestScheduleCommandParsesDate(t *testing.T) {
 		t.Fatalf("reply = %v", reply)
 	}
 }
+
+func TestImportFailureSavesFileAndReplies(t *testing.T) {
+	fake := newFakeQQ()
+	apiServer := httptest.NewServer(fake.handler())
+	t.Cleanup(apiServer.Close)
+
+	garbageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("PK\x03\x04not-an-ics"))
+	}))
+	t.Cleanup(garbageServer.Close)
+
+	env, message := newTestEnv(t, fake, apiServer.URL)
+	if err := env.ImportICS(context.Background(), message, Attachment{
+		URL:      garbageServer.URL + "/schedule.ics",
+		Filename: "schedule.ics",
+	}); err != nil {
+		t.Fatalf("ImportICS: %v", err)
+	}
+	reply := waitMessage(t, fake)
+	content, _ := reply["content"].(string)
+	if !strings.Contains(content, "不是有效的 iCalendar") || !strings.Contains(content, "压缩包") {
+		t.Fatalf("reply = %q", content)
+	}
+	files, err := filepath.Glob(filepath.Join(env.DataDir, "failed_ics", "*"))
+	if err != nil || len(files) != 1 {
+		t.Fatalf("failed_ics files = %v, err = %v", files, err)
+	}
+}

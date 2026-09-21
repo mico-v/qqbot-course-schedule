@@ -265,8 +265,15 @@ func FormatICSSchedule(events []Event) string {
 
 // ParseICSEvents parses every VEVENT of an iCalendar text.
 func ParseICSEvents(content string) ([]Event, error) {
+	raw := content
+	content = DecodeICSBytes([]byte(raw))
 	if !strings.Contains(strings.ToUpper(content), "BEGIN:VCALENDAR") {
-		return nil, fmt.Errorf("不是有效的 iCalendar：缺少 VCALENDAR")
+		// Sniff the original bytes for binary formats, then the decoded text.
+		hint := sniffICSContent(raw)
+		if strings.HasPrefix(hint, "（文件开头") && content != raw {
+			hint = sniffICSContent(content)
+		}
+		return nil, fmt.Errorf("不是有效的 iCalendar：缺少 VCALENDAR%s", hint)
 	}
 	components := extractComponents(content)
 	var events []Event
