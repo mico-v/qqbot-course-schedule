@@ -27,6 +27,8 @@ curl -s localhost:8080/healthz       # {"ok":true,"version":"dev"}
 已实现指令：`/今日课表` `/明日课表` `/课表 [日期]` `/导入课表`（发送 `.ics` 文件自动导入）`/ping` `/help`。
 卡片预览（开发用）：`go run ./cmd/cardpreview -o /tmp/card.jpg`。
 
+![课表卡片预览](docs/assets/card-preview.jpg)
+
 接入 QQ 平台的完整步骤见 [docs/CONNECT.md](docs/CONNECT.md)。
 
 一键编译上传部署（systemd + Caddy）：
