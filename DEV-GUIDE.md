@@ -1,7 +1,7 @@
 # qqbot-course-schedule 开发手册
 
 > 适用范围：本项目全部 Go 代码、Web 管理台、部署与联调。
-> 对应计划：[PLAN.md](PLAN.md)。手册中的模块/接口为 M0 冻结前的规划，实现时如有调整需同步本文档。
+> 对应计划：[PLAN.md](PLAN.md)。手册描述的是 **M0–M5 已实现**的代码结构与接口；改动代码时请同步本文档。
 
 ---
 
@@ -56,63 +56,72 @@ go run ./cmd/bot
 
 ```
 qqbot-course-schedule/
-├── cmd/bot/main.go              # 装配：config → store → qqapi → bot → schedule → server
+├── README.md / PLAN.md / DEV-GUIDE.md / CONNECT.md / COVERAGE-AstrBot.md
+├── cmd/
+│   ├── bot/main.go              # 装配：config → store → qqapi → bot → server → scheduler
+│   └── cardpreview/main.go      # 样例卡片预览（-rank 预览榜单）
 ├── internal/
-│   ├── config/                  # config.json 加载/保存、热更新
-│   ├── qqapi/                   # 官方 API 客户端
-│   │   ├── client.go            #   Token、请求头、重试
-│   │   ├── message.go           #   群/单聊发送、撤回
-│   │   ├── media.go             #   富媒体：URL 上传 / 分片上传
-│   │   ├── interaction.go       #   互动应答 PUT /interactions/{id}
-│   │   ├── panel.go             #   指令面板 /v2/panels、自定义菜单 /v2/menu
+│   ├── config/                  # config.json 加载、默认值、校验
+│   ├── qqapi/                   # 官方 API 客户端（自研，不用 botgo）
+│   │   ├── client.go            #   Token 缓存刷新、请求、重试、flexInt
+│   │   ├── message.go           #   文本/markdown（msg_id / event_id 两种被动回复）
+│   │   ├── media.go             #   富媒体 URL 上传（图片/文件，群/单聊）
+│   │   ├── keyboard.go          #   内联键盘 DTO（内邀能力）
+│   │   ├── menu.go              #   自定义菜单 /v2/menu
+│   │   ├── panel.go             #   指令面板 /v2/panels
 │   │   ├── user.go              #   机器人详情 /users/@me（头像）
-│   │   ├── group.go             #   群信息、群成员（可用时）、禁言/黑名单
-│   │   └── model.go             #   请求/响应 DTO
+│   │   ├── errors.go            #   错误码分类与中文提示
+│   │   └── model.go             #   APIError / SendResult
 │   ├── webhook/
 │   │   ├── verify.go            #   Ed25519 验签、Op=13 回包
-│   │   ├── payload.go           #   事件 Payload DTO（自研，不用 botgo DTO）
-│   │   ├── dispatch.go          #   事件分发 + msg_id 幂等
-│   │   └── router.go            #   gin 路由注册
+│   │   ├── payload.go           #   事件 Payload DTO
+│   │   └── dispatch.go          #   事件分发、msg_id 幂等、互动回调
 │   ├── bot/
-│   │   ├── context/             #   MessageContext / CallbackContext / ScheduleContext
-│   │   ├── message/             #   Text/Markdown/Media 构造、msg_seq 计数
-│   │   ├── command/             #   指令注册、解析、权限、子指令
-│   │   ├── buttons/             #   键盘构造与回调注册
-│   │   └── scheduler/           #   cron/interval 定时任务
-│   ├── store/
-│   │   ├── sqlite.go            #   连接、WAL、PRAGMA、迁移
-│   │   ├── member.go            #   schedule_members + 派生字段
-│   │   ├── event.go             #   course_events
-│   │   ├── override.go          #   schedule_day_overrides
-│   │   └── kv.go                #   插件 KV（订阅、幂等、运行时状态）
-│   ├── schedule/                # 课表领域（无框架依赖，纯逻辑）
-│   │   ├── ics.go               #   VEVENT 解析/序列化、RAW_ICAL
-│   │   ├── occurrence.go        #   RRULE/RDATE/EXDATE 展开 + 覆盖
+│   │   ├── handler.go           #   指令路由、别名、msg.Args、观察成员记录
+│   │   ├── commands.go          #   全部指令处理器（课表/榜单/休假/推送/面板）
+│   │   ├── message.go           #   Message、被动/主动回复、event_id 回复、5 次计数
+│   │   ├── env.go               #   Env 依赖与卡片发送（媒体 / markdown+键盘）
+│   │   ├── import.go            #   .ics 附件下载与导入、失败留存
+│   │   ├── export.go            #   .ics 导出与公开文件
+│   │   ├── panel.go             #   指令面板同步
+│   │   ├── menu.go              #   自定义菜单同步
+│   │   ├── push.go              #   推送订阅、每日推送、卡片键盘
+│   │   └── scheduler.go         #   robfig/cron 调度
+│   ├── store/store.go           # SQLite：三表 + KV + revision 乐观锁
+│   ├── schedule/                # 课表领域（纯逻辑，无框架依赖）
+│   │   ├── types.go             #   Event/Member/DayOverride/Storage 接口
+│   │   ├── ics.go               #   VEVENT 解析/序列化、RAW_ICAL、嵌套组件
+│   │   ├── encoding.go          #   UTF-8/UTF-16/GBK 解码与内容嗅探
+│   │   ├── occurrence.go        #   RRULE/RDATE/EXDATE 展开 + 休假调休
 │   │   ├── dayoff.go            #   中文日期/范围解析
 │   │   ├── timerange.go         #   区间表达式解析
 │   │   ├── daycard.go           #   每日状态行、收纳拆分、区间合并
-│   │   ├── rank.go              #   时长榜
-│   │   └── service.go           #   增删改查服务层（find/edit/day-override）
+│   │   ├── rank.go              #   时长榜口径
+│   │   ├── override.go          #   休假/调休目标解析与写入
+│   │   ├── web.go               #   管理台服务层（汇总/读写/建表/观察成员）
+│   │   └── service.go           #   ICS 导入与日卡数据
 │   ├── render/
-│   │   ├── layout.go            #   纯布局计算（可测试）
-│   │   ├── draw.go              #   绘制
-│   │   ├── cards.go             #   课表卡片
-│   │   ├── rank.go              #   榜单卡片
-│   │   ├── avatar.go            #   机器人头像（/users/@me 缓存）+ 成员首字/emoji 底色
-│   │   ├── font.go              #   字体加载、字素簇、emoji 回退
+│   │   ├── font.go              #   内嵌字体、字素簇、单色 emoji 回退、富文本测量
+│   │   ├── card.go              #   日卡/榜单共用卡片（含图例、键盘无关）
+│   │   ├── avatar.go            #   机器人头像缓存 + 成员首字底色
 │   │   └── output.go            #   JPEG 输出、TTL 清理
 │   └── server/
-│       ├── api.go               #   管理台 API（scopes/schedule/members/create）
-│       ├── auth.go              #   Basic Auth + 本机限制
-│       ├── static.go            #   embed 前端与图片
-│       └── images.go            #   公开图床（若采用 URL 上传方案）
-├── web/                         # 管理台前端（改造自插件 Pages）
-│   ├── index.html
-│   ├── app.js
-│   └── style.css
-├── assets/fonts/                # Noto Sans CJK SC / Noto Color Emoji + LICENSE
-├── docs/                        # 本项目文档 + 官方文档快照
-├── testdata/                    # ICS 样例、payload 样例、golden 图片
+│       ├── admin.go             #   /admin 页面 + /api/*（Basic Auth）
+│       ├── images.go            #   公开卡片图床 /images/:name
+│       └── files.go             #   公开导出文件 /files/:name
+├── web/                         # 管理台前端（改造自插件 Pages，embed）
+│   ├── index.html / app.js / style.css
+│   └── embed.go
+├── assets/
+│   ├── embed.go                 # go:embed 字体
+│   ├── fonts/                   # Noto Sans CJK SC / Noto Emoji + LICENSE
+│   └── preview/                 # 卡片预览图（README 引用）
+├── deploy/
+│   ├── deploy.sh                # 一键编译上传部署
+│   ├── qqbot-course-schedule.service
+│   ├── qqbot.caddy              # 公网白名单 + ZeroTier 管理入口模板
+│   └── README.md
+├── docs/                        # 仅官方文档快照（autogen/dev-prepare/...）
 ├── config.example.json
 └── go.mod                       # module github.com/mico-v/qqbot-course-schedule
 ```

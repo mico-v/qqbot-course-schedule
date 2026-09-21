@@ -1,9 +1,29 @@
 # qqbot-course-schedule 项目计划
 
-> 版本：v0.1（待评审）
+> 版本：v1.0（M0–M5 已实现）
 > 来源：`astrbot_plugin_CourseSchedule` 全量功能抽象
 > 基座：Polarix 框架思路 + QQ 官方机器人 API v2 + Go
-> 评审重点：第 3 节功能规格是否遗漏、第 6 节里程碑是否符合预期、第 10 节待决策项
+> 配套文档：[DEV-GUIDE.md](DEV-GUIDE.md)（开发手册）、[CONNECT.md](CONNECT.md)（接入清单）
+
+---
+
+## 0. 实现进度（2026-09-21）
+
+| 里程碑 | 状态 | 交付 |
+| --- | --- | --- |
+| M0 骨架 | ✅ 已上线 | webhook 验签 + Op=13、Token、文本收发、`deploy/deploy.sh` |
+| M1 数据与图片 | ✅ 已上线 | SQLite 三表 + KV、ICS/RRULE/RDATE/EXDATE、中文日期解析、gg 图片渲染、`/images` 图床、`/导入课表` |
+| M2 休假调休 + 榜单 | ✅ 已上线 | `/休假` `/调休` `/销假` `/假期`、`/上课时长榜`（union 口径） |
+| M3 Web 管理台 | ✅ 已上线 | `/admin` + 5 个 API + Basic Auth + revision 409 |
+| M4 面板/菜单/推送/按钮 | ✅ 已上线 | 指令面板（13 项）、自定义菜单（5 项）、定时推送（默认 07:30）、按钮框架（内邀默认关闭） |
+| M5 收尾 | ✅ 已上线 | `/导出课表`、错误码分类、文档与测试补齐 |
+
+线上形态：`/opt/qqbot-course-schedule` + systemd（开机自启）+ Caddy（公网只放行
+`/webhook` `/healthz` `/images/*` `/files/*`，管理台走 ZeroTier 内网入口）。
+
+**已知平台限制与降级**：自定义按钮为内邀能力（`buttons=false`）；群成员列表为内邀
+（管理台批量添加只列"与机器人互动过且无课表"的成员）；主动推送需群管理员在资料页开启
+（失败自动暂停订阅）；彩色 emoji 不做（单色回退）。
 
 ---
 
@@ -483,7 +503,7 @@ web/    管理台前端
 
 - Go module、配置、gin、`/webhook` 验签 + Op=13、Token 获取、发送一条文本消息。
 - 已交付：`/ping`、`/help`、M1–M5 占位指令、事件幂等、互动事件应答、单元测试（config/verify/dispatch/bot）、`deploy/deploy.sh` 一键部署脚本（已实测）。
-- 验收：QQ 群里 @机器人 得到文本回复；平台回调验证通过（需真实 AppID/域名，见 `docs/CONNECT.md`）。
+- 验收：QQ 群里 @机器人 得到文本回复；平台回调验证通过（需真实 AppID/域名，见 `CONNECT.md`）。
 
 ### M1 数据与图片（已完成，待真机验收）
 
@@ -566,13 +586,13 @@ web/    管理台前端
 
 ---
 
-## 9. 交付物
+## 9. 交付物（已交付）
 
-1. 可执行二进制 + systemd unit + 示例 `config.json`。
-2. 数据库 schema 与迁移说明。
-3. 管理台前端（内嵌）。
-4. 本计划、开发手册、部署文档。
-5. Go 测试套件（对齐 Python 用例）。
+1. 可执行二进制 + systemd unit + 示例 `config.json` + `deploy/deploy.sh`。
+2. 数据库 schema（`internal/store/store.go`，`metadata.schema_version=2`）。
+3. 管理台前端（`web/`，内嵌二进制）。
+4. 本计划、[DEV-GUIDE.md](DEV-GUIDE.md)、[CONNECT.md](CONNECT.md)、`deploy/README.md`。
+5. Go 测试套件（`go test ./...` 覆盖领域逻辑、存储、渲染、指令、面板、推送、管理台、验签）。
 
 ---
 

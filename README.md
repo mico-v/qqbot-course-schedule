@@ -5,54 +5,61 @@
 功能抽象自 [astrbot_plugin_CourseSchedule](https://github.com/mico-v/astrbot_plugin_CourseSchedule)，
 框架思路参考 [Polarix](https://github.com/YearnstudioYangyi/Polarix)，不依赖 AstrBot / OneBot / NapCat。
 
-## 文档
+## 项目文档
 
 | 文档 | 内容 |
 | --- | --- |
-| [docs/PLAN.md](docs/PLAN.md) | 项目计划：功能抽象、范围、里程碑、验收标准、风险 |
-| [docs/DEV-GUIDE.md](docs/DEV-GUIDE.md) | 开发手册：环境、目录、配置、编码规范、测试、部署 |
-| [docs/CONNECT.md](docs/CONNECT.md) | 接入清单：平台配置、服务器配置、验证步骤、常见失败 |
-| [docs/COVERAGE-AstrBot.md](docs/COVERAGE-AstrBot.md) | QQ 官方 API v2 × AstrBot 适配度研究（既有） |
-| [docs/INDEX.md](docs/INDEX.md) | QQ 官方文档快照索引（既有） |
-| [docs/autogen/](docs/autogen/) | QQ 官方 API / 事件文档快照（既有） |
+| [PLAN.md](PLAN.md) | 项目计划：功能抽象、里程碑与进度、验收标准、风险、决策记录 |
+| [DEV-GUIDE.md](DEV-GUIDE.md) | 开发手册：环境、目录结构、配置、编码规范、测试、部署、FAQ |
+| [CONNECT.md](CONNECT.md) | 接入清单：平台配置、服务器配置、验证步骤、主动推送与按钮说明 |
+| [COVERAGE-AstrBot.md](COVERAGE-AstrBot.md) | QQ 官方 API v2 × AstrBot 适配度研究 |
+
+`docs/` 只存放抓取的 **QQ 官方文档快照**（[索引](docs/INDEX.md)），不混入本项目文档。
 
 ## 快速开始
 
 ```bash
 cp config.example.json config.json   # 填写 appid / secret
-go run ./cmd/bot                    # 监听 :8080，回调路径 /webhook
-curl -s localhost:8080/healthz       # {"ok":true,"version":"dev"}
+go run ./cmd/bot                     # 默认监听 127.0.0.1:18080，回调路径 /webhook
+curl -s localhost:18080/healthz      # {"ok":true,"version":"dev"}
 ```
 
-已实现指令：`/今日课表` `/明日课表` `/课表 [日期]` `/导入课表`（发送 `.ics` 文件自动导入）
-`/上课时长榜`（别名 `/上课排行` `/本周上课排行` `/学习时长榜`）、`/休假` `/调休` `/销假` `/假期`、
-`/导出课表 [成员]`、`/启用推送` `/关闭推送` `/推送测试`、`/ping` `/help`。
 卡片预览（开发用）：`go run ./cmd/cardpreview -o /tmp/card.jpg`（`-rank` 预览榜单）。
 
-管理台：启动后访问 `/admin`（未设置 `admin_password` 时仅允许服务器本机访问；设置后使用 HTTP Basic Auth，用户名 `admin`）。
+![课表卡片预览](assets/preview/card-preview.jpg)
 
-![课表卡片预览](docs/assets/card-preview.jpg)
+![上课时长榜预览](assets/preview/rank-preview.jpg)
 
-![上课时长榜预览](docs/assets/rank-preview.jpg)
+## 已实现功能
 
-接入 QQ 平台的完整步骤见 [docs/CONNECT.md](docs/CONNECT.md)。
+| 类别 | 内容 |
+| --- | --- |
+| 课表 | `/今日课表` `/明日课表` `/课表 [日期]`（全部图片输出，状态/倒计时/收纳条带） |
+| ICS | `/导入课表`（附件自动导入，支持 RRULE/RDATE/EXDATE、GBK/UTF-16、嵌套 VALARM）、`/导出课表 [成员]` |
+| 榜单 | `/上课时长榜`（别名 `/上课排行` `/本周上课排行` `/学习时长榜`；union 去重、窗口裁剪） |
+| 休假调休 | `/休假` `/调休` `/销假` `/假期`（别名齐全，管理员默认全体，普通成员限自己，支持 @） |
+| 推送 | `/启用推送` `/关闭推送` `/推送测试`；`push_cron` 默认每天 07:30，无权限自动暂停 |
+| 平台交互 | 指令面板（c2c + group）、自定义菜单、卡片按钮框架（`buttons`，内邀能力默认关闭） |
+| Web 管理台 | `/admin`（Basic Auth）按会话/成员增删改课程、批量建空课表、revision 409 冲突提示 |
 
-一键编译上传部署（systemd + Caddy）：
+## 部署
 
 ```bash
-./deploy/deploy.sh                  # 测试 → 构建 → 上传 → 重启 → 健康检查
+./deploy/deploy.sh                  # gofmt → go test → 构建 → 上传 → 重启 → 健康检查
+./deploy/deploy.sh --caddy          # 同时更新 Caddy 反代（需 CADDY_DOMAIN）
 ```
 
-## 状态
+接入 QQ 平台的完整步骤见 [CONNECT.md](CONNECT.md)。
+
+## 进度
 
 - [x] 需求调研与官方文档快照
-- [x] 项目计划与开发手册
-- [x] M0 骨架：webhook 验签 + Op=13 + Token + 文本收发 + `/ping` `/help` + 一键部署脚本
-- [x] M1 数据与图片：SQLite / ICS / RRULE / 图片渲染（`/课表` 全图片）
-- [x] M2 休假调休 / 时长榜（图片，含别名与 @ 提及）
-- [x] M3 Web 管理台（`/admin`，Basic Auth）
-- [x] M4 指令面板（c2c + group 已上线，`/同步面板` 可手动同步）
-- [x] M4 按钮交互 / 定时推送 / 自定义菜单
+- [x] M0 骨架：webhook 验签 + Op=13 + Token + 文本收发 + 一键部署
+- [x] M1 数据与图片：SQLite / ICS / RRULE / 图片渲染
+- [x] M2 休假调休 + 上课时长榜
+- [x] M3 Web 管理台
+- [x] M4 指令面板 / 自定义菜单 / 定时推送 / 按钮框架
+- [x] M5 收尾：导出、错误码、文档与测试
 
 ## 许可证
 
