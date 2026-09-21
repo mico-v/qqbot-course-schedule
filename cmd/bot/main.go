@@ -90,6 +90,7 @@ func run() error {
 	})
 	router.POST("/webhook", verify, dispatcher.Handle)
 	server.RegisterImages(router, env.ImagesDir)
+	server.RegisterAdmin(router, env.Service, cfg.AdminPassword)
 
 	server := &http.Server{
 		Addr:              cfg.ListenAddr(),

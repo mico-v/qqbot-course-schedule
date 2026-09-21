@@ -427,6 +427,45 @@ func (s *Store) PutMember(scopeID, userID string, member *schedule.Member, expec
 	return nil
 }
 
+// ListScopeSummaries returns every scope with its member rows.
+func (s *Store) ListScopeSummaries() ([]schedule.ScopeSummary, error) {
+	rows, err := s.db.Query(
+		`SELECT scope_id, user_id, data_json, revision FROM schedule_members ORDER BY scope_id, user_id`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("读取会话列表失败: %w", err)
+	}
+	defer rows.Close()
+
+	var summaries []schedule.ScopeSummary
+	currentScope := ""
+	for rows.Next() {
+		var scopeID, userID, dataJSON string
+		var revision int64
+		if err := rows.Scan(&scopeID, &userID, &dataJSON, &revision); err != nil {
+			return nil, fmt.Errorf("读取会话行失败: %w", err)
+		}
+		if currentScope != scopeID {
+			summaries = append(summaries, schedule.ScopeSummary{ScopeID: scopeID})
+			currentScope = scopeID
+		}
+		var meta memberMeta
+		_ = json.Unmarshal([]byte(dataJSON), &meta)
+		name := meta.Name
+		if name == "" {
+			name = userID
+		}
+		last := &summaries[len(summaries)-1]
+		last.Members = append(last.Members, schedule.ScopeMemberSummary{
+			UserID:     userID,
+			Name:       name,
+			EventCount: meta.EventCount,
+			Revision:   revision,
+		})
+	}
+	return summaries, rows.Err()
+}
+
 // ListDayOverrides returns every marker in a scope.
 func (s *Store) ListDayOverrides(scopeID string) ([]schedule.DayOverrideRow, error) {
 	rows, err := s.db.Query(

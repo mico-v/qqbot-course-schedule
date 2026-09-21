@@ -28,6 +28,8 @@ curl -s localhost:8080/healthz       # {"ok":true,"version":"dev"}
 `/上课时长榜`（别名 `/上课排行` `/本周上课排行` `/学习时长榜`）、`/休假` `/调休` `/销假` `/假期`、`/ping` `/help`。
 卡片预览（开发用）：`go run ./cmd/cardpreview -o /tmp/card.jpg`（`-rank` 预览榜单）。
 
+管理台：启动后访问 `/admin`（未设置 `admin_password` 时仅允许服务器本机访问；设置后使用 HTTP Basic Auth，用户名 `admin`）。
+
 ![课表卡片预览](docs/assets/card-preview.jpg)
 
 ![上课时长榜预览](docs/assets/rank-preview.jpg)
@@ -47,7 +49,7 @@ curl -s localhost:8080/healthz       # {"ok":true,"version":"dev"}
 - [x] M0 骨架：webhook 验签 + Op=13 + Token + 文本收发 + `/ping` `/help` + 一键部署脚本
 - [x] M1 数据与图片：SQLite / ICS / RRULE / 图片渲染（`/课表` 全图片）
 - [x] M2 休假调休 / 时长榜（图片，含别名与 @ 提及）
-- [ ] M3 Web 管理台
+- [x] M3 Web 管理台（`/admin`，Basic Auth）
 - [x] M4 指令面板（c2c + group 已上线，`/同步面板` 可手动同步）
 - [ ] M4 按钮交互 / 定时推送
 

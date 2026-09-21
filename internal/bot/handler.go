@@ -97,6 +97,7 @@ func (h *Handler) Dispatch(ctx context.Context, msg *Message) {
 	if h.env != nil {
 		for _, attachment := range msg.Attachments {
 			if isICSFile(attachment) {
+				h.recordSeen(msg)
 				if err := h.env.ImportICS(ctx, msg, attachment); err != nil {
 					slog.Error("导入课表失败", "err", err)
 				}
@@ -124,9 +125,20 @@ func (h *Handler) Dispatch(ctx context.Context, msg *Message) {
 		return
 	}
 	msg.Args = strings.TrimSpace(strings.TrimPrefix(content, prefix))
+	h.recordSeen(msg)
 	slog.Info("执行指令", "prefix", prefix, "origin", msg.Origin, "user", shortID(msg.UserOpenID))
 	if err := cmd.Handle(ctx, msg); err != nil {
 		slog.Error("指令执行失败", "prefix", prefix, "err", err)
+	}
+}
+
+// recordSeen remembers the sender so the admin page can offer an empty schedule.
+func (h *Handler) recordSeen(msg *Message) {
+	if h.env == nil || msg.UserOpenID == "" {
+		return
+	}
+	if err := h.env.Service.RecordSeenMember(h.env.Scope(msg), msg.UserOpenID, msg.Username); err != nil {
+		slog.Warn("记录成员失败", "err", err)
 	}
 }
 

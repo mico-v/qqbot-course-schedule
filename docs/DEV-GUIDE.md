@@ -305,10 +305,13 @@ msg.Keyboard(kb)
 
 ### 6.7 Web 管理台
 
-- 前端是静态文件，构建时 `embed` 进二进制；开发时可用 `--web-dev` 指向本地目录避免重复编译。
-- 前端不再使用 `window.AstrBotPluginPage`，统一 `fetch('/api/...')`，错误统一 `{error: "..."}`。
+- 前端在 `web/`，`go:embed` 进二进制，经 `/admin` 提供；接口在 `/api/*`（`internal/server/admin.go`）。
+- 鉴权：`admin_password` 为空时仅回环地址可访问；设置后要求 HTTP Basic Auth（用户名 `admin`）。
+- 前端不使用 `window.AstrBotPluginPage`，统一 `fetch('/api/...')`，错误统一 `{error: "..."}`。
 - 保存流程：读取时拿 `revision` → 提交时回传 → 409 时提示刷新，**不要自动重试覆盖**。
 - 所有输入在服务端重新校验（长度、时间、RRULE），前端校验只是体验。
+- 观察成员：`Handler.Dispatch` 在指令/附件消息上调用 `Service.RecordSeenMember`，
+  管理台用它给"没有课表"的成员建空表；官方群成员列表内邀不可用，这是降级方案。
 
 ### 6.8 指令面板与自定义菜单
 

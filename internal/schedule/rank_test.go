@@ -1,6 +1,7 @@
 package schedule
 
 import (
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -167,6 +168,21 @@ func (m *memoryStorage) PutMember(scopeID, userID string, member *Member, expect
 	copied.Revision++
 	m.members[scopeID][userID] = &copied
 	return nil
+}
+
+func (m *memoryStorage) ListScopeSummaries() ([]ScopeSummary, error) {
+	var summaries []ScopeSummary
+	for scopeID, members := range m.members {
+		summary := ScopeSummary{ScopeID: scopeID}
+		for userID, member := range members {
+			summary.Members = append(summary.Members, ScopeMemberSummary{
+				UserID: userID, Name: member.Name, EventCount: len(member.Events), Revision: member.Revision,
+			})
+		}
+		summaries = append(summaries, summary)
+	}
+	sort.Slice(summaries, func(i, j int) bool { return summaries[i].ScopeID < summaries[j].ScopeID })
+	return summaries, nil
 }
 
 func (m *memoryStorage) ListDayOverrides(scopeID string) ([]DayOverrideRow, error) {
