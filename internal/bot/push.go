@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -62,32 +63,40 @@ func (e *Env) PushDaily(ctx context.Context) (sent, skipped, failed int) {
 		if !sub.Enabled || sub.OpenID == "" {
 			continue
 		}
-		msg := &Message{Client: e.Client}
-		if sub.Origin == "group" {
-			msg.Origin = OriginGroup
-			msg.GroupOpenID = sub.OpenID
-		} else {
-			msg.Origin = OriginPrivate
-			msg.UserOpenID = sub.OpenID
-		}
-		url, ok, err := e.RenderDayCard(ctx, msg, e.now())
-		if err != nil {
-			slog.Warn("推送渲染失败", "scope", scope, "err", err)
-			failed++
-			continue
-		}
-		if !ok {
+		switch err := e.PushScope(ctx, scope, sub); {
+		case err == nil:
+			sent++
+		case errors.Is(err, errPushNoSchedule):
 			skipped++
-			continue
-		}
-		if err := msg.PushImage(ctx, url); err != nil {
+		default:
 			failed++
 			slog.Warn("主动推送失败", "scope", scope, "err", err)
-			continue
 		}
-		sent++
 	}
 	return sent, skipped, failed
+}
+
+// errPushNoSchedule means the scope has no schedules to render.
+var errPushNoSchedule = errors.New("没有可推送的课程表")
+
+// PushScope sends the day card to one scope proactively.
+func (e *Env) PushScope(ctx context.Context, scope string, sub PushSubscription) error {
+	msg := &Message{Client: e.Client}
+	if sub.Origin == "group" {
+		msg.Origin = OriginGroup
+		msg.GroupOpenID = sub.OpenID
+	} else {
+		msg.Origin = OriginPrivate
+		msg.UserOpenID = sub.OpenID
+	}
+	url, ok, err := e.RenderDayCard(ctx, msg, e.now())
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errPushNoSchedule
+	}
+	return msg.PushImage(ctx, url)
 }
 
 // pushTimeText renders the cron time for replies ("每天 07:30").

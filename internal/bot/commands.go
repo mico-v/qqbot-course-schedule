@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -117,6 +118,11 @@ func NewDefaultHandler(env *Env) *Handler {
 		Description: "关闭机器人对本会话的主动推送",
 		Ready:       true,
 		Handle:      h.handleDisablePush,
+	})
+	h.Register(&Command{
+		Prefix:      "/推送测试",
+		Description: "立即推送一次当日课表（管理员）",
+		Handle:      h.handlePushTest,
 	})
 	h.Register(&Command{
 		Prefix:      "/同步面板",
@@ -322,6 +328,32 @@ func (h *Handler) handleDisablePush(ctx context.Context, msg *Message) error {
 		return msg.Reply(ctx, "关闭失败："+err.Error())
 	}
 	return msg.Reply(ctx, "已关闭本会话的每日课表推送。")
+}
+
+func (h *Handler) handlePushTest(ctx context.Context, msg *Message) error {
+	if h.env == nil {
+		return msg.Reply(ctx, "课表功能未初始化。")
+	}
+	if msg.Origin == OriginGroup && !msg.IsAdmin() {
+		return msg.Reply(ctx, "只有群管理员可以测试推送。")
+	}
+	scope := h.env.Scope(msg)
+	subscriptions, err := h.env.PushSubscriptions()
+	if err != nil {
+		return msg.Reply(ctx, "读取订阅失败："+err.Error())
+	}
+	sub, ok := subscriptions[scope]
+	if !ok || !sub.Enabled {
+		return msg.Reply(ctx, "本会话还没有开启推送，请先发送 /启用推送。")
+	}
+	switch err := h.env.PushScope(ctx, scope, sub); {
+	case err == nil:
+		return msg.Reply(ctx, "已推送一次当日课表。")
+	case errors.Is(err, errPushNoSchedule):
+		return msg.Reply(ctx, "本会话还没有可推送的课程表。")
+	default:
+		return msg.Reply(ctx, "推送失败："+err.Error()+"（群聊需管理员在机器人资料页打开「消息推送」）")
+	}
 }
 
 func (h *Handler) handleSyncPanelCommand(ctx context.Context, msg *Message) error {

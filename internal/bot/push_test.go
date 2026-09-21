@@ -148,3 +148,51 @@ func TestStartSchedulerValidatesCron(t *testing.T) {
 }
 
 var _ = qqapi.Keyboard{}
+
+func TestPushTestCommand(t *testing.T) {
+	fake := newFakeQQ()
+	apiServer := httptest.NewServer(fake.handler())
+	t.Cleanup(apiServer.Close)
+	icsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(testICS))
+	}))
+	t.Cleanup(icsServer.Close)
+
+	env, base := newTestEnv(t, fake, apiServer.URL)
+	handler := NewDefaultHandler(env)
+	ctx := context.Background()
+	if err := env.ImportICS(ctx, freshMessage(base), Attachment{URL: icsServer.URL + "/s.ics", Filename: "s.ics"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = waitMessage(t, fake)
+
+	// Without a subscription the test command explains what to do.
+	msg := freshMessage(base)
+	msg.MemberRole = "owner"
+	msg.Content = "/推送测试"
+	handler.Dispatch(ctx, msg)
+	reply := waitMessage(t, fake)
+	if content, _ := reply["content"].(string); !strings.Contains(content, "请先发送 /启用推送") {
+		t.Fatalf("reply = %q", content)
+	}
+
+	// Enable, then the test command pushes a card and confirms.
+	enable := freshMessage(base)
+	enable.MemberRole = "owner"
+	enable.Content = "/启用推送"
+	handler.Dispatch(ctx, enable)
+	_ = waitMessage(t, fake)
+
+	test := freshMessage(base)
+	test.MemberRole = "owner"
+	test.Content = "/推送测试"
+	handler.Dispatch(ctx, test)
+	card := waitMessage(t, fake)
+	if msgType, _ := card["msg_type"].(float64); msgType != 7 {
+		t.Fatalf("push test card = %+v", card)
+	}
+	reply = waitMessage(t, fake)
+	if content, _ := reply["content"].(string); !strings.Contains(content, "已推送一次当日课表") {
+		t.Fatalf("reply = %q", content)
+	}
+}
