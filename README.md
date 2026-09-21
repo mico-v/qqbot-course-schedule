@@ -26,16 +26,21 @@ curl -s localhost:8080/healthz       # {"ok":true,"version":"dev"}
 
 接入 QQ 平台的完整步骤见 [docs/CONNECT.md](docs/CONNECT.md)。
 
+一键编译上传部署（systemd + Caddy）：
+
+```bash
+./deploy/deploy.sh                  # 测试 → 构建 → 上传 → 重启 → 健康检查
+```
+
 ## 状态
 
 - [x] 需求调研与官方文档快照
 - [x] 项目计划与开发手册
-- [x] M0 骨架：webhook 验签 + Op=13 + Token + 文本收发 + `/ping` `/help`
-- [ ] M1 存储 / ICS / 文字课表
-- [ ] M2 卡片图片
-- [ ] M3 休假调休 / 时长榜
-- [ ] M4 Web 管理台
-- [ ] M5 定时推送 / 按钮交互
+- [x] M0 骨架：webhook 验签 + Op=13 + Token + 文本收发 + `/ping` `/help` + 一键部署脚本
+- [ ] M1 数据与图片：SQLite / ICS / RRULE / 图片渲染（`/课表` 全图片）
+- [ ] M2 休假调休 / 时长榜（图片）
+- [ ] M3 Web 管理台
+- [ ] M4 指令面板 / 按钮 / 定时推送
 
 ## 许可证
 

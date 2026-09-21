@@ -273,6 +273,8 @@ scheduler.Register(&scheduler.Job{
 
 ### 6.5 按钮与互动回调
 
+> 课表卡片默认携带日期切换按钮（前一天 / 今天 / 后一天），交互注册见 6.8。
+
 ```go
 kb := buttons.NewKeyboard()
 btn, _ := kb.Append("prev", "前一天", "前一天", buttons.StyleBlue, 0)
@@ -284,6 +286,7 @@ msg.Keyboard(kb)
 - 回调 id 唯一；注册处理函数后，收到 `INTERACTION_CREATE` 必须调用 `PUT /interactions/{id}` 应答（只能一次）。
 - 回调处理在 3 秒内完成，超时会使用户端持续 loading。
 - 按钮 `permission` 用 `specify_user_ids` 限制为消息接收者（原插件同类场景）。
+- 按钮数量限制：每行最多 5 个、最多 5 行；button data 用 `action:param` 编码，参数保持短小。
 
 ### 6.6 发送消息与媒体
 
@@ -303,6 +306,26 @@ msg.Keyboard(kb)
 - 前端不再使用 `window.AstrBotPluginPage`，统一 `fetch('/api/...')`，错误统一 `{error: "..."}`。
 - 保存流程：读取时拿 `revision` → 提交时回传 → 409 时提示刷新，**不要自动重试覆盖**。
 - 所有输入在服务端重新校验（长度、时间、RRULE），前端校验只是体验。
+
+### 6.8 指令面板与自定义菜单
+
+指令集合是单一事实来源：面板/菜单从已注册指令生成，不手写列表。
+
+```go
+// 启动后异步同步，失败只记日志
+if err := panel.Sync(ctx, client, handler.Commands()); err != nil {
+    slog.Warn("同步指令面板失败", "err", err)
+}
+```
+
+| 规则 | 说明 |
+| --- | --- |
+| 面板数量 | 只创建 2 个：`scope=c2c`、`scope=group`，`target_type=all`；ID 存 KV，更新用 PUT |
+| 面板元素 | 每个指令一个 `type=command` item；`name` 必须是可直接发送的指令文本（≤14 字符）；`desc` ≤30 字符 |
+| 注册范围 | 只注册已实现的指令；占位/未完成指令不入面板（可用 `/help` 查看全部） |
+| 自定义菜单 | 仅单聊全局；一级 ≤10 项、二级 ≤5 项；`send_message` 点击后填入输入框 |
+| 限频 | 面板 10 QPM、菜单 5 QPM；同步只在启动或指令变化时执行，禁止轮询 |
+| 失败隔离 | 面板/菜单错误不影响启动与消息链路，仅记日志 |
 
 ---
 
@@ -408,9 +431,22 @@ func (e *UserError) Error() string { return e.Msg }
 
 ## 13. 构建与部署
 
+### 13.1 一键部署（推荐）
+
 ```bash
-# 构建（内嵌前端与字体）
-CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(git describe --tags --always)" \
+./deploy/deploy.sh                 # 测试 → 构建 → 上传 → 重启 → 健康检查
+./deploy/deploy.sh --skip-tests    # 跳过测试
+./deploy/deploy.sh --caddy         # 同时更新 Caddy 反代（需 CADDY_DOMAIN）
+HOST=myserver ./deploy/deploy.sh   # 换 SSH 主机
+```
+
+脚本行为：`gofmt` 检查 → `go test` → 构建 linux/amd64 → 首次自动创建用户/目录并上传 config.json 与 systemd unit → 原子替换二进制 → 重启服务 → 健康检查（失败打印 journalctl）。完整参数见脚本头部与 `deploy/README.md`。
+
+### 13.2 手动构建
+
+```bash
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
+  -ldflags "-s -w -X main.version=$(git describe --tags --always)" \
   -o bin/qqbot-course-schedule ./cmd/bot
 ```
 

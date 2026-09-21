@@ -16,7 +16,7 @@
 
 ### 1.2 目标
 
-1. 功能对等：插件现有的课程表存储、查询、图片、榜单、休假调休、ICS 导入、Web 管理台全部保留。
+1. 功能对等：插件现有的课程表存储、查询、图片、榜单、休假调休、ICS 导入、Web 管理台全部保留；**课表与榜单展示统一为图片渲染**，不提供文字版课表。
 2. 官方接口：事件走 Webhook，消息/媒体/按钮走 QQ 开放平台 v2 HTTP API。
 3. 独立部署：单二进制 + SQLite + 静态资源，一条 systemd 服务即可运行。
 4. 可演进：服务层与框架解耦，后续可加 HTTP API、更多平台，不接 LLM 工具。
@@ -165,6 +165,9 @@ schedule_day_overrides(scope_id, user_id, day, kind,
 `source="ics"`、`updated_at`、`schedule_updated_at`、`last_modified_by`、`revision`。
 
 ### F3 课表查询与当日卡片
+
+> **展示形式（已定）**：所有课表与榜单结果一律渲染为图片发送；文本只用于错误提示、权限拒绝与操作结果。
+> 图片经公网 URL 上传（`public_base_url`）；上传失败时返回文本错误提示，**不降级为文字课表**。
 
 #### F3.1 指令
 
@@ -354,6 +357,27 @@ schedule_day_overrides(scope_id, user_id, day, kind,
 - 所有用户可见文案为中文；失败以字符串返回，不抛异常到聊天层。
 - 未知成员、越界 course_id、非法日期、超限等均有独立文案（沿用插件措辞）。
 
+#### F8.5 指令面板与自定义菜单（已定）
+
+| 项 | 规格 |
+| --- | --- |
+| 指令面板 | `POST /v2/panels`（10 QPM）：`scope=c2c` 与 `scope=group` 各一个，`target_type=all`；机器人上限 20 个面板、每面板 20 个元素 |
+| 面板元素 | 每个指令一个 item：`type=command`，`name` 为点击后填入输入框的指令文本（≤14 字符），`desc` 说明（≤30 字符）；可另加 `type=link` 帮助页 |
+| 同步时机 | 启动后异步同步一次；指令集合变化时 PUT 更新；面板 ID 存 KV |
+| 自定义菜单 | `PUT /v2/menu`（5 QPM）：仅单聊全局；一级最多 10 项、二级最多 5 项；`send_message` 点击填入输入框，`link` 需 HTTPS |
+| 注册范围 | 只注册已实现且可用的指令（M0 先 `/ping` `/help`，随里程碑增量更新） |
+| 失败处理 | 面板/菜单失败只记日志，不影响启动；频控退避重试 |
+
+#### F8.6 消息内嵌按钮（已定）
+
+| 项 | 规格 |
+| --- | --- |
+| 载体 | 卡片消息附带 `keyboard`（每行最多 5 个、最多 5 行）；`action.type=1` 回调或 `type=2` 指令 |
+| 典型按钮 | 日期切换（前一天 / 今天 / 后一天）、榜单范围切换、刷新、导出课表 |
+| 回调 | 收到 `INTERACTION_CREATE` 后必须 `PUT /interactions/{id}` 应答（3 秒内、只能一次）；button data 编码 `action:param` |
+| 权限 | 日期切换类按钮用 `permission.specify_user_ids` 限定消息接收者 |
+| 降级 | 旧客户端不支持时展示 `unsupport_tips` 文案 |
+
 ### F9 ~~AI 查询 / 编辑工具~~（不做）
 
 **决策：不向任何 LLM/Agent 暴露工具接口。** 原插件的 `find`（按人/时间/字段查询）与
@@ -385,6 +409,8 @@ schedule_day_overrides(scope_id, user_id, day, kind,
 | 群信息 | `GET /v2/groups/{openid}/info` | 群名/人数，用于管理台展示 |
 | 群成员列表 | `GET /v2/groups/{openid}/members` | **内邀能力**，公开机器人不可用；降级见 F7.2 |
 | 按钮交互 | `INTERACTION_CREATE` + `PUT /interactions/{id}` | 需 Intent `1<<26`；必须应答且只能一次 |
+| 指令面板 | `GET/POST /v2/panels`、`PUT /v2/panels/{id}`、`PUT /v2/panels/{id}/target` | 最多 20 个面板 / 每面板 20 个元素；c2c、group 支持 all/specific；2026-08 新增能力 |
+| 自定义菜单 | `GET/PUT /v2/menu` | 仅单聊全局；最多 10 项；send_message 点击填入输入框 |
 | 主动接收开关 | `GROUP_MSG_RECEIVE` / `C2C_MSG_RECEIVE` | 用于更新本地订阅状态 |
 | 事件订阅变更 | `SUBSCRIBE_MESSAGE_STATUS` | 订阅消息模板授权，P2 可选 |
 | 验签 | Webhook Ed25519 + Op=13 回包 | 端口仅 80/443/8080/8443 |
@@ -451,37 +477,33 @@ web/    管理台前端
 ### M0 骨架打通（已完成，待平台联调验收）
 
 - Go module、配置、gin、`/webhook` 验签 + Op=13、Token 获取、发送一条文本消息。
-- 已交付：`/ping`、`/help`、M1–M5 占位指令、事件幂等、互动事件应答、单元测试（config/verify/dispatch/bot）。
+- 已交付：`/ping`、`/help`、M1–M5 占位指令、事件幂等、互动事件应答、单元测试（config/verify/dispatch/bot）、`deploy/deploy.sh` 一键部署脚本（已实测）。
 - 验收：QQ 群里 @机器人 得到文本回复；平台回调验证通过（需真实 AppID/域名，见 `docs/CONNECT.md`）。
 
-### M1 存储 + ICS + 文字课表（3~5 天）
+### M1 数据与图片（4~6 天）
 
-- store（三表 + revision）、ICS 解析/序列化、occurrence 展开、日期解析、文字版 `/课表` `/今日课表`。
-- 验收：导入样例 ICS → `/课表` 返回正确文本；Python 侧 `test_ics/test_ics_import/test_schedule_day` 对应用例全部通过（Go 版）。
+- store（三表 + revision）、ICS 解析/序列化、occurrence 展开、日期解析。
+- 渲染（gg 纯 Go）+ 公网 URL 上传；`/今日课表` `/明日课表` `/课表` 全部输出图片。
+- 验收：导入样例 ICS → 三个指令收到卡片图片；状态/排序与 Python 用例一致；`test_ics/test_ics_import/test_schedule_day` 对应用例通过。
 
-### M2 卡片图片（3~5 天）
+### M2 休假调休 + 时长榜（3~4 天）
 
-- 渲染（gg 纯 Go）+ 图片公网 URL 上传、收纳条带、状态色、页脚。
-- 验收：群内收到卡片图片；状态/排序/收纳与 Python 版一致。
-
-### M3 休假调休 + 时长榜（3~4 天）
-
-- F5 全部指令与权限；F4 榜单。
+- F5 全部指令与权限；F4 榜单（图片输出）。
 - 验收：`/休假` `/调休` `/销假` `/假期` 行为与文案对齐；榜单口径用例（重叠去重、跨天裁剪、全天忽略）通过。
 
-### M4 Web 管理台（3~5 天）
+### M3 Web 管理台（3~5 天）
 
 - 5 个 API + 单页应用改造 + Basic Auth + 409 冲突。
 - 验收：浏览器可增删改课程并持久化；并发保存出现 409 提示。
 
-### M5 定时推送 + 按钮（2~4 天）
+### M4 面板 / 按钮 / 定时推送（3~5 天）
 
-- cron 任务、订阅开关、主动推送失败处理；日期切换按钮 + `INTERACTION_CREATE` 应答。
-- 验收：到点推送成功；按钮点击切换日期并应答 loading。
+- F8.5 指令面板与自定义菜单同步；F8.6 卡片按钮与 `INTERACTION_CREATE` 应答；F10 cron 推送与订阅开关。
+- 验收：机器人资料页能看到指令面板；卡片按钮可切换日期/范围；到点推送成功、频控失败有降级。
 
-### M6 收尾（2~3 天）
+### M5 收尾（2~3 天）
 
-- `/导出课表`、日志与错误码、systemd 部署文档、README 完善。
+- `/导出课表`、日志与错误码、部署脚本与文档、README 完善、测试补齐。
 
 **总计约 3~4 周**（单人）。
 
@@ -516,6 +538,8 @@ web/    管理台前端
 | R8 | 限频与重试 | 消息丢失 | 客户端统一重试 + 429/5xx 退避 |
 | R9 | 许可证 | 开源合规 | 业务源自自有 AGPL 项目可改写；Polarix MIT 需保留声明；字体 OFL |
 | R10 | 构建环境无外网 | 依赖拉取失败 | `GOPROXY=https://goproxy.cn,direct`（已验证可用） |
+| R11 | 面板/菜单为 2026-08 新能力 | 接口可能调整 | 面板注册失败不影响机器人运行；接口与字段集中在 `qqapi/panel.go` 便于跟进 |
+| R12 | 面板配额与限频 | 最多 20 面板 / 20 元素，10 QPM | 只建 2 个面板（c2c/group）；指令变化时合并更新，不重复创建 |
 
 ---
 
@@ -541,3 +565,4 @@ web/    管理台前端
 | D6 | 定时推送的默认策略 | 默认关闭，群内 `/启用推送` 后按 cron 推送 |
 | D7 | 许可证 | 建议 MIT（业务代码为自有版权） |
 | D8 | 是否需要频道（Guild）支持 | 不需要，明确排除 |
+| D9 | 指令注册方式 | **已定**：用官方指令面板（`/v2/panels`，c2c+group 全局）+ 自定义菜单（`/v2/menu`，仅单聊）+ 卡片内嵌按钮；启动时自动同步 |
