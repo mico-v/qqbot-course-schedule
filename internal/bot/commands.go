@@ -7,17 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mico-v/qqbot-course-schedule/internal/qqapi"
 	"github.com/mico-v/qqbot-course-schedule/internal/schedule"
 )
-
-// planned lists commands from the project plan that are not implemented yet.
-var planned = []struct {
-	Prefix      string
-	Description string
-	Milestone   string
-}{
-	{"/导出课表", "导出当前课表为 .ics 文件", "M5"},
-}
 
 // NewDefaultHandler registers the implemented commands.
 func NewDefaultHandler(env *Env) *Handler {
@@ -108,6 +100,12 @@ func NewDefaultHandler(env *Env) *Handler {
 		Handle:      h.handleDayOffListCommand,
 	})
 	h.Register(&Command{
+		Prefix:      "/导出课表",
+		Description: "导出当前课表为 .ics 文件",
+		Ready:       true,
+		Handle:      h.handleExportCommand,
+	})
+	h.Register(&Command{
 		Prefix:      "/启用推送",
 		Description: "允许机器人向本会话主动推送",
 		Ready:       true,
@@ -130,16 +128,6 @@ func NewDefaultHandler(env *Env) *Handler {
 		Handle:      h.handleSyncPanelCommand,
 	})
 
-	for _, item := range planned {
-		item := item
-		h.Register(&Command{
-			Prefix:      item.Prefix,
-			Description: item.Description,
-			Handle: func(ctx context.Context, msg *Message) error {
-				return msg.Reply(ctx, fmt.Sprintf("指令 %s 将在 %s 实现。", item.Prefix, item.Milestone))
-			},
-		})
-	}
 	return h
 }
 
@@ -289,6 +277,38 @@ func (h *Handler) handleDayOffListCommand(ctx context.Context, msg *Message) err
 	return msg.Reply(ctx, text)
 }
 
+func (h *Handler) handleExportCommand(ctx context.Context, msg *Message) error {
+	env := h.env
+	if env == nil {
+		return msg.Reply(ctx, "课表功能未初始化。")
+	}
+	scope := env.Scope(msg)
+	members, err := env.Service.ScopeMembers(scope)
+	if err != nil {
+		return err
+	}
+	targetID, errMsg := schedule.ResolveMemberTarget(members, msg.UserOpenID, msg.Origin == OriginGroup, msg.IsAdmin(), msg.Args, toScheduleMentions(msg.Mentions))
+	if errMsg != "" {
+		return msg.Reply(ctx, errMsg)
+	}
+	member, ok := members[targetID]
+	if !ok || member == nil {
+		return msg.Reply(ctx, "没有找到该成员的课程表。")
+	}
+	if len(member.Events) == 0 {
+		return msg.Reply(ctx, "该成员还没有课程，暂无可导出的课表。")
+	}
+	content := strings.TrimSpace(member.ICS)
+	if content == "" {
+		content = schedule.SerializeScheduleICS(member.Events, "", member.Name)
+	}
+	url, err := env.SavePublicFile(content, ".ics")
+	if err != nil {
+		return msg.Reply(ctx, "导出失败："+err.Error())
+	}
+	return msg.ReplyFile(ctx, url, exportFileName(member.Name))
+}
+
 func (h *Handler) handleEnablePush(ctx context.Context, msg *Message) error {
 	if h.env == nil {
 		return msg.Reply(ctx, "课表功能未初始化。")
@@ -348,11 +368,21 @@ func (h *Handler) handlePushTest(ctx context.Context, msg *Message) error {
 	}
 	switch err := h.env.PushScope(ctx, scope, sub); {
 	case err == nil:
+		if sub.Paused {
+			sub.Paused = false
+			sub.PauseReason = ""
+			_ = h.env.SetPushSubscription(scope, sub)
+		}
 		return msg.Reply(ctx, "已推送一次当日课表。")
 	case errors.Is(err, errPushNoSchedule):
 		return msg.Reply(ctx, "本会话还没有可推送的课程表。")
 	default:
-		return msg.Reply(ctx, "推送失败："+err.Error()+"（群聊需管理员在机器人资料页打开「消息推送」）")
+		if qqapi.IsActiveMessageDenied(err) {
+			sub.Paused = true
+			sub.PauseReason = qqapi.FriendlyError(err)
+			_ = h.env.SetPushSubscription(scope, sub)
+		}
+		return msg.Reply(ctx, "推送失败："+qqapi.FriendlyError(err))
 	}
 }
 

@@ -32,10 +32,11 @@ END:VCALENDAR
 `
 
 type fakeQQ struct {
-	mu       sync.Mutex
-	uploads  []map[string]any
-	messages []map[string]any
-	msgCh    chan map[string]any
+	mu          sync.Mutex
+	uploads     []map[string]any
+	messages    []map[string]any
+	msgCh       chan map[string]any
+	failUploads bool
 }
 
 func newFakeQQ() *fakeQQ {
@@ -52,7 +53,13 @@ func (f *fakeQQ) handler() http.Handler {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		f.mu.Lock()
 		f.uploads = append(f.uploads, body)
+		fail := f.failUploads
 		f.mu.Unlock()
+		if fail {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 40034105, "message": "主动消息发送失败，无权限"})
+			return
+		}
 		_ = json.NewEncoder(w).Encode(map[string]string{"file_info": "fi-1"})
 	})
 	mux.HandleFunc("/v2/groups/GROUP/messages", func(w http.ResponseWriter, r *http.Request) {

@@ -24,6 +24,7 @@ type Env struct {
 	Renderer      *render.Renderer
 	DataDir       string
 	ImagesDir     string
+	FilesDir      string
 	PublicBaseURL string
 	// Buttons enables markdown+keyboard card messages (platform invite only).
 	Buttons bool

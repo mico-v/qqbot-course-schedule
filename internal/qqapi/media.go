@@ -69,6 +69,15 @@ func (c *Client) SendGroupFile(ctx context.Context, groupOpenID, fileURL, fileNa
 	return c.sendMedia(ctx, fmt.Sprintf("/v2/groups/%s/messages", url.PathEscape(groupOpenID)), fileInfo, msgID, "", msgSeq)
 }
 
+// SendC2CFile uploads a file by public URL and sends it to a single chat.
+func (c *Client) SendC2CFile(ctx context.Context, userOpenID, fileURL, fileName, msgID string, msgSeq int) error {
+	fileInfo, err := c.uploadFileByURL(ctx, fmt.Sprintf("/v2/users/%s/files", url.PathEscape(userOpenID)), fileURL, fileName)
+	if err != nil {
+		return err
+	}
+	return c.sendMedia(ctx, fmt.Sprintf("/v2/users/%s/messages", url.PathEscape(userOpenID)), fileInfo, msgID, "", msgSeq)
+}
+
 func (c *Client) uploadMediaByURL(ctx context.Context, path string, fileType int, fileURL string) (string, error) {
 	body := map[string]any{"file_type": fileType, "url": fileURL, "srv_send_msg": false}
 	var result mediaUploadResponse

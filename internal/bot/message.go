@@ -121,6 +121,28 @@ func (m *Message) ReplyImage(ctx context.Context, imageURL string) error {
 	}
 }
 
+// ReplyFile sends a passive file message from a public URL.
+func (m *Message) ReplyFile(ctx context.Context, fileURL, fileName string) error {
+	seq, err := m.nextSeq()
+	if err != nil {
+		return err
+	}
+	switch m.Origin {
+	case OriginGroup:
+		if m.GroupOpenID == "" {
+			return errors.New("群消息缺少 group_openid")
+		}
+		return m.Client.SendGroupFile(ctx, m.GroupOpenID, fileURL, fileName, m.MsgID, seq)
+	case OriginPrivate:
+		if m.UserOpenID == "" {
+			return errors.New("单聊消息缺少 user_openid")
+		}
+		return m.Client.SendC2CFile(ctx, m.UserOpenID, fileURL, fileName, m.MsgID, seq)
+	default:
+		return fmt.Errorf("未知消息来源 %q", m.Origin)
+	}
+}
+
 // PushImage sends a proactive image message with no msg_id.
 func (m *Message) PushImage(ctx context.Context, imageURL string) error {
 	switch m.Origin {

@@ -73,6 +73,7 @@ func run() error {
 		Renderer:      renderer,
 		DataDir:       cfg.DataDir,
 		ImagesDir:     filepath.Join(cfg.DataDir, "images"),
+		FilesDir:      filepath.Join(cfg.DataDir, "files"),
 		PublicBaseURL: cfg.PublicImageBase(),
 		Buttons:       cfg.Buttons,
 		PushCron:      cfg.PushCron,
@@ -92,6 +93,7 @@ func run() error {
 	})
 	router.POST("/webhook", verify, dispatcher.Handle)
 	server.RegisterImages(router, env.ImagesDir)
+	server.RegisterFiles(router, env.FilesDir)
 	server.RegisterAdmin(router, env.Service, cfg.AdminPassword)
 
 	server := &http.Server{

@@ -15,11 +15,13 @@ import (
 
 // PushSubscription is one scope that receives the daily card.
 type PushSubscription struct {
-	Enabled   bool   `json:"enabled"`
-	Origin    string `json:"origin"` // group / private
-	OpenID    string `json:"openid"`
-	EnabledBy string `json:"enabled_by,omitempty"`
-	EnabledAt string `json:"enabled_at,omitempty"`
+	Enabled     bool   `json:"enabled"`
+	Origin      string `json:"origin"` // group / private
+	OpenID      string `json:"openid"`
+	EnabledBy   string `json:"enabled_by,omitempty"`
+	EnabledAt   string `json:"enabled_at,omitempty"`
+	Paused      bool   `json:"paused,omitempty"`
+	PauseReason string `json:"pause_reason,omitempty"`
 }
 
 const pushNamespace = "push"
@@ -60,7 +62,7 @@ func (e *Env) PushDaily(ctx context.Context) (sent, skipped, failed int) {
 		return 0, 0, 0
 	}
 	for scope, sub := range subscriptions {
-		if !sub.Enabled || sub.OpenID == "" {
+		if !sub.Enabled || sub.OpenID == "" || sub.Paused {
 			continue
 		}
 		switch err := e.PushScope(ctx, scope, sub); {
@@ -71,6 +73,13 @@ func (e *Env) PushDaily(ctx context.Context) (sent, skipped, failed int) {
 		default:
 			failed++
 			slog.Warn("主动推送失败", "scope", scope, "err", err)
+			if qqapi.IsActiveMessageDenied(err) {
+				sub.Paused = true
+				sub.PauseReason = qqapi.FriendlyError(err)
+				if saveErr := e.SetPushSubscription(scope, sub); saveErr != nil {
+					slog.Warn("暂停推送失败", "scope", scope, "err", saveErr)
+				}
+			}
 		}
 	}
 	return sent, skipped, failed

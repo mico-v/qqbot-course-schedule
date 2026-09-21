@@ -14,8 +14,8 @@ qqbot.example.com {
 		}
 		format json
 	}
-	# 公网只放行机器人回调、健康检查与卡片图片；管理台/API 不公开。
-	@public path /webhook /healthz /images/*
+	# 公网只放行机器人回调、健康检查、卡片图片与导出文件；管理台/API 不公开。
+	@public path /webhook /healthz /images/* /files/*
 	handle @public {
 		reverse_proxy 127.0.0.1:18080
 	}

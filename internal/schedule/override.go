@@ -98,6 +98,52 @@ func ResolveOverrideTargets(members map[string]*Member, senderID string, isGroup
 	return nil, fmt.Sprintf("没有找到成员“%s”的课表，请使用完整昵称。", query)
 }
 
+// ResolveMemberTarget resolves a single member for member-scoped commands
+// (currently /导出课表). Returns the user id or a user-facing error message.
+func ResolveMemberTarget(members map[string]*Member, senderID string, isGroup, isAdmin bool, person string, mentions []Mention) (string, string) {
+	query := strings.TrimSpace(person)
+	if query == "" || isOwnQuery(query) {
+		return senderID, ""
+	}
+	if _, ok := members[query]; ok {
+		if query == senderID || (isGroup && isAdmin) {
+			return query, ""
+		}
+		return "", "普通成员只能操作自己的课表；操作群内其他成员的课表需要管理员权限。"
+	}
+	var matched []string
+	for userID, member := range members {
+		if member != nil && strings.EqualFold(strings.TrimSpace(member.Name), query) {
+			matched = append(matched, userID)
+		}
+	}
+	sort.Strings(matched)
+	if len(matched) == 1 {
+		if matched[0] == senderID || (isGroup && isAdmin) {
+			return matched[0], ""
+		}
+		return "", "普通成员只能操作自己的课表；操作群内其他成员的课表需要管理员权限。"
+	}
+	if len(matched) > 1 {
+		return "", "昵称存在多个精确匹配，请改用成员 OpenID。"
+	}
+	if len(mentions) > 0 {
+		var named []string
+		for _, mention := range mentions {
+			if mention.ID != "" && strings.EqualFold(strings.TrimSpace(mention.Name), query) {
+				named = append(named, mention.ID)
+			}
+		}
+		if len(named) == 1 {
+			if named[0] == senderID || (isGroup && isAdmin) {
+				return named[0], ""
+			}
+			return "", "普通成员只能操作自己的课表；操作群内其他成员的课表需要管理员权限。"
+		}
+	}
+	return "", fmt.Sprintf("没有找到成员“%s”的课表，请使用完整昵称。", query)
+}
+
 // OverrideLabel renders "全体成员" or "昵称(openid)" for replies.
 func OverrideLabel(members map[string]*Member, targetID string) string {
 	if targetID == DayOverrideAll {

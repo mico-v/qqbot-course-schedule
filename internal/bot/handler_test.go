@@ -116,9 +116,26 @@ func TestAdminRoles(t *testing.T) {
 	}
 }
 
-func TestDefaultHandlerRegistersPlannedCommands(t *testing.T) {
+func TestDefaultHandlerRegistersCommands(t *testing.T) {
 	handler := NewDefaultHandler(nil)
-	if len(handler.Commands()) < len(planned)+3 {
-		t.Fatalf("registered %d commands, want at least %d", len(handler.Commands()), len(planned)+3)
+	expected := []string{
+		"/ping", "/help", "/今日课表", "/明日课表", "/课表", "/导入课表", "/导出课表",
+		"/上课时长榜", "/休假", "/调休", "/销假", "/假期",
+		"/启用推送", "/关闭推送", "/推送测试", "/同步面板",
+	}
+	for _, prefix := range expected {
+		if _, ok := handler.Command(prefix); !ok {
+			t.Errorf("command %s is not registered", prefix)
+		}
+	}
+	if got := len(handler.Commands()); got != len(expected) {
+		t.Errorf("Commands() = %d, want %d", got, len(expected))
+	}
+
+	// Aliases resolve to the same command pointer.
+	canonical, _ := handler.Command("/上课时长榜")
+	alias, ok := handler.Command("/上课排行")
+	if !ok || alias != canonical {
+		t.Fatalf("alias /上课排行 should map to /上课时长榜")
 	}
 }
