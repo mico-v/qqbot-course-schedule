@@ -44,6 +44,10 @@ var statusColorMap = map[string]statusColors{
 	"scheduled": {"#7c3aed", "#ede9fe", "#a78bfa"},
 	"holiday":   {"#b45309", "#fef3c7", "#f59e0b"},
 	"none":      {"#64748b", "#f8fafc", "#cbd5e1"},
+	"rank1":     {"#b45309", "#fef3c7", "#f59e0b"},
+	"rank2":     {"#475569", "#e2e8f0", "#94a3b8"},
+	"rank3":     {"#9a3412", "#ffedd5", "#fb923c"},
+	"rank":      {"#1d4ed8", "#dbeafe", "#60a5fa"},
 }
 
 func statusColorsFor(key string) statusColors {
@@ -67,7 +71,13 @@ func New() (*Renderer, error) {
 	return &Renderer{fonts: fonts}, nil
 }
 
-// DayCardData is the input for one day view.
+// LegendItem is one colour legend entry; Key selects the accent colour.
+type LegendItem struct {
+	Key   string
+	Label string
+}
+
+// DayCardData is the input for one day view (also used by the rank board).
 type DayCardData struct {
 	Title       string
 	Subtitle    string
@@ -76,6 +86,10 @@ type DayCardData struct {
 	Rows        []schedule.DayRow
 	Folded      []schedule.DayRow
 	BotAvatar   image.Image
+	// Legend overrides the auto-generated legend when non-nil.
+	Legend []LegendItem
+	// DurationLabel prefixes the duration line; empty means no prefix.
+	DurationLabel string
 }
 
 // DayCard renders the daily schedule card.
@@ -162,14 +176,18 @@ func (r *Renderer) DayCard(data DayCardData) image.Image {
 		dc.DrawImage(circleImage(data.BotAvatar, 88), cardWidth-172, 57)
 	}
 
+	legend := data.Legend
+	if legend == nil {
+		legend = legendItems(data.Rows)
+	}
 	legendX := 44.0
-	for _, item := range legendItems(data.Rows) {
-		colors := statusColorsFor(item.key)
+	for _, item := range legend {
+		colors := statusColorsFor(item.Key)
 		dc.SetHexColor(colors.accent)
 		dc.DrawCircle(legendX+5, 143+15, 5)
 		dc.Fill()
-		fc.drawText(dc, legendX+18, 143, item.label, 17, "#e2e8f0", false, 0)
-		legendX += fc.measureText(item.label, 17, false) + 58
+		fc.drawText(dc, legendX+18, 143, item.Label, 17, "#e2e8f0", false, 0)
+		legendX += fc.measureText(item.Label, 17, false) + 58
 	}
 
 	if len(data.Rows) == 0 && len(data.Folded) == 0 {
@@ -213,7 +231,11 @@ func (r *Renderer) DayCard(data DayCardData) image.Image {
 			timeText += "   ·   " + location
 		}
 		fc.drawText(dc, 430, top+66, timeText, 19, "#64748b", false, 480)
-		fc.drawText(dc, 430, top+101, "本节持续 "+row.Duration, 17, "#94a3b8", false, 480)
+		durationText := row.Duration
+		if data.DurationLabel != "" {
+			durationText = data.DurationLabel + " " + durationText
+		}
+		fc.drawText(dc, 430, top+101, durationText, 17, "#94a3b8", false, 480)
 		drawProgress(dc, 430, top+132, 480, row.Progress, colors.accent)
 
 		drawBadge(dc, fc, 972, top+24, row.Status, colors.foreground, colors.badge)
@@ -241,12 +263,7 @@ func (r *Renderer) DayCard(data DayCardData) image.Image {
 	return dc.Image()
 }
 
-type legendItem struct {
-	key   string
-	label string
-}
-
-func legendItems(rows []schedule.DayRow) []legendItem {
+func legendItems(rows []schedule.DayRow) []LegendItem {
 	present := make(map[string]bool, len(rows))
 	hasOverride := false
 	for _, row := range rows {
@@ -255,21 +272,21 @@ func legendItems(rows []schedule.DayRow) []legendItem {
 			hasOverride = true
 		}
 	}
-	var items []legendItem
-	for _, candidate := range []legendItem{
+	var items []LegendItem
+	for _, candidate := range []LegendItem{
 		{"active", "正在上课"},
 		{"upcoming", "下一节即将上"},
 		{"finished", "今日已结束"},
 	} {
-		if present[candidate.key] {
+		if present[candidate.Key] {
 			items = append(items, candidate)
 		}
 	}
 	if present["holiday"] {
-		items = append(items, legendItem{"holiday", "休假"})
+		items = append(items, LegendItem{"holiday", "休假"})
 	}
 	if hasOverride {
-		items = append(items, legendItem{"scheduled", "调休上课"})
+		items = append(items, LegendItem{"scheduled", "调休上课"})
 	}
 	return items
 }

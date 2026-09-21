@@ -245,3 +245,94 @@ func TestImportFailureSavesFileAndReplies(t *testing.T) {
 		t.Fatalf("failed_ics files = %v, err = %v", files, err)
 	}
 }
+
+// freshMessage clones the envelope so every command gets its own reply budget.
+func freshMessage(base *Message) *Message {
+	return &Message{
+		Origin:      base.Origin,
+		GroupOpenID: base.GroupOpenID,
+		UserOpenID:  base.UserOpenID,
+		MsgID:       base.MsgID,
+		Username:    base.Username,
+		MemberRole:  base.MemberRole,
+		Client:      base.Client,
+	}
+}
+
+func TestDayOffAndRankPipeline(t *testing.T) {
+	fake := newFakeQQ()
+	apiServer := httptest.NewServer(fake.handler())
+	t.Cleanup(apiServer.Close)
+
+	icsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(testICS))
+	}))
+	t.Cleanup(icsServer.Close)
+
+	env, base := newTestEnv(t, fake, apiServer.URL)
+	handler := NewDefaultHandler(env)
+	ctx := context.Background()
+
+	if err := env.ImportICS(ctx, freshMessage(base), Attachment{
+		URL: icsServer.URL + "/schedule.ics", Filename: "schedule.ics",
+	}); err != nil {
+		t.Fatalf("ImportICS: %v", err)
+	}
+	_ = waitMessage(t, fake)
+
+	// Admin marks tomorrow as a holiday for everyone.
+	admin := freshMessage(base)
+	admin.MemberRole = "owner"
+	admin.Content = "/休假 明天"
+	handler.Dispatch(ctx, admin)
+	reply := waitMessage(t, fake)
+	if content, _ := reply["content"].(string); !strings.Contains(content, "已将 2026-09-18 标记为休假（全体成员）") {
+		t.Fatalf("day off reply = %q", content)
+	}
+
+	// /假期 lists it.
+	list := freshMessage(base)
+	list.Content = "/假期"
+	handler.Dispatch(ctx, list)
+	reply = waitMessage(t, fake)
+	if content, _ := reply["content"].(string); !strings.Contains(content, "2026-09-18 休假") {
+		t.Fatalf("holiday list = %q", content)
+	}
+
+	// A normal member cannot target everyone.
+	member := freshMessage(base)
+	member.Content = "/休假 明天 全体"
+	handler.Dispatch(ctx, member)
+	reply = waitMessage(t, fake)
+	if content, _ := reply["content"].(string); !strings.Contains(content, "只有管理员") {
+		t.Fatalf("member reply = %q", content)
+	}
+
+	// Admin cancels the marker.
+	cancel := freshMessage(base)
+	cancel.MemberRole = "owner"
+	cancel.Content = "/销假 明天"
+	handler.Dispatch(ctx, cancel)
+	reply = waitMessage(t, fake)
+	if content, _ := reply["content"].(string); !strings.Contains(content, "已取消 2026-09-18 的休假标记") {
+		t.Fatalf("cancel reply = %q", content)
+	}
+
+	// Alias command renders the rank card as an image.
+	rank := freshMessage(base)
+	rank.Content = "/本周上课排行"
+	handler.Dispatch(ctx, rank)
+	reply = waitMessage(t, fake)
+	if msgType, _ := reply["msg_type"].(float64); msgType != 7 {
+		t.Fatalf("rank reply = %+v", reply)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(fake.uploads) == 0 {
+		t.Fatal("rank card was not uploaded")
+	}
+	last := fake.uploads[len(fake.uploads)-1]
+	if url, _ := last["url"].(string); !strings.Contains(url, "/images/rank_") {
+		t.Fatalf("rank upload url = %q", url)
+	}
+}

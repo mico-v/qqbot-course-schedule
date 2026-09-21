@@ -114,6 +114,7 @@ func (d *Dispatcher) process(payload Payload) {
 			Username:    data.Author.Username,
 			MemberRole:  data.Author.MemberRole,
 			Attachments: toBotAttachments(data.Attachments),
+			Mentions:    toBotMentions(data.Mentions),
 			Client:      d.client,
 		}
 		d.handler.Dispatch(ctx, message)
@@ -135,6 +136,7 @@ func (d *Dispatcher) process(payload Payload) {
 			Username:    data.Author.Username,
 			MemberRole:  data.Author.MemberRole,
 			Attachments: toBotAttachments(data.Attachments),
+			Mentions:    toBotMentions(data.Mentions),
 			Client:      d.client,
 		})
 
@@ -166,6 +168,21 @@ func decodeMessage(raw json.RawMessage) (*MessageData, error) {
 		return nil, err
 	}
 	return &data, nil
+}
+
+func toBotMentions(mentions []Author) []bot.Mention {
+	var result []bot.Mention
+	for _, mention := range mentions {
+		if mention.Bot {
+			continue
+		}
+		id := firstNonEmpty(mention.MemberOpenID, mention.UserOpenID, mention.UnionOpenID, mention.ID)
+		if id == "" {
+			continue
+		}
+		result = append(result, bot.Mention{ID: id, Name: mention.Username})
+	}
+	return result
 }
 
 func toBotAttachments(attachments []Attachment) []bot.Attachment {

@@ -31,15 +31,23 @@ type Message struct {
 	UserOpenID  string
 	MsgID       string
 	Content     string
+	Args        string
 	Username    string
 	MemberRole  string
 	IsBot       bool
 	Attachments []Attachment
+	Mentions    []Mention
 
 	Client *qqapi.Client
 
 	seqMu sync.Mutex
 	seq   int
+}
+
+// Mention is one @ user carried by an inbound message.
+type Mention struct {
+	ID   string
+	Name string
 }
 
 // Attachment is one file carried by an inbound message.

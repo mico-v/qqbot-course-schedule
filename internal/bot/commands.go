@@ -15,17 +15,12 @@ var planned = []struct {
 	Description string
 	Milestone   string
 }{
-	{"/上课时长榜", "生成本会话群友上课时长排行榜", "M2"},
-	{"/休假", "标记某天为休假", "M2"},
-	{"/调休", "把某天的课程换成另一天的课程", "M2"},
-	{"/销假", "取消休假/调休标记", "M2"},
-	{"/假期", "列出当前会话的休假/调休标记", "M2"},
 	{"/导出课表", "导出当前课表为 .ics 文件", "M4"},
 	{"/启用推送", "允许机器人向本会话主动推送", "M4"},
 	{"/关闭推送", "关闭机器人对本会话的主动推送", "M4"},
 }
 
-// NewDefaultHandler registers the M1 commands.
+// NewDefaultHandler registers the implemented commands.
 func NewDefaultHandler(env *Env) *Handler {
 	h := NewHandler()
 	h.env = env
@@ -39,14 +34,10 @@ func NewDefaultHandler(env *Env) *Handler {
 	})
 	h.Register(&Command{
 		Prefix:      "/help",
+		Aliases:     []string{"/帮助"},
 		Description: "查看指令列表",
 		Handle:      h.handleHelp,
 		Ready:       true,
-	})
-	h.Register(&Command{
-		Prefix:      "/帮助",
-		Description: "查看指令列表",
-		Handle:      h.handleHelp,
 	})
 
 	h.Register(&Command{
@@ -79,6 +70,45 @@ func NewDefaultHandler(env *Env) *Handler {
 		Handle:      h.handleImportCommand,
 	})
 	h.Register(&Command{
+		Prefix:      "/上课时长榜",
+		Aliases:     []string{"/上课排行", "/本周上课排行", "/学习时长榜"},
+		Description: "生成本会话群友上课时长排行榜",
+		Ready:       true,
+		Handle:      h.handleRankCommand,
+	})
+	h.Register(&Command{
+		Prefix:      "/休假",
+		Aliases:     []string{"/放假"},
+		Description: "标记某天为休假",
+		Ready:       true,
+		Handle: func(ctx context.Context, msg *Message) error {
+			return h.handleOverrideSet(ctx, msg, schedule.DayOverrideHoliday)
+		},
+	})
+	h.Register(&Command{
+		Prefix:      "/调休",
+		Aliases:     []string{"/补课", "/调课"},
+		Description: "把某天的课程换成另一天的课程",
+		Ready:       true,
+		Handle: func(ctx context.Context, msg *Message) error {
+			return h.handleOverrideSet(ctx, msg, schedule.DayOverrideShift)
+		},
+	})
+	h.Register(&Command{
+		Prefix:      "/销假",
+		Aliases:     []string{"/取消休假", "/取消调休"},
+		Description: "取消休假/调休标记",
+		Ready:       true,
+		Handle:      h.handleCancelDayOffCommand,
+	})
+	h.Register(&Command{
+		Prefix:      "/假期",
+		Aliases:     []string{"/假期列表", "/调休列表", "/休假列表"},
+		Description: "列出当前会话的休假/调休标记",
+		Ready:       true,
+		Handle:      h.handleDayOffListCommand,
+	})
+	h.Register(&Command{
 		Prefix:      "/同步面板",
 		Description: "同步机器人指令面板（管理员）",
 		Handle:      h.handleSyncPanelCommand,
@@ -104,7 +134,11 @@ func (h *Handler) handleHelp(ctx context.Context, msg *Message) error {
 		if cmd.Description == "" {
 			continue
 		}
-		lines = append(lines, fmt.Sprintf("- %s：%s", cmd.Prefix, cmd.Description))
+		line := fmt.Sprintf("- %s：%s", cmd.Prefix, cmd.Description)
+		if len(cmd.Aliases) > 0 {
+			line += "（别名：" + strings.Join(cmd.Aliases, " ") + "）"
+		}
+		lines = append(lines, line)
 	}
 	return msg.Reply(ctx, strings.Join(lines, "\n"))
 }
@@ -113,8 +147,7 @@ func (h *Handler) handleScheduleCommand(ctx context.Context, msg *Message) error
 	if h.env == nil {
 		return msg.Reply(ctx, "课表功能未初始化。")
 	}
-	args := strings.TrimSpace(strings.TrimPrefix(msg.Content, "/课表"))
-	day, message := schedule.SingleDayQuery(args, h.env.now())
+	day, message := schedule.SingleDayQuery(msg.Args, h.env.now())
 	if message != "" {
 		return msg.Reply(ctx, message)
 	}
@@ -122,6 +155,122 @@ func (h *Handler) handleScheduleCommand(ctx context.Context, msg *Message) error
 		return handleDayCard(ctx, h.env, msg, nil)
 	}
 	return handleDayCard(ctx, h.env, msg, day)
+}
+
+func (h *Handler) handleImportCommand(ctx context.Context, msg *Message) error {
+	if h.env == nil {
+		return msg.Reply(ctx, "课表功能未初始化。")
+	}
+	for _, attachment := range msg.Attachments {
+		if isICSFile(attachment) {
+			return h.env.ImportICS(ctx, msg, attachment)
+		}
+	}
+	return msg.Reply(ctx, "未检测到 .ics 文件。请发送 /导入课表 并附加 .ics 文件，或直接发送 .ics 文件。")
+}
+
+func (h *Handler) handleRankCommand(ctx context.Context, msg *Message) error {
+	if h.env == nil {
+		return msg.Reply(ctx, "课表功能未初始化。")
+	}
+	url, ok, err := h.env.RenderRankCard(ctx, msg, msg.Args)
+	if err != nil {
+		return msg.Reply(ctx, err.Error())
+	}
+	if !ok {
+		return msg.Reply(ctx, "当前会话还没有可统计的课程。")
+	}
+	return msg.ReplyImage(ctx, url)
+}
+
+func (h *Handler) handleOverrideSet(ctx context.Context, msg *Message, kind string) error {
+	env := h.env
+	if env == nil {
+		return msg.Reply(ctx, "课表功能未初始化。")
+	}
+	today := env.now()
+	days, rest, err := schedule.SplitDayOverrideArgs(msg.Args, today, schedule.RollForward)
+	if err != nil {
+		return msg.Reply(ctx, err.Error())
+	}
+	person := strings.Join(rest, " ")
+	if len(days) == 0 {
+		if kind == schedule.DayOverrideShift {
+			return msg.Reply(ctx, "请提供两个日期：/调休 <被覆盖的日期> <来源日期> [成员]，例如 /调休 2026-10-11 2026-10-08 表示 10 月 11 日按 10 月 8 日的课程上课。")
+		}
+		return msg.Reply(ctx, "请提供日期：/休假 <日期> [成员]，例如 /休假 2026-10-01，也可以使用 今天、明天 或 10月1日至10月8日。")
+	}
+	var sourceDay *time.Time
+	if kind == schedule.DayOverrideShift {
+		if len(days) < 2 {
+			return msg.Reply(ctx, "调休需要来源日期：/调休 <被覆盖的日期> <来源日期> [成员]。")
+		}
+		if len(days) > 2 {
+			return msg.Reply(ctx, "调休一次只能指定一个日期和一个来源日期，例如 /调休 2026-10-11 2026-10-08。")
+		}
+		sourceDay = &days[1]
+		days = days[:1]
+	}
+	scope := env.Scope(msg)
+	members, err := env.Service.ScopeMembers(scope)
+	if err != nil {
+		return err
+	}
+	targets, errMsg := schedule.ResolveOverrideTargets(members, msg.UserOpenID, msg.Origin == OriginGroup, msg.IsAdmin(), person, toScheduleMentions(msg.Mentions))
+	if errMsg != "" {
+		return msg.Reply(ctx, errMsg)
+	}
+	text, err := env.Service.SetDayOverrides(scope, targets, days, kind, sourceDay, msg.UserOpenID, members, today)
+	if err != nil {
+		return msg.Reply(ctx, err.Error())
+	}
+	return msg.Reply(ctx, text)
+}
+
+func (h *Handler) handleCancelDayOffCommand(ctx context.Context, msg *Message) error {
+	env := h.env
+	if env == nil {
+		return msg.Reply(ctx, "课表功能未初始化。")
+	}
+	days, rest, err := schedule.SplitDayOverrideArgs(msg.Args, env.now(), schedule.RollForward)
+	if err != nil {
+		return msg.Reply(ctx, err.Error())
+	}
+	if len(days) == 0 {
+		return msg.Reply(ctx, "请提供日期：/销假 <日期> [成员]，例如 /销假 2026-10-01。")
+	}
+	person := strings.Join(rest, " ")
+	scope := env.Scope(msg)
+	members, err := env.Service.ScopeMembers(scope)
+	if err != nil {
+		return err
+	}
+	targets, errMsg := schedule.ResolveOverrideTargets(members, msg.UserOpenID, msg.Origin == OriginGroup, msg.IsAdmin(), person, toScheduleMentions(msg.Mentions))
+	if errMsg != "" {
+		return msg.Reply(ctx, errMsg)
+	}
+	text, err := env.Service.ClearDayOverrides(scope, targets, days, members)
+	if err != nil {
+		return msg.Reply(ctx, err.Error())
+	}
+	return msg.Reply(ctx, text)
+}
+
+func (h *Handler) handleDayOffListCommand(ctx context.Context, msg *Message) error {
+	env := h.env
+	if env == nil {
+		return msg.Reply(ctx, "课表功能未初始化。")
+	}
+	scope := env.Scope(msg)
+	members, err := env.Service.ScopeMembers(scope)
+	if err != nil {
+		return err
+	}
+	text, err := env.Service.DayOverrideListText(scope, members, env.now())
+	if err != nil {
+		return err
+	}
+	return msg.Reply(ctx, text)
 }
 
 func (h *Handler) handleSyncPanelCommand(ctx context.Context, msg *Message) error {
@@ -136,18 +285,6 @@ func (h *Handler) handleSyncPanelCommand(ctx context.Context, msg *Message) erro
 		return msg.Reply(ctx, "同步指令面板失败："+err.Error())
 	}
 	return msg.Reply(ctx, fmt.Sprintf("指令面板已同步：新建 %d 个，更新 %d 个。", created, updated))
-}
-
-func (h *Handler) handleImportCommand(ctx context.Context, msg *Message) error {
-	if h.env == nil {
-		return msg.Reply(ctx, "课表功能未初始化。")
-	}
-	for _, attachment := range msg.Attachments {
-		if isICSFile(attachment) {
-			return h.env.ImportICS(ctx, msg, attachment)
-		}
-	}
-	return msg.Reply(ctx, "未检测到 .ics 文件。请发送 /导入课表 并附加 .ics 文件，或直接发送 .ics 文件。")
 }
 
 func handleDayCard(ctx context.Context, env *Env, msg *Message, day *time.Time) error {
@@ -166,4 +303,15 @@ func handleDayCard(ctx context.Context, env *Env, msg *Message, day *time.Time) 
 		return msg.Reply(ctx, "当前会话还没有可展示的课程表。请先发送 /导入课表 并附加 .ics 文件。")
 	}
 	return msg.ReplyImage(ctx, url)
+}
+
+func toScheduleMentions(mentions []Mention) []schedule.Mention {
+	if len(mentions) == 0 {
+		return nil
+	}
+	result := make([]schedule.Mention, 0, len(mentions))
+	for _, mention := range mentions {
+		result = append(result, schedule.Mention{ID: mention.ID, Name: mention.Name})
+	}
+	return result
 }

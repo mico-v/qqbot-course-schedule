@@ -12,6 +12,7 @@ import (
 // Command is one registered chat command.
 type Command struct {
 	Prefix      string
+	Aliases     []string
 	Description string
 	Handle      func(ctx context.Context, msg *Message) error
 	// Ready marks a command that is implemented and safe to advertise in the
@@ -46,14 +47,29 @@ func (h *Handler) Register(cmd *Command) {
 		slog.Warn("指令前缀重复，旧指令被覆盖", "prefix", cmd.Prefix)
 	}
 	h.commands[cmd.Prefix] = cmd
+	for _, alias := range cmd.Aliases {
+		alias = strings.TrimSpace(alias)
+		if alias == "" || alias == cmd.Prefix {
+			continue
+		}
+		if _, exists := h.commands[alias]; exists {
+			slog.Warn("指令别名重复，旧指令被覆盖", "alias", alias)
+		}
+		h.commands[alias] = cmd
+	}
 }
 
 // Commands returns the registered commands sorted by prefix.
 func (h *Handler) Commands() []*Command {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
+	seen := make(map[*Command]bool, len(h.commands))
 	result := make([]*Command, 0, len(h.commands))
 	for _, cmd := range h.commands {
+		if seen[cmd] {
+			continue
+		}
+		seen[cmd] = true
 		result = append(result, cmd)
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Prefix < result[j].Prefix })
@@ -107,6 +123,7 @@ func (h *Handler) Dispatch(ctx context.Context, msg *Message) {
 		slog.Debug("未命中指令", "prefix", prefix, "origin", msg.Origin)
 		return
 	}
+	msg.Args = strings.TrimSpace(strings.TrimPrefix(content, prefix))
 	slog.Info("执行指令", "prefix", prefix, "origin", msg.Origin, "user", shortID(msg.UserOpenID))
 	if err := cmd.Handle(ctx, msg); err != nil {
 		slog.Error("指令执行失败", "prefix", prefix, "err", err)

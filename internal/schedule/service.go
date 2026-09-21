@@ -172,6 +172,11 @@ func (s *Service) BuildDayCard(scopeID string, selected, now time.Time) (*DayCar
 	}, true, nil
 }
 
+// ScopeMembers returns every member of a scope with overrides attached.
+func (s *Service) ScopeMembers(scopeID string) (map[string]*Member, error) {
+	return s.store.GetScopeMembers(scopeID)
+}
+
 // ScopeMemberIDs returns the sorted member ids of a scope (used by tests/tools).
 func (s *Service) ScopeMemberIDs(scopeID string) ([]string, error) {
 	members, err := s.store.GetScopeMembers(scopeID)

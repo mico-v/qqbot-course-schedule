@@ -493,10 +493,13 @@ web/    管理台前端
 - 已交付：`internal/store`（SQLite 三表 + KV + 乐观锁）、`internal/schedule`（ICS/RRULE/RDATE/EXDATE、休假调休展开、中文日期/区间解析、日卡数据）、`internal/render`（内嵌 Noto 字体、卡片/收纳条带/头像）、`/images/:name` 公网图床、`/导入课表` 与附件自动导入、`cmd/cardpreview` 预览工具。
 - 验收：导入样例 ICS → 三个指令收到卡片图片；状态/排序与 Python 用例一致；`test_ics/test_ics_import/test_schedule_day` 对应用例通过。
 
-### M2 休假调休 + 时长榜（3~4 天）
+### M2 休假调休 + 时长榜（已完成，待真机验收）
 
-- F5 全部指令与权限；F4 榜单（图片输出）。
-- 验收：`/休假` `/调休` `/销假` `/假期` 行为与文案对齐；榜单口径用例（重叠去重、跨天裁剪、全天忽略）通过。
+- F5 全部指令与权限（别名、@ 提及解析、管理员默认全体）；F4 榜单（图片输出）。
+- 已交付：`internal/schedule/override.go`（目标解析、设置/取消/列表、上限与过去日期提示）、
+  `rank.go`（union 去重、窗口裁剪、全天忽略、已上/总时长、并列名次）、
+  `/上课时长榜` 及别名图片输出、`cmd/cardpreview -rank` 预览。
+- 验收：行为与文案对齐；榜单口径用例（重叠去重、跨天裁剪、全天忽略）通过。
 
 ### M3 Web 管理台（3~5 天）
 

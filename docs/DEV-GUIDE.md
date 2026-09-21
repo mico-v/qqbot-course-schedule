@@ -229,8 +229,9 @@ func handleSchedule(ctx *context.MessageContext) error {
 约定：
 
 - `Handle` 返回的 `error` 只写日志；用户可见错误必须显式 `ctx.Text(...).Send()` 或返回带用户文案的错误类型。
-- 指令参数用 `ctx.Args`（原始尾巴），不要依赖框架自动分词。
-- 别名与子指令在注册处声明，权限、禁用私聊等元数据同处声明。
+- 指令参数用 `msg.Args`（`Dispatch` 已剥离命中的前缀），不要自己 `TrimPrefix`。
+- 别名在 `Command.Aliases` 声明，会注册到同一处理器；`Commands()` 会去重，面板只展示 `panelOrder` 中的主指令。
+- 群成员身份用 `msg.UserOpenID`（群内为 member_openid），@ 目标从 `msg.Mentions` 解析。
 
 ### 6.2 新增一个事件
 

@@ -34,6 +34,7 @@ type MessageData struct {
 	GroupOpenID string       `json:"group_openid"`
 	Author      Author       `json:"author"`
 	Attachments []Attachment `json:"attachments"`
+	Mentions    []Author     `json:"mentions"`
 	Timestamp   string       `json:"timestamp"`
 	MsgSeq      int          `json:"msg_seq"`
 }
