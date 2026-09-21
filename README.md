@@ -30,6 +30,8 @@ curl -s localhost:8080/healthz       # {"ok":true,"version":"dev"}
 
 ![课表卡片预览](docs/assets/card-preview.jpg)
 
+![上课时长榜预览](docs/assets/rank-preview.jpg)
+
 接入 QQ 平台的完整步骤见 [docs/CONNECT.md](docs/CONNECT.md)。
 
 一键编译上传部署（systemd + Caddy）：

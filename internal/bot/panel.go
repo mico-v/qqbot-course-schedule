@@ -23,7 +23,13 @@ const (
 )
 
 // panelOrder is the curated order of commands shown in the panel.
-var panelOrder = []string{"/今日课表", "/明日课表", "/课表", "/导入课表", "/help"}
+var panelOrder = []string{
+	"/今日课表", "/明日课表", "/课表",
+	"/上课时长榜",
+	"/休假", "/调休", "/销假", "/假期",
+	"/导入课表",
+	"/help",
+}
 
 type panelState struct {
 	PanelID   string `json:"panel_id"`
