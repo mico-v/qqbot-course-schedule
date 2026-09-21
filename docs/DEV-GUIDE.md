@@ -64,6 +64,8 @@ qqbot-course-schedule/
 │   │   ├── message.go           #   群/单聊发送、撤回
 │   │   ├── media.go             #   富媒体：URL 上传 / 分片上传
 │   │   ├── interaction.go       #   互动应答 PUT /interactions/{id}
+│   │   ├── panel.go             #   指令面板 /v2/panels、自定义菜单 /v2/menu
+│   │   ├── user.go              #   机器人详情 /users/@me（头像）
 │   │   ├── group.go             #   群信息、群成员（可用时）、禁言/黑名单
 │   │   └── model.go             #   请求/响应 DTO
 │   ├── webhook/
@@ -96,7 +98,7 @@ qqbot-course-schedule/
 │   │   ├── draw.go              #   绘制
 │   │   ├── cards.go             #   课表卡片
 │   │   ├── rank.go              #   榜单卡片
-│   │   ├── avatar.go            #   头像替代方案（首字/emoji 底色）
+│   │   ├── avatar.go            #   机器人头像（/users/@me 缓存）+ 成员首字/emoji 底色
 │   │   ├── font.go              #   字体加载、字素簇、emoji 回退
 │   │   └── output.go            #   JPEG 输出、TTL 清理
 │   └── server/
@@ -373,7 +375,7 @@ JSON 键名沿用，便于对照与手工排查。
 | 字体 | `assets/fonts/NotoSansCJKsc-{Regular,Bold}.otf`；emoji 仅单色回退，不做彩色 |
 | 文本测量 | 必须使用 `render.Measure/WrapFit`，禁止直接 `font.MeasureString` 处理混排 |
 | emoji | **已定：不做彩色 emoji**；按字素簇（`uniseg`）拆分，CJK 缺字形时回退单色 emoji 字体或占位 |
-| 头像 | 官方接口无头像；用昵称首字/首 emoji + 稳定底色（openid 哈希），不发网络请求 |
+| 头像 | 机器人：`GET /users/@me` 的 `avatar`，启动拉取 + 24h 缓存；成员：无接口，用昵称首字/首 emoji + 稳定底色（openid 哈希），不发网络请求 |
 | 输出 | JPEG quality 80、4:2:0、optimize；写入 `data/images`；>24h 清理 |
 | 性能 | 合并连续同字体绘制；单张卡片目标 <300ms（不含上传） |
 | 可测试性 | 布局计算与绘制分离：`layout.go` 输出纯数据结构，`draw.go` 只负责画 |
@@ -481,7 +483,7 @@ bot.example.com {
 - 回调必须 HTTPS 且端口合规；证书自动续期。
 - 图床 `public_base_url` 指向反代下的 `/images/`，图片只读、不可枚举（随机文件名）。
 - 备份：每日 `sqlite3 data/course_schedule.sqlite3 ".backup 'backup/xxx.db'"`；备份前无需停服。
-- 清理：`data/images` 24h TTL 由进程内定时任务清理；`avatars` 已随无头像方案移除。
+- 清理：`data/images` 24h TTL 由进程内定时任务清理；`data/avatars` 仅缓存机器人自身头像（24h TTL）。
 - 升级：替换二进制 + `systemctl restart`；schema 迁移在启动时自动执行。
 
 ---

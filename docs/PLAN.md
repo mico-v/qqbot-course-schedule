@@ -194,7 +194,7 @@ schedule_day_overrides(scope_id, user_id, day, kind,
 
 #### F3.3 收纳条带（`split_folded_rows`）
 
-- `finished` / `none` / `holiday` 的成员收进卡片下方"没有课的群友"网格，用小头像+昵称排列。
+- `finished` / `none` / `holiday` 的成员收进卡片下方"没有课的群友"网格，用小头像（首字/emoji 底色）+昵称排列。
 - 判断依据是"那天还有没有剩余课程"，与查看哪一天无关；查过去日期时所有人都会收纳。
 - 条带标题：当天 `今天已经没有课的群友`，其它日期 `MM-DD 没有课的群友`。
 - 条带人数计入副标题总数；图例只列卡片实际出现的状态。
@@ -215,7 +215,10 @@ schedule_day_overrides(scope_id, user_id, day, kind,
 - 富文本测量必须走 `_rich_width/_fit_rich_text/_wrap_rich_text` 等宽高统一函数；emoji 昵称不得破坏布局。
 - 绘制时合并连续同字体字素为一次 `draw.text` 调用（性能约束，见原测试）。
 - 输出 JPEG（quality 80、4:2:0、optimize），目录 `data/images`，超过 24h 自动清理。
-- 头像（原实现）：`q1.qlogo.cn`、3s 超时、并发 8：**官方接口无 QQ 号与头像字段，Go 版需替代方案（见第 4 节与第 10 节）。**
+- 头像：
+  - **机器人自身**：`GET /users/@me` 返回 `avatar`（`thirdqq.qlogo.cn/g?b=oidb&k=...`），启动时拉取并缓存（内存 + 磁盘，TTL 24h），用于卡片页眉/帮助图；
+  - **群成员**：官方群成员接口（列表/详情）为内邀且不返回 `avatar`，消息事件 `author` 也无头像字段，成员头像继续用"首字/首 emoji + 稳定底色"，不发起网络请求；
+  - 原实现 `q1.qlogo.cn` 依赖 QQ 号，官方接口不可用。
 
 ### F4 上课时长榜
 
@@ -407,7 +410,8 @@ schedule_day_overrides(scope_id, user_id, day, kind,
 | 卡片图片 | 富媒体上传 + `msg_type=7`，或 Markdown 内嵌公网图片 | **已定：部署后服务器以公网 URL 提供图片，走 URL 上传**（`public_base_url`），不实现分片上传；Markdown 内嵌同理 |
 | ICS 文件 | 事件 `attachments[]`（`content_type=file`）下载；导出走 `file_type=4` 上传 | 附件 URL 为临时地址，需实测直连下载 |
 | 群信息 | `GET /v2/groups/{openid}/info` | 群名/人数，用于管理台展示 |
-| 群成员列表 | `GET /v2/groups/{openid}/members` | **内邀能力**，公开机器人不可用；降级见 F7.2 |
+| 群成员列表 | `GET /v2/groups/{openid}/members` | **内邀能力**，公开机器人不可用；降级见 F7.2；不返回头像 |
+| 机器人详情 | `GET /users/@me` | 机器人自身 `username`/`avatar`（thirdqq.qlogo.cn）；启动拉取并缓存 24h |
 | 按钮交互 | `INTERACTION_CREATE` + `PUT /interactions/{id}` | 需 Intent `1<<26`；必须应答且只能一次 |
 | 指令面板 | `GET/POST /v2/panels`、`PUT /v2/panels/{id}`、`PUT /v2/panels/{id}/target` | 最多 20 个面板 / 每面板 20 个元素；c2c、group 支持 all/specific；2026-08 新增能力 |
 | 自定义菜单 | `GET/PUT /v2/menu` | 仅单聊全局；最多 10 项；send_message 点击填入输入框 |
@@ -422,7 +426,7 @@ schedule_day_overrides(scope_id, user_id, day, kind,
 | --- | --- |
 | QQ 号 | OpenID（群 `member_openid` / 单聊 `user_openid` / `union_openid`） |
 | 群成员列表 `get_group_member_list` | 内邀接口，不可用 |
-| 头像 `q1.qlogo.cn` | 无头像字段 |
+| 头像 `q1.qlogo.cn`（按 QQ 号） | 仅 `/users/@me` 提供机器人自身头像；群成员无头像接口 |
 | 群文件上传/下载 | 无；只有富媒体临时文件 |
 | `event.is_admin()` | `member_role` |
 
@@ -468,7 +472,7 @@ web/    管理台前端
 | 彩色 emoji | **不做**。昵称中的 emoji 降级为单色回退（Noto Emoji 变体）或首字占位，颜色不做 |
 | 字体 | 只用 Noto Sans CJK SC Regular/Bold（约 33MB，内嵌） |
 | 备选 | `chromedp` 已否决（需装 Chromium、启动慢，与“尽可能快”冲突） |
-| 头像 | 无官方头像接口，用“首字/首 emoji + 稳定底色”方案，不发起网络请求（快） |
+| 头像 | 机器人：`GET /users/@me` 的 `avatar`，启动拉取 + 24h 缓存；成员：无接口，用"首字/首 emoji + 稳定底色"，不发网络请求（快） |
 
 ---
 
@@ -484,6 +488,7 @@ web/    管理台前端
 
 - store（三表 + revision）、ICS 解析/序列化、occurrence 展开、日期解析。
 - 渲染（gg 纯 Go）+ 公网 URL 上传；`/今日课表` `/明日课表` `/课表` 全部输出图片。
+- 机器人头像：`GET /users/@me` 拉取并缓存（24h），用于卡片页眉。
 - 验收：导入样例 ICS → 三个指令收到卡片图片；状态/排序与 Python 用例一致；`test_ics/test_ics_import/test_schedule_day` 对应用例通过。
 
 ### M2 休假调休 + 时长榜（3~4 天）
@@ -529,7 +534,7 @@ web/    管理台前端
 | # | 风险 | 影响 | 应对 |
 | --- | --- | --- | --- |
 | R1 | 群成员列表内邀 | 批量建课表不可用 | 降级为"已互动/已导入成员"；提示管理员手动导入 |
-| R2 | 无头像/QQ 号 | 卡片视觉与原版不一致、数据不可迁移 | 首字字母头像；数据迁移靠重新导入 ICS |
+| R2 | 无 QQ 号、群成员无头像 | 卡片视觉与原版不一致、数据不可迁移 | 机器人头像用 `/users/@me`；成员用首字/emoji 底色头像；数据迁移靠重新导入 ICS |
 | R3 | 主动推送受限 | 定时推送可能失败 | 订阅开关 + 频控退避 + 错误码区分提示 |
 | R4 | 本地图片发送 | 需要公网 URL | **已定**：webhook 服务器兼作图床（`public_base_url`），部署后 URL 上传；R2 的“前缀”风险同步降低 |
 | R5 | 附件 URL 可下载性未实测 | ICS 导入可能不通 | M0 阶段实测；必要时提示用户改用 WebUI |
