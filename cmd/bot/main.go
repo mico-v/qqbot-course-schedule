@@ -60,7 +60,7 @@ func run() error {
 	router.POST("/webhook", verify, dispatcher.Handle)
 
 	server := &http.Server{
-		Addr:              fmt.Sprintf(":%d", cfg.Port),
+		Addr:              cfg.ListenAddr(),
 		Handler:           router,
 		ReadHeaderTimeout: 10 * time.Second,
 	}

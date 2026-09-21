@@ -89,3 +89,38 @@ func TestLoadMissingFile(t *testing.T) {
 		t.Fatalf("err = %v, want read error", err)
 	}
 }
+
+func TestBindAndListenAddr(t *testing.T) {
+	cfg, err := Load(writeTemp(t, `{"appid":"1","secret":"s","port":8443}`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.ListenAddr(); got != ":8443" {
+		t.Errorf("ListenAddr() = %q, want :8443", got)
+	}
+
+	cfg, err = Load(writeTemp(t, `{"appid":"1","secret":"s","port":8443,"bind":"127.0.0.1"}`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.ListenAddr(); got != "127.0.0.1:8443" {
+		t.Errorf("ListenAddr() = %q, want 127.0.0.1:8443", got)
+	}
+
+	if _, err := Load(writeTemp(t, `{"appid":"1","secret":"s","bind":"not-an-ip"}`)); err == nil {
+		t.Fatal("invalid bind should fail")
+	}
+}
+
+func TestLoopbackBindAllowsAnyPort(t *testing.T) {
+	cfg, err := Load(writeTemp(t, `{"appid":"1","secret":"s","port":18080,"bind":"127.0.0.1"}`))
+	if err != nil {
+		t.Fatalf("loopback bind with custom port should pass: %v", err)
+	}
+	if got := cfg.ListenAddr(); got != "127.0.0.1:18080" {
+		t.Errorf("ListenAddr() = %q", got)
+	}
+	if _, err := Load(writeTemp(t, `{"appid":"1","secret":"s","port":18080,"bind":"0.0.0.0"}`)); err == nil {
+		t.Fatal("public bind with non-platform port should fail")
+	}
+}

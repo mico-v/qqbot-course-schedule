@@ -1,0 +1,18 @@
+# QQ 课表机器人反向代理模板
+#
+# 放置到 /etc/caddy/Caddyfile.d/qqbot.caddy，主 Caddyfile 需包含：
+#   import /etc/caddy/Caddyfile.d/*.caddy
+#
+# 将 qqbot.example.com 换成真实域名；DNS 需指向本机（支持泛域名时可直接使用）。
+# 机器人监听 127.0.0.1:18080（见 config.json 的 bind/port），Caddy 负责 TLS 与 443 对外。
+
+qqbot.example.com {
+	log {
+		output file /var/log/caddy/qqbot_access.log {
+			roll_size 20MiB
+			roll_keep 5
+		}
+		format json
+	}
+	reverse_proxy 127.0.0.1:18080
+}

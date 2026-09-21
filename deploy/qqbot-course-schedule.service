@@ -1,0 +1,23 @@
+[Unit]
+Description=QQ Course Schedule Bot
+Documentation=https://github.com/mico-v/qqbot-course-schedule
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=qqbot
+Group=qqbot
+WorkingDirectory=/opt/qqbot-course-schedule
+Environment=BOT_CONFIG=/opt/qqbot-course-schedule/config.json
+ExecStart=/opt/qqbot-course-schedule/bin/qqbot-course-schedule
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/opt/qqbot-course-schedule/data
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

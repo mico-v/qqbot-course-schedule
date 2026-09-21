@@ -134,6 +134,7 @@ schedule 包内不得 import gin/qqapi/store
 | 键 | 类型 | 必填 | 默认 | 说明 |
 | --- | --- | --- | --- | --- |
 | `port` | int | ✅ | 8080 | HTTP 端口，必须为 80/443/8080/8443 之一 |
+| `bind` | string | | 空（所有网卡） | 监听地址；生产建议 `127.0.0.1`，由反向代理对外 |
 | `appid` | string | ✅ | — | 机器人 AppID |
 | `secret` | string | ✅ | — | AppSecret，同时用于 Webhook 验签密钥派生 |
 | `domain` | string | | `https://api.bot.qq.com` | API 域名，可配置 |
@@ -413,7 +414,7 @@ CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(git describe 
   -o bin/qqbot-course-schedule ./cmd/bot
 ```
 
-systemd（示例）：
+systemd（模板见 `deploy/qqbot-course-schedule.service`）：
 
 ```ini
 [Unit]
@@ -431,11 +432,11 @@ User=qqbot
 WantedBy=multi-user.target
 ```
 
-反代（Caddy）：
+反代（Caddy，模板见 `deploy/qqbot.caddy`；机器人保持 `bind=127.0.0.1`）：
 
 ```
 bot.example.com {
-    reverse_proxy 127.0.0.1:8080
+    reverse_proxy 127.0.0.1:18080
 }
 ```
 

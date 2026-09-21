@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -26,6 +28,7 @@ var AllowedWebhookPorts = []int{80, 443, 8080, 8443}
 // Config mirrors config.json.
 type Config struct {
 	Port          int    `json:"port"`
+	Bind          string `json:"bind"`
 	AppID         string `json:"appid"`
 	Secret        string `json:"secret"`
 	Domain        string `json:"domain"`
@@ -79,8 +82,8 @@ func (cfg *Config) applyDefaults() {
 
 // Validate reports the first configuration problem, if any.
 func (cfg *Config) Validate() error {
-	if !validPort(cfg.Port) {
-		return fmt.Errorf("port %d 不被 QQ 平台接受，必须是 %v 之一", cfg.Port, AllowedWebhookPorts)
+	if !validPort(cfg.Port) && !cfg.isLoopbackBind() {
+		return fmt.Errorf("port %d 直接对外时不被 QQ 平台接受，必须是 %v 之一；若通过反向代理访问，请设置 bind 为 127.0.0.1", cfg.Port, AllowedWebhookPorts)
 	}
 	if strings.TrimSpace(cfg.AppID) == "" {
 		return fmt.Errorf("appid 不能为空，请填写 QQ 机器人 AppID")
@@ -90,6 +93,9 @@ func (cfg *Config) Validate() error {
 	}
 	if _, err := url.ParseRequestURI(cfg.Domain); err != nil {
 		return fmt.Errorf("domain 不是合法 URL: %w", err)
+	}
+	if cfg.Bind != "" && net.ParseIP(cfg.Bind) == nil {
+		return fmt.Errorf("bind %q 不是合法 IP，例如 127.0.0.1（留空表示监听所有网卡）", cfg.Bind)
 	}
 	if _, err := url.ParseRequestURI(cfg.TokenEndpoint); err != nil {
 		return fmt.Errorf("token_endpoint 不是合法 URL: %w", err)
@@ -113,6 +119,11 @@ func (cfg *Config) PublicImageBase() string {
 	return strings.TrimRight(strings.TrimSpace(cfg.PublicBaseURL), "/")
 }
 
+// ListenAddr returns the address the HTTP server should bind to.
+func (cfg *Config) ListenAddr() string {
+	return net.JoinHostPort(cfg.Bind, strconv.Itoa(cfg.Port))
+}
+
 func validPort(port int) bool {
 	for _, allowed := range AllowedWebhookPorts {
 		if port == allowed {
@@ -120,4 +131,14 @@ func validPort(port int) bool {
 		}
 	}
 	return false
+}
+
+// isLoopbackBind reports whether the bot only listens on the local machine,
+// in which case the platform-facing port restriction does not apply.
+func (cfg *Config) isLoopbackBind() bool {
+	if cfg.Bind == "" {
+		return false
+	}
+	ip := net.ParseIP(cfg.Bind)
+	return ip != nil && ip.IsLoopback()
 }
