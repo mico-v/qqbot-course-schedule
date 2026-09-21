@@ -109,28 +109,36 @@ type icsComponent struct {
 	Lines []string
 }
 
-// extractComponents returns every component block in document order.
+// extractComponents returns every component block in document order, including
+// nested ones (a VEVENT usually contains a VALARM).
 func extractComponents(content string) []icsComponent {
 	lines := unfoldICS(content)
 	var components []icsComponent
-	var current *icsComponent
+	var stack []*icsComponent
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		upper := strings.ToUpper(trimmed)
 		switch {
 		case strings.HasPrefix(upper, "BEGIN:"):
 			name := strings.ToUpper(strings.TrimSpace(trimmed[len("BEGIN:"):]))
-			current = &icsComponent{Name: name, Lines: []string{line}}
+			stack = append(stack, &icsComponent{Name: name, Lines: []string{line}})
 		case strings.HasPrefix(upper, "END:"):
-			if current == nil {
+			if len(stack) == 0 {
 				continue
 			}
+			current := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
 			current.Lines = append(current.Lines, line)
 			components = append(components, *current)
-			current = nil
+			// Keep nested components inside their parent's raw text so a
+			// VEVENT's RAW_ICAL still contains its VALARM block.
+			if len(stack) > 0 {
+				parent := stack[len(stack)-1]
+				parent.Lines = append(parent.Lines, current.Lines...)
+			}
 		default:
-			if current != nil {
-				current.Lines = append(current.Lines, line)
+			if len(stack) > 0 {
+				stack[len(stack)-1].Lines = append(stack[len(stack)-1].Lines, line)
 			}
 		}
 	}
@@ -162,6 +170,9 @@ func ParseICSTime(value, tzid string) (time.Time, bool) {
 	zone := LocalTZ
 	if tzid != "" {
 		if loaded, err := time.LoadLocation(tzid); err == nil {
+			zone = loaded
+		} else if loaded, err := time.LoadLocation(strings.TrimPrefix(tzid, "/")); err == nil {
+			// Some exporters write TZID=/Asia/Shanghai with a leading slash.
 			zone = loaded
 		}
 	}
@@ -292,9 +303,23 @@ func ParseICSEvents(content string) ([]Event, error) {
 
 func componentToEvent(component icsComponent) Event {
 	event := Event{"RAW_ICAL": componentRaw(component)}
+	depth := 0
 	for _, line := range component.Lines {
 		prop, ok := parsePropertyLine(line)
 		if !ok {
+			continue
+		}
+		if prop.Name == "BEGIN" && !strings.EqualFold(strings.TrimSpace(prop.Value), "VEVENT") {
+			depth++
+			continue
+		}
+		if prop.Name == "END" && depth > 0 {
+			depth--
+			continue
+		}
+		if depth > 0 {
+			// Nested component (VALARM): keep it in RAW_ICAL, do not let its
+			// DESCRIPTION/SUMMARY shadow the event's own properties.
 			continue
 		}
 		switch prop.Name {
@@ -459,9 +484,30 @@ func SerializeScheduleICS(events []Event, baseICS, calendarName string) string {
 
 func eventComponentLines(event Event) []string {
 	lines := []string{"BEGIN:VEVENT"}
-	for _, line := range unfoldICS(event["RAW_ICAL"]) {
+	raw := unfoldICS(event["RAW_ICAL"])
+	for index := 0; index < len(raw); index++ {
+		line := raw[index]
 		prop, ok := parsePropertyLine(line)
-		if !ok || knownEventProperties[prop.Name] {
+		if !ok {
+			continue
+		}
+		if prop.Name == "BEGIN" {
+			value := strings.ToUpper(strings.TrimSpace(prop.Value))
+			if value == "VEVENT" {
+				continue
+			}
+			// Preserve nested components (VALARM and friends) verbatim.
+			end := "END:" + value
+			lines = append(lines, line)
+			for index++; index < len(raw); index++ {
+				lines = append(lines, raw[index])
+				if strings.EqualFold(strings.TrimSpace(raw[index]), end) {
+					break
+				}
+			}
+			continue
+		}
+		if prop.Name == "END" || knownEventProperties[prop.Name] {
 			continue
 		}
 		lines = append(lines, line)
