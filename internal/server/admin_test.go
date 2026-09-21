@@ -214,3 +214,20 @@ func TestAdminAPIFlow(t *testing.T) {
 		t.Fatalf("created member schedule = %d", recorder.Code)
 	}
 }
+
+func TestAdminAssetsAndTrailingSlash(t *testing.T) {
+	router, _ := newAdminRouter(t, adminPassword)
+
+	for _, path := range []string{"/admin", "/admin/", "/admin/app.js", "/admin/style.css"} {
+		recorder := adminRequest(router, http.MethodGet, path, nil, true)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s = %d, want 200", path, recorder.Code)
+		}
+	}
+	recorder := adminRequest(router, http.MethodGet, "/admin", nil, true)
+	body := recorder.Body.String()
+	if !bytes.Contains([]byte(body), []byte(`href="/admin/style.css"`)) ||
+		!bytes.Contains([]byte(body), []byte(`src="/admin/app.js"`)) {
+		t.Fatalf("admin page must reference assets by absolute /admin path")
+	}
+}

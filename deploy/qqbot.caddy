@@ -14,5 +14,17 @@ qqbot.example.com {
 		}
 		format json
 	}
-	reverse_proxy 127.0.0.1:18080
+	# 公网只放行机器人回调、健康检查与卡片图片；管理台/API 不公开。
+	@public path /webhook /healthz /images/*
+	handle @public {
+		reverse_proxy 127.0.0.1:18080
+	}
+	handle {
+		respond "Not Found" 404
+	}
 }
+
+# 可选：ZeroTier 等内网管理入口（仍需 config.json 的 admin_password）
+# http://<ZeroTier IP>:18081 {
+# 	reverse_proxy 127.0.0.1:18080
+# }

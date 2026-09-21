@@ -21,6 +21,7 @@ func RegisterAdmin(router *gin.Engine, service *schedule.Service, password strin
 
 	admin := router.Group("/admin", auth)
 	admin.GET("", serveAsset("index.html", "text/html; charset=utf-8"))
+	admin.GET("/", serveAsset("index.html", "text/html; charset=utf-8"))
 	admin.GET("/app.js", serveAsset("app.js", "application/javascript; charset=utf-8"))
 	admin.GET("/style.css", serveAsset("style.css", "text/css; charset=utf-8"))
 

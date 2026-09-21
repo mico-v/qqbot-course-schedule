@@ -307,6 +307,8 @@ msg.Keyboard(kb)
 
 - 前端在 `web/`，`go:embed` 进二进制，经 `/admin` 提供；接口在 `/api/*`（`internal/server/admin.go`）。
 - 鉴权：`admin_password` 为空时仅回环地址可访问；设置后要求 HTTP Basic Auth（用户名 `admin`）。
+- 公网只放行 `/webhook`、`/healthz`、`/images/*`；管理台建议走内网入口（如 ZeroTier）或反代白名单，
+  见 `deploy/qqbot.caddy`。
 - 前端不使用 `window.AstrBotPluginPage`，统一 `fetch('/api/...')`，错误统一 `{error: "..."}`。
 - 保存流程：读取时拿 `revision` → 提交时回传 → 409 时提示刷新，**不要自动重试覆盖**。
 - 所有输入在服务端重新校验（长度、时间、RRULE），前端校验只是体验。
