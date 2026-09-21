@@ -105,7 +105,7 @@ func (d *Dispatcher) process(payload Payload) {
 		if data.Author.Bot {
 			return
 		}
-		d.handler.Dispatch(ctx, &bot.Message{
+		message := &bot.Message{
 			Origin:      bot.OriginGroup,
 			GroupOpenID: data.GroupOpenID,
 			UserOpenID:  firstNonEmpty(data.Author.MemberOpenID, data.Author.UnionOpenID, data.Author.ID),
@@ -113,8 +113,10 @@ func (d *Dispatcher) process(payload Payload) {
 			Content:     data.Content,
 			Username:    data.Author.Username,
 			MemberRole:  data.Author.MemberRole,
+			Attachments: toBotAttachments(data.Attachments),
 			Client:      d.client,
-		})
+		}
+		d.handler.Dispatch(ctx, message)
 
 	case EventC2CMessage:
 		data, err := decodeMessage(payload.D)
@@ -126,13 +128,14 @@ func (d *Dispatcher) process(payload Payload) {
 			return
 		}
 		d.handler.Dispatch(ctx, &bot.Message{
-			Origin:     bot.OriginPrivate,
-			UserOpenID: firstNonEmpty(data.Author.UserOpenID, data.Author.UnionOpenID, data.Author.ID),
-			MsgID:      data.ID,
-			Content:    data.Content,
-			Username:   data.Author.Username,
-			MemberRole: data.Author.MemberRole,
-			Client:     d.client,
+			Origin:      bot.OriginPrivate,
+			UserOpenID:  firstNonEmpty(data.Author.UserOpenID, data.Author.UnionOpenID, data.Author.ID),
+			MsgID:       data.ID,
+			Content:     data.Content,
+			Username:    data.Author.Username,
+			MemberRole:  data.Author.MemberRole,
+			Attachments: toBotAttachments(data.Attachments),
+			Client:      d.client,
 		})
 
 	case EventInteraction:
@@ -163,6 +166,22 @@ func decodeMessage(raw json.RawMessage) (*MessageData, error) {
 		return nil, err
 	}
 	return &data, nil
+}
+
+func toBotAttachments(attachments []Attachment) []bot.Attachment {
+	if len(attachments) == 0 {
+		return nil
+	}
+	result := make([]bot.Attachment, 0, len(attachments))
+	for _, attachment := range attachments {
+		result = append(result, bot.Attachment{
+			URL:         attachment.URL,
+			Filename:    attachment.Filename,
+			ContentType: attachment.ContentType,
+			Size:        attachment.Size,
+		})
+	}
+	return result
 }
 
 // markSeen reports whether id is new, keeping the dedup table bounded.

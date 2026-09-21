@@ -34,11 +34,20 @@ type Message struct {
 	Username    string
 	MemberRole  string
 	IsBot       bool
+	Attachments []Attachment
 
 	Client *qqapi.Client
 
 	seqMu sync.Mutex
 	seq   int
+}
+
+// Attachment is one file carried by an inbound message.
+type Attachment struct {
+	URL         string
+	Filename    string
+	ContentType string
+	Size        int64
 }
 
 // IsAdmin reports whether the sender is a group owner or administrator.
@@ -67,6 +76,28 @@ func (m *Message) Reply(ctx context.Context, text string) error {
 		return fmt.Errorf("未知消息来源 %q", m.Origin)
 	}
 	return err
+}
+
+// ReplyImage sends a passive image message from a public URL.
+func (m *Message) ReplyImage(ctx context.Context, imageURL string) error {
+	seq, err := m.nextSeq()
+	if err != nil {
+		return err
+	}
+	switch m.Origin {
+	case OriginGroup:
+		if m.GroupOpenID == "" {
+			return errors.New("群消息缺少 group_openid")
+		}
+		return m.Client.SendGroupImage(ctx, m.GroupOpenID, imageURL, m.MsgID, seq)
+	case OriginPrivate:
+		if m.UserOpenID == "" {
+			return errors.New("单聊消息缺少 user_openid")
+		}
+		return m.Client.SendC2CImage(ctx, m.UserOpenID, imageURL, m.MsgID, seq)
+	default:
+		return fmt.Errorf("未知消息来源 %q", m.Origin)
+	}
 }
 
 // Push sends a proactive text message with no msg_id.

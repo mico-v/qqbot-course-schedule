@@ -20,6 +20,7 @@ type Command struct {
 type Handler struct {
 	mu       sync.RWMutex
 	commands map[string]*Command
+	env      *Env
 }
 
 // NewHandler returns an empty command router.
@@ -64,6 +65,19 @@ var mentionPrefix = regexp.MustCompile(`^(?:<@!?[0-9A-Za-z_=-]+>\s*)+`)
 func (h *Handler) Dispatch(ctx context.Context, msg *Message) {
 	content := strings.TrimSpace(mentionPrefix.ReplaceAllString(msg.Content, ""))
 	msg.Content = content
+
+	// An .ics attachment imports itself, whether or not it came with a command.
+	if h.env != nil {
+		for _, attachment := range msg.Attachments {
+			if isICSFile(attachment) {
+				if err := h.env.ImportICS(ctx, msg, attachment); err != nil {
+					slog.Error("导入课表失败", "err", err)
+				}
+				return
+			}
+		}
+	}
+
 	if content == "" {
 		return
 	}

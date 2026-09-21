@@ -379,6 +379,7 @@ JSON 键名沿用，便于对照与手工排查。
 | 输出 | JPEG quality 80、4:2:0、optimize；写入 `data/images`；>24h 清理 |
 | 性能 | 合并连续同字体绘制；单张卡片目标 <300ms（不含上传） |
 | 可测试性 | 布局计算与绘制分离：`layout.go` 输出纯数据结构，`draw.go` 只负责画 |
+| 预览 | `go run ./cmd/cardpreview -o /tmp/card.jpg` 生成样例卡片，改版式时先看预览 |
 
 ---
 

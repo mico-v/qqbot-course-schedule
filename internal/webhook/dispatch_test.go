@@ -117,7 +117,7 @@ func newTestRouter(t *testing.T) (*gin.Engine, *fakeQQ) {
 		LogLevel:      "error",
 	}
 	client := qqapi.New(cfg)
-	dispatcher := NewDispatcher(client, cfg.Secret, bot.NewDefaultHandler())
+	dispatcher := NewDispatcher(client, cfg.Secret, bot.NewDefaultHandler(nil))
 	verify, err := Verify(cfg.Secret)
 	if err != nil {
 		t.Fatalf("Verify: %v", err)

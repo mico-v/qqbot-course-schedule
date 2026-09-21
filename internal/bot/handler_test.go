@@ -101,7 +101,7 @@ func TestAdminRoles(t *testing.T) {
 }
 
 func TestDefaultHandlerRegistersPlannedCommands(t *testing.T) {
-	handler := NewDefaultHandler()
+	handler := NewDefaultHandler(nil)
 	if len(handler.Commands()) < len(planned)+3 {
 		t.Fatalf("registered %d commands, want at least %d", len(handler.Commands()), len(planned)+3)
 	}

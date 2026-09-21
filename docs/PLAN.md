@@ -484,11 +484,12 @@ web/    管理台前端
 - 已交付：`/ping`、`/help`、M1–M5 占位指令、事件幂等、互动事件应答、单元测试（config/verify/dispatch/bot）、`deploy/deploy.sh` 一键部署脚本（已实测）。
 - 验收：QQ 群里 @机器人 得到文本回复；平台回调验证通过（需真实 AppID/域名，见 `docs/CONNECT.md`）。
 
-### M1 数据与图片（4~6 天）
+### M1 数据与图片（已完成，待真机验收）
 
 - store（三表 + revision）、ICS 解析/序列化、occurrence 展开、日期解析。
 - 渲染（gg 纯 Go）+ 公网 URL 上传；`/今日课表` `/明日课表` `/课表` 全部输出图片。
 - 机器人头像：`GET /users/@me` 拉取并缓存（24h），用于卡片页眉。
+- 已交付：`internal/store`（SQLite 三表 + KV + 乐观锁）、`internal/schedule`（ICS/RRULE/RDATE/EXDATE、休假调休展开、中文日期/区间解析、日卡数据）、`internal/render`（内嵌 Noto 字体、卡片/收纳条带/头像）、`/images/:name` 公网图床、`/导入课表` 与附件自动导入、`cmd/cardpreview` 预览工具。
 - 验收：导入样例 ICS → 三个指令收到卡片图片；状态/排序与 Python 用例一致；`test_ics/test_ics_import/test_schedule_day` 对应用例通过。
 
 ### M2 休假调休 + 时长榜（3~4 天）
