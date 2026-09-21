@@ -48,7 +48,7 @@ go run ./cmd/bot
 | 公网地址 | HTTPS，端口 80/443/8080/8443 | QQ 平台只允许这四个回调端口 |
 | SQLite | 无需安装 | `modernc.org/sqlite` 纯 Go |
 | 调试工具 | `curl`、`jq`、`sqlite3`（可选）、`cloudflared`/`frp`（本地联调） | |
-| 可选 | Chromium | 仅当选择 `chromedp` 渲染方案 |
+| 可选 | 无 | 渲染为纯 Go（已定），不需要 Chromium |
 
 ---
 
@@ -291,7 +291,7 @@ msg.Keyboard(kb)
 | 文本 | `msg_type=0`，`content` |
 | Markdown | `msg_type=2`，`markdown.content`；图片用公网 URL（`![alt #Wpx #Hpx](url)`） |
 | 图片/文件 | 先上传拿 `file_info`，再 `msg_type=7` |
-| 上传方式 | ① 公网 URL 上传（推荐，配合 `public_base_url` 图床）；② 分片上传（本地大文件/无公网图床） |
+| 上传方式 | **已定：公网 URL 上传**（配合 `public_base_url` 图床）；不实现分片上传 |
 | 注意 | 群接口上传的 `file_info` 只能用于群消息，单聊同理；>20MB 图片会被降级为文件 |
 
 禁止使用未在官方文档出现的 `file_data` 字段（历史实现依赖此字段，已失效）。
@@ -346,10 +346,10 @@ JSON 键名沿用，便于对照与手工排查。
 | 项 | 规则 |
 | --- | --- |
 | 入口 | `render.DayCard(rows, opts)` / `render.RankCard(rows, opts)`，纯函数无副作用 |
-| 字体 | `assets/fonts/NotoSansCJKsc-{Regular,Bold}.otf`；emoji 回退 `NotoColorEmoji.ttf` |
+| 字体 | `assets/fonts/NotoSansCJKsc-{Regular,Bold}.otf`；emoji 仅单色回退，不做彩色 |
 | 文本测量 | 必须使用 `render.Measure/WrapFit`，禁止直接 `font.MeasureString` 处理混排 |
-| emoji | 按字素簇（`uniseg`）拆分；CJK 缺字形才回退 emoji 字体 |
-| 头像 | 官方接口无头像；用昵称首字/首 emoji + 稳定底色，颜色由 openid 哈希决定 |
+| emoji | **已定：不做彩色 emoji**；按字素簇（`uniseg`）拆分，CJK 缺字形时回退单色 emoji 字体或占位 |
+| 头像 | 官方接口无头像；用昵称首字/首 emoji + 稳定底色（openid 哈希），不发网络请求 |
 | 输出 | JPEG quality 80、4:2:0、optimize；写入 `data/images`；>24h 清理 |
 | 性能 | 合并连续同字体绘制；单张卡片目标 <300ms（不含上传） |
 | 可测试性 | 布局计算与绘制分离：`layout.go` 输出纯数据结构，`draw.go` 只负责画 |

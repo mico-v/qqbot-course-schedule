@@ -11,15 +11,26 @@
 | --- | --- |
 | [docs/PLAN.md](docs/PLAN.md) | 项目计划：功能抽象、范围、里程碑、验收标准、风险 |
 | [docs/DEV-GUIDE.md](docs/DEV-GUIDE.md) | 开发手册：环境、目录、配置、编码规范、测试、部署 |
+| [docs/CONNECT.md](docs/CONNECT.md) | 接入清单：平台配置、服务器配置、验证步骤、常见失败 |
 | [docs/COVERAGE-AstrBot.md](docs/COVERAGE-AstrBot.md) | QQ 官方 API v2 × AstrBot 适配度研究（既有） |
 | [docs/INDEX.md](docs/INDEX.md) | QQ 官方文档快照索引（既有） |
 | [docs/autogen/](docs/autogen/) | QQ 官方 API / 事件文档快照（既有） |
 
+## 快速开始
+
+```bash
+cp config.example.json config.json   # 填写 appid / secret
+go run ./cmd/bot                    # 监听 :8080，回调路径 /webhook
+curl -s localhost:8080/healthz       # {"ok":true,"version":"dev"}
+```
+
+接入 QQ 平台的完整步骤见 [docs/CONNECT.md](docs/CONNECT.md)。
+
 ## 状态
 
 - [x] 需求调研与官方文档快照
-- [x] 项目计划与开发手册（待评审）
-- [ ] M0 骨架：webhook 验签 + Token + 文本收发
+- [x] 项目计划与开发手册
+- [x] M0 骨架：webhook 验签 + Op=13 + Token + 文本收发 + `/ping` `/help`
 - [ ] M1 存储 / ICS / 文字课表
 - [ ] M2 卡片图片
 - [ ] M3 休假调休 / 时长榜

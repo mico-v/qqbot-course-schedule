@@ -19,7 +19,8 @@
 1. 功能对等：插件现有的课程表存储、查询、图片、榜单、休假调休、ICS 导入、Web 管理台全部保留。
 2. 官方接口：事件走 Webhook，消息/媒体/按钮走 QQ 开放平台 v2 HTTP API。
 3. 独立部署：单二进制 + SQLite + 静态资源，一条 systemd 服务即可运行。
-4. 可演进：保留服务层接口，后续可接 LLM 工具、HTTP API、更多平台。
+4. 可演进：服务层与框架解耦，后续可加 HTTP API、更多平台，不接 LLM 工具。
+**已定边界（2026-09-19 评审）：渲染用纯 Go 最快方案（不做彩色 emoji）；图片发送走部署后的公网 URL 上传；不做 AI 工具。**
 
 ### 1.3 非目标
 
@@ -44,7 +45,7 @@
 | F6 | ICS 导入 / 导出 | P0 | 文件消息自动导入 + `schedule<QQ号>.ics` 约定 |
 | F7 | Web 管理台 | P1 | 5 个 Web API + 单页应用 |
 | F8 | 对话交互与权限 | P0 | 指令 + @ 提及 + 群成员角色 |
-| F9 | AI 查询/编辑工具 | P2 | `find` / `edit` LLM 工具 |
+| F9 | ~~AI 查询/编辑工具~~ **不做** | — | 查询/编辑逻辑保留在服务层，仅由指令与 WebUI 使用 |
 | F10 | 定时推送与主动消息 | P2 | 插件无，来自 Polarix 定时任务 |
 
 ---
@@ -286,8 +287,7 @@ schedule_day_overrides(scope_id, user_id, day, kind,
 
 #### F6.3 导出（Go 版新增，可选）
 
-- `/导出课表 [成员]`：把某成员当前事件序列化为 `.ics`，通过富媒体接口以文件消息发送。
-- 需要富媒体分片上传或公开 URL 上传（见第 4 节）。
+- `/导出课表 [成员]`：把某成员当前事件序列化为 `.ics`，通过富媒体接口以文件消息发送（公网 URL 上传，见第 4 节）。
 
 ### F7 Web 管理台
 
@@ -354,24 +354,11 @@ schedule_day_overrides(scope_id, user_id, day, kind,
 - 所有用户可见文案为中文；失败以字符串返回，不抛异常到聊天层。
 - 未知成员、越界 course_id、非法日期、超限等均有独立文案（沿用插件措辞）。
 
-### F9 AI 查询 / 编辑工具（P2）
+### F9 ~~AI 查询 / 编辑工具~~（不做）
 
-原插件向 AstrBot Agent 暴露两个工具，Go 版先抽象为**服务层 + HTTP API**，是否接入 LLM 由第 10 节决策。
-
-#### F9.1 `find`
-
-| 参数 | 规则 |
-| --- | --- |
-| `person` | QQ 号/完整昵称精确匹配；空 = 发送者；`all/全部/所有` = 全部成员 |
-| `time_range` | 空/`all/全部` = 全部事件定义；否则走 `time_range` 解析；另支持完整日期时间范围 |
-| `field`/`value` | 支持 `course/location/description/status/date/weekday/start_time/end_time/duration/rrule/member/user_id/source_file`；文本字段包含匹配，其余精确匹配；也接受 `course:数学` 紧凑写法 |
-| 输出 | 文本行，最多 200 行；每条含 `course_id`、时间、状态、时长、地点/备注/重复 |
-| `status` | `current/future/past`，支持中文别名 |
-
-#### F9.2 `edit`
-
-参数：`action`（create/update/delete 及中文）、`person`、`course_id`、`course`、`start_time`、`end_time`、
-`location`、`description`、`rrule`、`member_name`、`clear_fields`；行为与 F2 完全一致。
+**决策：不向任何 LLM/Agent 暴露工具接口。** 原插件的 `find`（按人/时间/字段查询）与
+`edit`（增删改）行为仍保留在服务层 `schedule.Service` 内部，供指令、WebUI 与测试复用；
+`course_id`、字段映射、状态枚举等语义继续遵守 F2 与 F9 原有的行为定义（作为内部接口契约）。
 
 ### F10 定时推送与主动消息（P2，新增）
 
@@ -393,7 +380,7 @@ schedule_day_overrides(scope_id, user_id, day, kind,
 | 指令接收 | `GROUP_AT_MESSAGE_CREATE` / `GROUP_MESSAGE_CREATE` / `C2C_MESSAGE_CREATE` | 需订阅 Intent `GROUP_AND_C2C_EVENT (1<<25)`；相同 `msg_id` 可能重复推送，按 `id` 去重 |
 | 被动回复 | `POST /v2/groups/{openid}/messages`、`/v2/users/{openid}/messages` | 5 分钟内、同一 `msg_id` 最多 5 条、`msg_seq` 去重 |
 | 主动推送 | 同上，不带 `msg_id` | 需群管理员开启接收；受频控；错误码 `40034100`/`40034105` |
-| 卡片图片 | 富媒体上传 + `msg_type=7`，或 Markdown 内嵌公网图片 | 本地图片两条路：公开 URL 上传 / 分片上传（`upload_prepare` → PUT → `upload_part_finish` → `files` 合并） |
+| 卡片图片 | 富媒体上传 + `msg_type=7`，或 Markdown 内嵌公网图片 | **已定：部署后服务器以公网 URL 提供图片，走 URL 上传**（`public_base_url`），不实现分片上传；Markdown 内嵌同理 |
 | ICS 文件 | 事件 `attachments[]`（`content_type=file`）下载；导出走 `file_type=4` 上传 | 附件 URL 为临时地址，需实测直连下载 |
 | 群信息 | `GET /v2/groups/{openid}/info` | 群名/人数，用于管理台展示 |
 | 群成员列表 | `GET /v2/groups/{openid}/members` | **内邀能力**，公开机器人不可用；降级见 F7.2 |
@@ -441,26 +428,31 @@ web/    管理台前端
 | 存储 | `modernc.org/sqlite` | 纯 Go 无 CGO，Polarix 同栈 |
 | RRULE | `github.com/teambition/rrule-go` | 支持 `between` 有界展开 |
 | ICS | 自研极简 VEVENT 解析（保留 RAW_ICAL）+ `arran4/golang-ical` 参考 | 插件语义依赖原始文本 |
-| 渲染 | `fogleman/gg` + `x/image/font/opentype`（备选 `chromedp`） | 轻量 vs 高还原度，见第 10 节 |
+| 渲染 | `fogleman/gg` + `x/image/font/opentype` | **已定：追求速度**，纯 Go 同步渲染，无外部进程；彩色 emoji 不做，见 5.3 |
 | 字素簇 | `rivo/uniseg` | emoji 昵称排版 |
 | 时区 | 标准库 `time/tzdata` | 免宿主 tzdata |
 | 静态资源 | 标准库 `embed` | 单二进制部署 |
 
-### 5.3 渲染方案对比（待决策）
+### 5.3 渲染方案（已定）
 
-| 方案 | 优点 | 缺点 |
-| --- | --- | --- |
-| `gg` + `opentype` | 轻量、无外部依赖、启动快 | 彩色 emoji 需自己处理（CBDT/COLR 或降级） |
-| `chromedp` | 版式还原度最高、emoji 直接可用、改样式快 | 需装 Chromium（约 300MB）、内存占用高 |
+选择 `gg` + `x/image/font/opentype` 的纯 Go 同步渲染：单张卡片预计 <100ms，进程内零外部依赖。
+
+| 项 | 决策 |
+| --- | --- |
+| 彩色 emoji | **不做**。昵称中的 emoji 降级为单色回退（Noto Emoji 变体）或首字占位，颜色不做 |
+| 字体 | 只用 Noto Sans CJK SC Regular/Bold（约 33MB，内嵌） |
+| 备选 | `chromedp` 已否决（需装 Chromium、启动慢，与“尽可能快”冲突） |
+| 头像 | 无官方头像接口，用“首字/首 emoji + 稳定底色”方案，不发起网络请求（快） |
 
 ---
 
 ## 6. 里程碑
 
-### M0 骨架打通（0.5~1 天）
+### M0 骨架打通（已完成，待平台联调验收）
 
 - Go module、配置、gin、`/webhook` 验签 + Op=13、Token 获取、发送一条文本消息。
-- 验收：QQ 群里 @机器人 得到文本回复；平台回调验证通过。
+- 已交付：`/ping`、`/help`、M1–M5 占位指令、事件幂等、互动事件应答、单元测试（config/verify/dispatch/bot）。
+- 验收：QQ 群里 @机器人 得到文本回复；平台回调验证通过（需真实 AppID/域名，见 `docs/CONNECT.md`）。
 
 ### M1 存储 + ICS + 文字课表（3~5 天）
 
@@ -469,7 +461,7 @@ web/    管理台前端
 
 ### M2 卡片图片（3~5 天）
 
-- 渲染 + 媒体发送（图床或分片上传）、收纳条带、状态色、页脚。
+- 渲染（gg 纯 Go）+ 图片公网 URL 上传、收纳条带、状态色、页脚。
 - 验收：群内收到卡片图片；状态/排序/收纳与 Python 版一致。
 
 ### M3 休假调休 + 时长榜（3~4 天）
@@ -489,7 +481,7 @@ web/    管理台前端
 
 ### M6 收尾（2~3 天）
 
-- `/导出课表`、F9 服务层 + HTTP、日志与错误码、systemd 部署文档、README 完善。
+- `/导出课表`、日志与错误码、systemd 部署文档、README 完善。
 
 **总计约 3~4 周**（单人）。
 
@@ -517,9 +509,9 @@ web/    管理台前端
 | R1 | 群成员列表内邀 | 批量建课表不可用 | 降级为"已互动/已导入成员"；提示管理员手动导入 |
 | R2 | 无头像/QQ 号 | 卡片视觉与原版不一致、数据不可迁移 | 首字字母头像；数据迁移靠重新导入 ICS |
 | R3 | 主动推送受限 | 定时推送可能失败 | 订阅开关 + 频控退避 + 错误码区分提示 |
-| R4 | 本地图片发送 | 需要公网 URL 或分片上传 | webhook 服务器兼作图床（配置 `public_base_url`）；或实现分片上传 |
+| R4 | 本地图片发送 | 需要公网 URL | **已定**：webhook 服务器兼作图床（`public_base_url`），部署后 URL 上传；R2 的“前缀”风险同步降低 |
 | R5 | 附件 URL 可下载性未实测 | ICS 导入可能不通 | M0 阶段实测；必要时提示用户改用 WebUI |
-| R6 | 彩色 emoji 渲染 | `gg` 路线降级 | 决策渲染方案；必要时 chromedp |
+| R6 | ~~彩色 emoji 渲染~~ | **已定**：不做彩色 emoji，降级单色/占位 | — |
 | R7 | 域名/接口变更 | 调用失败 | 域名配置化；跟进 `docs/changelog.md` |
 | R8 | 限频与重试 | 消息丢失 | 客户端统一重试 + 429/5xx 退避 |
 | R9 | 许可证 | 开源合规 | 业务源自自有 AGPL 项目可改写；Polarix MIT 需保留声明；字体 OFL |
@@ -541,10 +533,10 @@ web/    管理台前端
 
 | # | 问题 | 建议 |
 | --- | --- | --- |
-| D1 | 渲染方案选 `gg` 还是 `chromedp`？ | 先 `gg`（轻量），emoji 接受降级；若视觉要求高再换 |
-| D2 | 图片发送走"公网 URL 图床"还是"分片上传"？ | 图床（服务器已有公网域名），实现成本低 |
+| D1 | 渲染方案 | **已定**：`gg` 纯 Go 最快方案，彩色 emoji 不做 |
+| D2 | 图片发送 | **已定**：部署后公网 URL 直接上传（图床），不实现分片上传 |
 | D3 | Web 管理台路径与鉴权 | `/admin` 下 Basic Auth，复用 Polarix 机制 |
-| D4 | 是否保留 F9 AI 工具？ | 先做服务层 + HTTP，不接 LLM |
+| D4 | AI 工具 | **已定**：不做；查询/编辑保留为内部服务层 |
 | D5 | 是否需要历史数据迁移/绑定流程？ | 不做自动迁移，提供"重新导入 ICS"路径 |
 | D6 | 定时推送的默认策略 | 默认关闭，群内 `/启用推送` 后按 cron 推送 |
 | D7 | 许可证 | 建议 MIT（业务代码为自有版权） |

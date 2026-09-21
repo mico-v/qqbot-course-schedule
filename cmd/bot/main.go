@@ -1,0 +1,109 @@
+// Command bot runs the QQ official-bot course schedule service (M0 skeleton).
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/gin-gonic/gin"
+
+	"github.com/mico-v/qqbot-course-schedule/internal/bot"
+	"github.com/mico-v/qqbot-course-schedule/internal/config"
+	"github.com/mico-v/qqbot-course-schedule/internal/qqapi"
+	"github.com/mico-v/qqbot-course-schedule/internal/webhook"
+)
+
+// version is injected at build time.
+var version = "dev"
+
+func main() {
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, "启动失败:", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	configPath := os.Getenv("BOT_CONFIG")
+	if configPath == "" {
+		configPath = "config.json"
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return err
+	}
+	setupLogger(cfg.LogLevel)
+	slog.Info("启动 qqbot-course-schedule", "version", version, "port", cfg.Port, "domain", cfg.Domain)
+
+	client := qqapi.New(cfg)
+	handler := bot.NewDefaultHandler()
+	dispatcher := webhook.NewDispatcher(client, cfg.Secret, handler)
+	verify, err := webhook.Verify(cfg.Secret)
+	if err != nil {
+		return fmt.Errorf("初始化 webhook 签名校验失败: %w", err)
+	}
+
+	gin.SetMode(gin.ReleaseMode)
+	router := gin.New()
+	router.Use(gin.Recovery())
+	router.GET("/healthz", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"ok": true, "version": version})
+	})
+	router.POST("/webhook", verify, dispatcher.Handle)
+
+	server := &http.Server{
+		Addr:              fmt.Sprintf(":%d", cfg.Port),
+		Handler:           router,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	serveErr := make(chan error, 1)
+	go func() {
+		slog.Info("webhook 监听中", "addr", server.Addr, "path", "/webhook")
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serveErr <- err
+		}
+	}()
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	select {
+	case err := <-serveErr:
+		return fmt.Errorf("HTTP 服务异常退出: %w", err)
+	case <-ctx.Done():
+		slog.Info("收到退出信号，正在关闭")
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("关闭 HTTP 服务失败: %w", err)
+	}
+	return nil
+}
+
+func setupLogger(level string) {
+	var slogLevel slog.Level
+	switch strings.ToLower(level) {
+	case "debug":
+		slogLevel = slog.LevelDebug
+	case "warn", "warning":
+		slogLevel = slog.LevelWarn
+	case "error":
+		slogLevel = slog.LevelError
+	default:
+		slogLevel = slog.LevelInfo
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slogLevel,
+	})))
+}
