@@ -244,6 +244,16 @@ function validateSchedule(events) {
   return "";
 }
 
+async function selectMember(scopeId, userId) {
+  if (!canLeaveEditor()) return;
+  try {
+    await loadMember(scopeId, userId);
+    showNotice("");
+  } catch (error) {
+    showNotice(error.message, "error");
+  }
+}
+
 async function loadMember(scopeId, userId) {
   const schedule = await apiGet("/api/schedule", { scope_id: scopeId, user_id: userId });
   state.schedule = schedule;

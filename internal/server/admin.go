@@ -153,6 +153,8 @@ func serveAsset(name, contentType string) gin.HandlerFunc {
 			c.Status(http.StatusNotFound)
 			return
 		}
+		// Admin assets are small; never let a stale app.js survive an upgrade.
+		c.Header("Cache-Control", "no-store")
 		c.Data(http.StatusOK, contentType, data)
 	}
 }
