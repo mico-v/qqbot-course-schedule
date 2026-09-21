@@ -8,5 +8,7 @@
   "database": "data/course_schedule.sqlite3",
   "data_dir": "data",
   "admin_password": "",
-  "log_level": "info"
+  "log_level": "info",
+  "push_cron": "30 7 * * *",
+  "buttons": false
 }

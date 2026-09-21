@@ -7,6 +7,9 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/mico-v/qqbot-course-schedule/internal/schedule"
 )
 
 // Command is one registered chat command.
@@ -129,6 +132,61 @@ func (h *Handler) Dispatch(ctx context.Context, msg *Message) {
 	slog.Info("执行指令", "prefix", prefix, "origin", msg.Origin, "user", shortID(msg.UserOpenID))
 	if err := cmd.Handle(ctx, msg); err != nil {
 		slog.Error("指令执行失败", "prefix", prefix, "err", err)
+	}
+}
+
+// Callback is one button press delivered as an INTERACTION_CREATE event.
+type Callback struct {
+	Data        string
+	EventID     string
+	GroupOpenID string
+	UserOpenID  string
+}
+
+// HandleCallback renders the card a button asked for and replies passively to
+// the interaction event.
+func (h *Handler) HandleCallback(ctx context.Context, cb *Callback) {
+	if h.env == nil || cb == nil || cb.Data == "" {
+		return
+	}
+	msg := &Message{Client: h.env.Client, EventID: cb.EventID, UserOpenID: cb.UserOpenID, GroupOpenID: cb.GroupOpenID}
+	if cb.GroupOpenID != "" {
+		msg.Origin = OriginGroup
+	} else {
+		msg.Origin = OriginPrivate
+	}
+	action, param, ok := strings.Cut(cb.Data, ":")
+	if !ok {
+		return
+	}
+	switch action {
+	case "day":
+		day, err := time.ParseInLocation("2006-01-02", param, schedule.LocalTZ)
+		if err != nil {
+			return
+		}
+		url, found, err := h.env.RenderDayCard(ctx, msg, day)
+		if err != nil || !found {
+			_ = msg.Reply(ctx, "当前会话还没有可展示的课程表。")
+			return
+		}
+		keyboard := cardKeyboardForDay(day.Format("2006-01-02"), h.env.now().Format("2006-01-02"), cb.UserOpenID)
+		if err := h.env.SendCard(ctx, msg, url, keyboard); err != nil {
+			slog.Error("按钮卡片发送失败", "err", err)
+		}
+	case "rank":
+		period := map[string]string{"thisweek": "本周", "lastweek": "上周", "thismonth": "本月"}[param]
+		if period == "" {
+			return
+		}
+		url, found, err := h.env.RenderRankCard(ctx, msg, period)
+		if err != nil || !found {
+			_ = msg.Reply(ctx, "当前会话还没有可统计的课程。")
+			return
+		}
+		if err := h.env.SendCard(ctx, msg, url, cardKeyboardForRank(cb.UserOpenID)); err != nil {
+			slog.Error("按钮榜单发送失败", "err", err)
+		}
 	}
 }
 

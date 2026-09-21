@@ -144,6 +144,8 @@ schedule 包内不得 import gin/qqapi/store
 | `public_base_url` | string | | — | 对外 HTTPS 地址，用于图床与分享链接 |
 | `database` | string | | `data/course_schedule.sqlite3` | SQLite 路径 |
 | `admin_password` | string | | 空 | 管理台密码；空时仅本机可访问 |
+| `push_cron` | string | | `30 7 * * *` | 每日课表推送（5 段 cron，本地时区）；`/启用推送` 后才推送 |
+| `buttons` | bool | | false | 卡片按钮（markdown+keyboard）；官方为内邀能力，默认关闭 |
 | `log_level` | string | | `info` | `debug/info/warn/error` |
 | `data_dir` | string | | `data` | 图片、缓存根目录 |
 

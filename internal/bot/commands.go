@@ -15,9 +15,7 @@ var planned = []struct {
 	Description string
 	Milestone   string
 }{
-	{"/导出课表", "导出当前课表为 .ics 文件", "M4"},
-	{"/启用推送", "允许机器人向本会话主动推送", "M4"},
-	{"/关闭推送", "关闭机器人对本会话的主动推送", "M4"},
+	{"/导出课表", "导出当前课表为 .ics 文件", "M5"},
 }
 
 // NewDefaultHandler registers the implemented commands.
@@ -109,6 +107,18 @@ func NewDefaultHandler(env *Env) *Handler {
 		Handle:      h.handleDayOffListCommand,
 	})
 	h.Register(&Command{
+		Prefix:      "/启用推送",
+		Description: "允许机器人向本会话主动推送",
+		Ready:       true,
+		Handle:      h.handleEnablePush,
+	})
+	h.Register(&Command{
+		Prefix:      "/关闭推送",
+		Description: "关闭机器人对本会话的主动推送",
+		Ready:       true,
+		Handle:      h.handleDisablePush,
+	})
+	h.Register(&Command{
 		Prefix:      "/同步面板",
 		Description: "同步机器人指令面板（管理员）",
 		Handle:      h.handleSyncPanelCommand,
@@ -180,7 +190,7 @@ func (h *Handler) handleRankCommand(ctx context.Context, msg *Message) error {
 	if !ok {
 		return msg.Reply(ctx, "当前会话还没有可统计的课程。")
 	}
-	return msg.ReplyImage(ctx, url)
+	return h.env.SendCard(ctx, msg, url, cardKeyboardForRank(msg.UserOpenID))
 }
 
 func (h *Handler) handleOverrideSet(ctx context.Context, msg *Message, kind string) error {
@@ -273,6 +283,47 @@ func (h *Handler) handleDayOffListCommand(ctx context.Context, msg *Message) err
 	return msg.Reply(ctx, text)
 }
 
+func (h *Handler) handleEnablePush(ctx context.Context, msg *Message) error {
+	if h.env == nil {
+		return msg.Reply(ctx, "课表功能未初始化。")
+	}
+	if msg.Origin == OriginGroup && !msg.IsAdmin() {
+		return msg.Reply(ctx, "只有群管理员可以开启本群的主动推送。")
+	}
+	sub := PushSubscription{
+		Enabled:   true,
+		Origin:    "private",
+		OpenID:    msg.UserOpenID,
+		EnabledBy: msg.UserOpenID,
+		EnabledAt: schedule.NowISO(),
+	}
+	if msg.Origin == OriginGroup {
+		sub.Origin = "group"
+		sub.OpenID = msg.GroupOpenID
+	}
+	if err := h.env.SetPushSubscription(h.env.Scope(msg), sub); err != nil {
+		return msg.Reply(ctx, "开启失败："+err.Error())
+	}
+	extra := ""
+	if msg.Origin == OriginGroup {
+		extra = "；群聊还需群管理员在机器人资料页打开「消息推送」，否则平台会拒绝"
+	}
+	return msg.Reply(ctx, "已开启每日课表推送（"+pushTimeText(h.env.PushCron)+"）"+extra+"。")
+}
+
+func (h *Handler) handleDisablePush(ctx context.Context, msg *Message) error {
+	if h.env == nil {
+		return msg.Reply(ctx, "课表功能未初始化。")
+	}
+	if msg.Origin == OriginGroup && !msg.IsAdmin() {
+		return msg.Reply(ctx, "只有群管理员可以关闭本群的主动推送。")
+	}
+	if err := h.env.RemovePushSubscription(h.env.Scope(msg)); err != nil {
+		return msg.Reply(ctx, "关闭失败："+err.Error())
+	}
+	return msg.Reply(ctx, "已关闭本会话的每日课表推送。")
+}
+
 func (h *Handler) handleSyncPanelCommand(ctx context.Context, msg *Message) error {
 	if h.env == nil {
 		return msg.Reply(ctx, "课表功能未初始化。")
@@ -302,7 +353,8 @@ func handleDayCard(ctx context.Context, env *Env, msg *Message, day *time.Time) 
 	if !ok {
 		return msg.Reply(ctx, "当前会话还没有可展示的课程表。请先发送 /导入课表 并附加 .ics 文件。")
 	}
-	return msg.ReplyImage(ctx, url)
+	keyboard := cardKeyboardForDay(target.Format("2006-01-02"), env.now().Format("2006-01-02"), msg.UserOpenID)
+	return env.SendCard(ctx, msg, url, keyboard)
 }
 
 func toScheduleMentions(mentions []Mention) []schedule.Mention {

@@ -555,6 +555,28 @@ func mergeOverrides(scopeWide, member map[string]schedule.DayOverride) map[strin
 	return merged
 }
 
+// ListKV returns every key/value in one namespace.
+func (s *Store) ListKV(scope, namespace string) ([]schedule.KVEntry, error) {
+	rows, err := s.db.Query(
+		`SELECT key, value FROM kv_data WHERE scope = ? AND namespace = ? ORDER BY key`,
+		scope, namespace,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("读取 KV 列表失败: %w", err)
+	}
+	defer rows.Close()
+	var entries []schedule.KVEntry
+	for rows.Next() {
+		var key string
+		var value []byte
+		if err := rows.Scan(&key, &value); err != nil {
+			return nil, fmt.Errorf("读取 KV 行失败: %w", err)
+		}
+		entries = append(entries, schedule.KVEntry{Key: key, Value: value})
+	}
+	return entries, rows.Err()
+}
+
 // GetKV reads a namespaced value.
 func (s *Store) GetKV(scope, namespace, key string, out any) (bool, error) {
 	var raw []byte

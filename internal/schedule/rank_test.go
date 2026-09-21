@@ -222,6 +222,18 @@ func (m *memoryStorage) GetKV(scope, namespace, key string, out any) (bool, erro
 	return ok, nil
 }
 
+func (m *memoryStorage) ListKV(scope, namespace string) ([]KVEntry, error) {
+	prefix := scope + "/" + namespace + "/"
+	var entries []KVEntry
+	for key, value := range m.kv {
+		if strings.HasPrefix(key, prefix) {
+			entries = append(entries, KVEntry{Key: strings.TrimPrefix(key, prefix), Value: value})
+		}
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Key < entries[j].Key })
+	return entries, nil
+}
+
 func (m *memoryStorage) SetKV(scope, namespace, key string, value any) error {
 	m.kv[scope+"/"+namespace+"/"+key] = []byte{}
 	return nil

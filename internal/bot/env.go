@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"image"
+	"log/slog"
 	"math"
 	"path/filepath"
 	"strings"
@@ -24,6 +25,10 @@ type Env struct {
 	DataDir       string
 	ImagesDir     string
 	PublicBaseURL string
+	// Buttons enables markdown+keyboard card messages (platform invite only).
+	Buttons bool
+	// PushCron is the daily push schedule (5-field cron, local time).
+	PushCron string
 	// Now is overridable in tests.
 	Now func() time.Time
 
@@ -91,6 +96,38 @@ func (e *Env) RenderDayCard(ctx context.Context, msg *Message, day time.Time) (s
 		return "", false, fmt.Errorf("保存课表图片失败: %w", err)
 	}
 	return e.PublicImageURL(name), true, nil
+}
+
+// SendCard sends a card image. When buttons are enabled it uses a markdown
+// message (the only message type that renders keyboards) and falls back to a
+// media message when the platform rejects the keyboard.
+func (e *Env) SendCard(ctx context.Context, msg *Message, imageURL string, keyboard *qqapi.Keyboard) error {
+	if e.Buttons && keyboard != nil {
+		content := fmt.Sprintf("![课程表 #1240px #850px](%s)", imageURL)
+		var err error
+		if msg.MsgID == "" && msg.EventID != "" {
+			if msg.Origin == OriginGroup {
+				err = e.Client.SendGroupMarkdownEvent(ctx, msg.GroupOpenID, content, keyboard, msg.EventID)
+			} else {
+				err = e.Client.SendC2CMarkdownEvent(ctx, msg.UserOpenID, content, keyboard, msg.EventID)
+			}
+		} else {
+			seq, seqErr := msg.nextSeq()
+			if seqErr != nil {
+				return seqErr
+			}
+			if msg.Origin == OriginGroup {
+				err = e.Client.SendGroupMarkdown(ctx, msg.GroupOpenID, content, keyboard, msg.MsgID, seq)
+			} else {
+				err = e.Client.SendC2CMarkdown(ctx, msg.UserOpenID, content, keyboard, msg.MsgID, seq)
+			}
+		}
+		if err == nil {
+			return nil
+		}
+		slog.Warn("markdown 卡片发送失败，回退为媒体消息", "err", err)
+	}
+	return msg.ReplyImage(ctx, imageURL)
 }
 
 // RenderRankCard builds and saves the class-hours leaderboard for one period.

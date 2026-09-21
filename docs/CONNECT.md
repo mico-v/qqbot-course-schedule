@@ -31,8 +31,8 @@
 | --- | --- | --- |
 | 群 @ 消息 `GROUP_AT_MESSAGE_CREATE` | 群内指令 | M0 |
 | 单聊消息 `C2C_MESSAGE_CREATE` | 私聊指令 | M0 |
-| 互动事件 `INTERACTION_CREATE` | 按钮回调 | M5 |
-| 群消息接收开关 `GROUP_MSG_RECEIVE` / 单聊 `C2C_MSG_RECEIVE` | 主动推送资格 | M5 |
+| 互动事件 `INTERACTION_CREATE` | 按钮回调（自定义按钮为内邀能力） | M4 |
+| 群消息接收开关 `GROUP_MSG_RECEIVE` / 单聊 `C2C_MSG_RECEIVE` | 主动推送资格（群管理员在机器人资料页开启） | M4 |
 | 全量群消息 `GROUP_MESSAGE_CREATE` | 非 @ 消息处理（需申请） | 可选 |
 
 4. 保存回调配置时平台会立即发 `op=13` 验证请求，**服务必须已经在线**，否则保存失败。
@@ -120,6 +120,14 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST https://<你的域名>/webhook 
 | 服务起不来 | `config.json` 缺失或 `port` 非法 | 启动日志会给出中文原因 |
 
 ---
+
+## 6.1 主动推送与按钮
+
+- 定时推送：群里由管理员发 `/启用推送`；平台侧还需群管理员在机器人资料页打开「消息推送」，
+  否则发送会返回 40034105。`push_cron` 默认 `30 7 * * *`（服务器本地时区）。
+- 按钮：官方"自定义按钮"目前为**内邀开通**，且按钮只挂在 markdown 消息上。
+  开通后把 `config.json` 的 `buttons` 设为 `true`，卡片会以 markdown+图片+按钮发送，
+  失败自动回退媒体消息；同时需要在平台勾选「互动事件」。
 
 ## 7. 下一步（M1）
 

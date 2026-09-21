@@ -30,6 +30,7 @@ type Message struct {
 	GroupOpenID string
 	UserOpenID  string
 	MsgID       string
+	EventID     string
 	Content     string
 	Args        string
 	Username    string
@@ -74,10 +75,16 @@ func (m *Message) Reply(ctx context.Context, text string) error {
 		if m.GroupOpenID == "" {
 			return errors.New("群消息缺少 group_openid")
 		}
+		if m.MsgID == "" && m.EventID != "" {
+			return m.Client.SendGroupTextEvent(ctx, m.GroupOpenID, text, m.EventID)
+		}
 		_, err = m.Client.SendGroupText(ctx, m.GroupOpenID, text, m.MsgID, seq)
 	case OriginPrivate:
 		if m.UserOpenID == "" {
 			return errors.New("单聊消息缺少 user_openid")
+		}
+		if m.MsgID == "" && m.EventID != "" {
+			return m.Client.SendC2CTextEvent(ctx, m.UserOpenID, text, m.EventID)
 		}
 		_, err = m.Client.SendC2CText(ctx, m.UserOpenID, text, m.MsgID, seq)
 	default:
@@ -97,12 +104,30 @@ func (m *Message) ReplyImage(ctx context.Context, imageURL string) error {
 		if m.GroupOpenID == "" {
 			return errors.New("群消息缺少 group_openid")
 		}
+		if m.MsgID == "" && m.EventID != "" {
+			return m.Client.SendGroupImageEvent(ctx, m.GroupOpenID, imageURL, m.EventID)
+		}
 		return m.Client.SendGroupImage(ctx, m.GroupOpenID, imageURL, m.MsgID, seq)
 	case OriginPrivate:
 		if m.UserOpenID == "" {
 			return errors.New("单聊消息缺少 user_openid")
 		}
+		if m.MsgID == "" && m.EventID != "" {
+			return m.Client.SendC2CImageEvent(ctx, m.UserOpenID, imageURL, m.EventID)
+		}
 		return m.Client.SendC2CImage(ctx, m.UserOpenID, imageURL, m.MsgID, seq)
+	default:
+		return fmt.Errorf("未知消息来源 %q", m.Origin)
+	}
+}
+
+// PushImage sends a proactive image message with no msg_id.
+func (m *Message) PushImage(ctx context.Context, imageURL string) error {
+	switch m.Origin {
+	case OriginGroup:
+		return m.Client.SendGroupImage(ctx, m.GroupOpenID, imageURL, "", 0)
+	case OriginPrivate:
+		return m.Client.SendC2CImage(ctx, m.UserOpenID, imageURL, "", 0)
 	default:
 		return fmt.Errorf("未知消息来源 %q", m.Origin)
 	}

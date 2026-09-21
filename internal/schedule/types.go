@@ -86,8 +86,15 @@ type Storage interface {
 	SetDayOverride(scopeID, userID, day string, override DayOverride, createdBy, createdAt string) error
 	DeleteDayOverride(scopeID, userID, day string) (bool, error)
 	GetKV(scope, namespace, key string, out any) (bool, error)
+	ListKV(scope, namespace string) ([]KVEntry, error)
 	SetKV(scope, namespace, key string, value any) error
 	DeleteKV(scope, namespace, key string) error
+}
+
+// KVEntry is one namespaced key/value pair.
+type KVEntry struct {
+	Key   string
+	Value []byte
 }
 
 // DayOverrideRow is one stored marker.

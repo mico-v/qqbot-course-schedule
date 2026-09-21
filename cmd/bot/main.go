@@ -74,6 +74,8 @@ func run() error {
 		DataDir:       cfg.DataDir,
 		ImagesDir:     filepath.Join(cfg.DataDir, "images"),
 		PublicBaseURL: cfg.PublicImageBase(),
+		Buttons:       cfg.Buttons,
+		PushCron:      cfg.PushCron,
 	}
 	handler := bot.NewDefaultHandler(env)
 	dispatcher := webhook.NewDispatcher(client, cfg.Secret, handler)
@@ -100,6 +102,15 @@ func run() error {
 
 	go refreshBotAvatar(client, env)
 	go syncCommandPanels(env, handler)
+	go syncMenu(env)
+
+	scheduler, err := bot.StartScheduler(env, cfg.PushCron)
+	if err != nil {
+		slog.Warn("每日推送未启用", "err", err)
+	} else {
+		defer scheduler.Stop()
+		slog.Info("每日推送已启用", "cron", cfg.PushCron)
+	}
 
 	serveErr := make(chan error, 1)
 	go func() {
@@ -125,6 +136,17 @@ func run() error {
 		return fmt.Errorf("关闭 HTTP 服务失败: %w", err)
 	}
 	return nil
+}
+
+func syncMenu(env *bot.Env) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	changed, err := bot.SyncMenu(ctx, env)
+	if err != nil {
+		slog.Warn("同步自定义菜单失败", "err", err)
+		return
+	}
+	slog.Info("自定义菜单同步完成", "changed", changed)
 }
 
 func syncCommandPanels(env *bot.Env, handler *bot.Handler) {

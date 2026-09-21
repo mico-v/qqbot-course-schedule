@@ -25,7 +25,8 @@ curl -s localhost:8080/healthz       # {"ok":true,"version":"dev"}
 ```
 
 已实现指令：`/今日课表` `/明日课表` `/课表 [日期]` `/导入课表`（发送 `.ics` 文件自动导入）
-`/上课时长榜`（别名 `/上课排行` `/本周上课排行` `/学习时长榜`）、`/休假` `/调休` `/销假` `/假期`、`/ping` `/help`。
+`/上课时长榜`（别名 `/上课排行` `/本周上课排行` `/学习时长榜`）、`/休假` `/调休` `/销假` `/假期`、
+`/启用推送` `/关闭推送`、`/ping` `/help`。
 卡片预览（开发用）：`go run ./cmd/cardpreview -o /tmp/card.jpg`（`-rank` 预览榜单）。
 
 管理台：启动后访问 `/admin`（未设置 `admin_password` 时仅允许服务器本机访问；设置后使用 HTTP Basic Auth，用户名 `admin`）。
@@ -51,7 +52,7 @@ curl -s localhost:8080/healthz       # {"ok":true,"version":"dev"}
 - [x] M2 休假调休 / 时长榜（图片，含别名与 @ 提及）
 - [x] M3 Web 管理台（`/admin`，Basic Auth）
 - [x] M4 指令面板（c2c + group 已上线，`/同步面板` 可手动同步）
-- [ ] M4 按钮交互 / 定时推送
+- [x] M4 按钮交互 / 定时推送 / 自定义菜单
 
 ## 许可证
 
