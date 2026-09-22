@@ -231,3 +231,44 @@ func TestAdminAssetsAndTrailingSlash(t *testing.T) {
 		t.Fatalf("admin page must reference assets by absolute /admin path")
 	}
 }
+
+func TestScopesIncludeSeenOnlyGroup(t *testing.T) {
+	router, service := newAdminRouter(t, adminPassword)
+	scope := schedule.ScopeGroup("GSEEN")
+	if err := service.RecordSeenMember(scope, "U9", "小九"); err != nil {
+		t.Fatalf("RecordSeenMember: %v", err)
+	}
+
+	recorder := adminRequest(router, http.MethodGet, "/api/scopes", nil, true)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("scopes = %d", recorder.Code)
+	}
+	var response struct {
+		Scopes []struct {
+			ScopeID      string `json:"scope_id"`
+			MemberCount  int    `json:"member_count"`
+			PendingCount int    `json:"pending_count"`
+		} `json:"scopes"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Scopes) != 1 || response.Scopes[0].ScopeID != scope ||
+		response.Scopes[0].MemberCount != 0 || response.Scopes[0].PendingCount != 1 {
+		t.Fatalf("scopes = %+v", response.Scopes)
+	}
+
+	recorder = adminRequest(router, http.MethodGet, "/api/members?scope_id="+scope, nil, true)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("members = %d", recorder.Code)
+	}
+	var members struct {
+		Members []schedule.NewMember `json:"members"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &members); err != nil {
+		t.Fatal(err)
+	}
+	if len(members.Members) != 1 || members.Members[0].UserID != "U9" || members.Members[0].Name != "小九" {
+		t.Fatalf("members = %+v", members.Members)
+	}
+}

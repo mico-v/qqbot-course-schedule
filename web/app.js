@@ -139,7 +139,13 @@ function renderScopes() {
     scopeButton.className = "scope-button";
     scopeButton.innerHTML = `<span class="scope-label"></span><span class="scope-meta"></span>`;
     scopeButton.querySelector(".scope-label").textContent = scope.label;
-    scopeButton.querySelector(".scope-meta").textContent = `${scope.member_count} 位成员 · ${scope.event_count} 节课`;
+    const pendingCount = scope.pending_count || 0;
+    scopeButton.querySelector(".scope-meta").textContent =
+      scope.member_count > 0
+        ? `${scope.member_count} 位成员 · ${scope.event_count} 节课`
+        : pendingCount > 0
+          ? `待添加 ${pendingCount} 位成员`
+          : "0 位成员 · 0 节课";
     scopeButton.addEventListener("click", () => {
       if (!canLeaveEditor()) return;
       state.selectedScopeId = scope.scope_id;
@@ -366,7 +372,7 @@ function renderPicker() {
   if (!addMembers.loading && visible.length === 0) {
     empty.textContent = addMembers.members.length
       ? "没有符合搜索条件的成员。"
-      : "暂无可添加的成员：官方群成员列表为内邀能力，这里只显示与机器人互动过、且还没有课表的成员。";
+      : "暂无可添加的成员：官方群成员列表为内邀能力，这里显示在群里发过言或与机器人互动过、且还没有课表的成员。";
     empty.classList.remove("hidden");
   } else {
     empty.classList.add("hidden");

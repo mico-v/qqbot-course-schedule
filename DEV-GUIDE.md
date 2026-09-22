@@ -326,8 +326,10 @@ msg.Keyboard(kb)
 - 前端不使用 `window.AstrBotPluginPage`，统一 `fetch('/api/...')`，错误统一 `{error: "..."}`。
 - 保存流程：读取时拿 `revision` → 提交时回传 → 409 时提示刷新，**不要自动重试覆盖**。
 - 所有输入在服务端重新校验（长度、时间、RRULE），前端校验只是体验。
-- 观察成员：`Handler.Dispatch` 在指令/附件消息上调用 `Service.RecordSeenMember`，
-  管理台用它给"没有课表"的成员建空表；官方群成员列表内邀不可用，这是降级方案。
+- 观察成员：`Handler.Dispatch` 对**每条收到的消息**调用 `Service.RecordSeenMember`
+  （指令、附件、全量模式下的普通发言都算）；官方群成员列表内邀不可用，这是降级方案。
+- 会话列表除"已有课表"的群外，还包含"只有发言记录、还没有课表"的群（`ScopeSummaries`
+  合并 `seen` KV），并返回 `pending_count`，管理台显示"待添加 N 位成员"引导建表。
 - 休假/调休标记（`internal/server/overrides.go`）：
   - `GET /api/overrides?scope_id=` 列出标记（带成员显示名，`*` 显示为"全体成员"）
   - `POST /api/overrides/set`（`scope_id`/`user_id`/`day`/`kind`/`source_day`）与

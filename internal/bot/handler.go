@@ -95,12 +95,14 @@ var mentionPrefix = regexp.MustCompile(`^(?:<@!?[0-9A-Za-z_=-]+>\s*)+`)
 func (h *Handler) Dispatch(ctx context.Context, msg *Message) {
 	content := strings.TrimSpace(mentionPrefix.ReplaceAllString(msg.Content, ""))
 	msg.Content = content
+	// Every accepted message marks the sender as seen, so the admin page can
+	// offer an empty schedule even for members who only chat (full-message mode).
+	h.recordSeen(msg)
 
 	// An .ics attachment imports itself, whether or not it came with a command.
 	if h.env != nil {
 		for _, attachment := range msg.Attachments {
 			if isICSFile(attachment) {
-				h.recordSeen(msg)
 				if err := h.env.ImportICS(ctx, msg, attachment); err != nil {
 					slog.Error("导入课表失败", "err", err)
 				}

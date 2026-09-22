@@ -167,3 +167,53 @@ func TestCreateMemberSchedulesAndPending(t *testing.T) {
 		t.Fatalf("summaries = %+v", summaries)
 	}
 }
+
+func TestScopeSummariesIncludesSeenOnlyScope(t *testing.T) {
+	service, _ := newService(t)
+	scope := schedule.ScopeGroup("GSEEN")
+	if err := service.RecordSeenMember(scope, "U9", "小九"); err != nil {
+		t.Fatal(err)
+	}
+	summaries, err := service.ScopeSummaries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := 0
+	for _, summary := range summaries {
+		if summary.ScopeID == scope {
+			seen++
+			if len(summary.Members) != 0 {
+				t.Fatalf("seen-only scope has members: %+v", summary.Members)
+			}
+		}
+	}
+	if seen != 1 {
+		t.Fatalf("seen-only scope count = %d, summaries = %+v", seen, summaries)
+	}
+	pending, err := service.PendingMembers(scope)
+	if err != nil || len(pending) != 1 || pending[0].UserID != "U9" {
+		t.Fatalf("pending = %+v err=%v", pending, err)
+	}
+
+	// A scope with a saved schedule must not be duplicated by the seen list.
+	withSchedule := schedule.ScopeGroup("G1")
+	if _, err := service.SaveICS(withSchedule, "U1", "小明", adminICS, "s.ics", "U1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.RecordSeenMember(withSchedule, "U1", "小明"); err != nil {
+		t.Fatal(err)
+	}
+	summaries, err = service.ScopeSummaries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, summary := range summaries {
+		if summary.ScopeID == withSchedule {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("scope %s appears %d times", withSchedule, count)
+	}
+}

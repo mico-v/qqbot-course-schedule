@@ -21,11 +21,29 @@ type ScopeSummary struct {
 	Members []ScopeMemberSummary `json:"members"`
 }
 
-// ScopeSummaries lists every scope that has saved schedules.
+// ScopeSummaries lists every scope that has saved schedules, plus scopes whose
+// members only interacted with the bot (so their first schedule can be created).
 func (s *Service) ScopeSummaries() ([]ScopeSummary, error) {
 	summaries, err := s.store.ListScopeSummaries()
 	if err != nil {
 		return nil, err
+	}
+	known := make(map[string]bool, len(summaries))
+	for _, summary := range summaries {
+		known[summary.ScopeID] = true
+	}
+	entries, err := s.store.ListKV("global", seenNamespace)
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		if known[entry.Key] {
+			continue
+		}
+		if kind, _ := ParseScope(entry.Key); kind != "group" && kind != "private" {
+			continue
+		}
+		summaries = append(summaries, ScopeSummary{ScopeID: entry.Key})
 	}
 	sort.Slice(summaries, func(i, j int) bool { return summaries[i].ScopeID < summaries[j].ScopeID })
 	return summaries, nil

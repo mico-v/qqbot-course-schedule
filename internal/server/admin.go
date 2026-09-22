@@ -48,14 +48,21 @@ func RegisterAdmin(router *gin.Engine, service *schedule.Service, password strin
 				})
 				eventCount += member.EventCount
 			}
+			pendingCount := 0
+			if len(members) == 0 {
+				if pending, pendingErr := service.PendingMembers(summary.ScopeID); pendingErr == nil {
+					pendingCount = len(pending)
+				}
+			}
 			scopes = append(scopes, gin.H{
-				"scope_id":     summary.ScopeID,
-				"kind":         kind,
-				"target_id":    targetID,
-				"label":        scopeLabel(kind, targetID),
-				"member_count": len(members),
-				"event_count":  eventCount,
-				"members":      members,
+				"scope_id":      summary.ScopeID,
+				"kind":          kind,
+				"target_id":     targetID,
+				"label":         scopeLabel(kind, targetID),
+				"member_count":  len(members),
+				"event_count":   eventCount,
+				"pending_count": pendingCount,
+				"members":       members,
 			})
 		}
 		c.JSON(http.StatusOK, gin.H{"scopes": scopes})
@@ -105,7 +112,7 @@ func RegisterAdmin(router *gin.Engine, service *schedule.Service, password strin
 		}
 		note := ""
 		if len(pending) == 0 {
-			note = "官方群成员列表为内邀能力，暂不可用；这里只显示与机器人互动过、且还没有课表的成员。"
+			note = "官方群成员列表为内邀能力，暂不可用；这里显示在群里发过言或与机器人互动过、且还没有课表的成员。"
 		}
 		c.JSON(http.StatusOK, gin.H{
 			"scope_id":     scopeID,

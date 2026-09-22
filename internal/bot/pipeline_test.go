@@ -345,3 +345,19 @@ func TestDayOffAndRankPipeline(t *testing.T) {
 		t.Fatalf("rank upload url = %q", url)
 	}
 }
+
+func TestPlainMessageRecordsSeenMember(t *testing.T) {
+	env, base := newTestEnv(t, newFakeQQ(), "http://127.0.0.1:1")
+	handler := NewDefaultHandler(env)
+	msg := freshMessage(base)
+	msg.Content = "大家早上好"
+	handler.Dispatch(context.Background(), msg)
+
+	pending, err := env.Service.PendingMembers(env.Scope(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 1 || pending[0].UserID != "U1" || pending[0].Name != "小明" {
+		t.Fatalf("pending = %+v", pending)
+	}
+}
