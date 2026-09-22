@@ -25,6 +25,7 @@ type BackupFile struct {
 type BackupMember struct {
 	UserID string  `json:"user_id"`
 	Name   string  `json:"name"`
+	QQ     string  `json:"qq,omitempty"`
 	Source string  `json:"source"`
 	Events []Event `json:"events"`
 	ICS    string  `json:"ics,omitempty"`
@@ -66,6 +67,7 @@ func (s *Service) ExportBackup(scopeID string) (*BackupFile, error) {
 		backup.Members = append(backup.Members, BackupMember{
 			UserID: userID,
 			Name:   member.Name,
+			QQ:     member.QQ,
 			Source: member.Source,
 			Events: member.Events,
 			ICS:    member.ICS,
@@ -100,9 +102,14 @@ func (s *Service) ImportBackup(scopeID string, backup *BackupFile, actor string)
 		if name == "" {
 			name = userID
 		}
+		qq, qqErr := NormalizeQQ(entry.QQ)
+		if qqErr != nil {
+			qq = ""
+		}
 		member := &Member{
 			UserID:            userID,
 			Name:              name,
+			QQ:                qq,
 			Events:            entry.Events,
 			ICS:               entry.ICS,
 			Source:            firstNonEmpty(entry.Source, "ics"),

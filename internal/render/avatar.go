@@ -27,12 +27,21 @@ func FetchBotAvatar(ctx context.Context, avatarURL, dataDir string) *image.RGBA 
 	if avatarURL == "" {
 		return nil
 	}
-	cachePath := filepath.Join(dataDir, "avatars", "bot.png")
-	if cached := readFreshImage(cachePath, botAvatarTTL); cached != nil {
-		return circleImage(cached, botAvatarSize)
+	img := FetchImage(ctx, avatarURL, filepath.Join(dataDir, "avatars", "bot.png"), botAvatarTTL)
+	if img == nil {
+		return nil
+	}
+	return circleImage(img, botAvatarSize)
+}
+
+// FetchImage returns a cached remote image when fresh, otherwise downloads and
+// caches it. It returns nil on any failure; callers fall back to placeholders.
+func FetchImage(ctx context.Context, url, cachePath string, ttl time.Duration) image.Image {
+	if cached := readFreshImage(cachePath, ttl); cached != nil {
+		return cached
 	}
 	client := &http.Client{Timeout: botAvatarTimeout}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, avatarURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil
 	}
@@ -49,7 +58,7 @@ func FetchBotAvatar(ctx context.Context, avatarURL, dataDir string) *image.RGBA 
 		return nil
 	}
 	writeImageCache(cachePath, downloaded)
-	return circleImage(downloaded, botAvatarSize)
+	return downloaded
 }
 
 func readFreshImage(path string, maxAge time.Duration) image.Image {

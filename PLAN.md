@@ -21,6 +21,7 @@
 | M7 增强 | ✅ 已上线 | 按会话自定义推送时间（`/推送时间`，调度器每分钟按订阅 cron 触发）、WebUI 休假/调休标记管理 |
 | M8 增强 | ✅ 已上线 | 成员页单成员 `.ics` 导入/导出（`/api/export?...&user_id=`，编辑器内一键完成） |
 | M9 修复 | ✅ 已上线 | 卡片头像：修复 `circleImage` 未缩放导致大图只显示中心一块；启动同步读缓存 + 渲染路径节流重试，首张卡片即带头像 |
+| M10 增强 | ✅ 已上线 | QQ 号绑定（`/绑定QQ` `/解绑QQ` + WebUI 字段）→ 用 qlogo 公开接口取成员真实头像（并发预取 + 内存/磁盘缓存 + 失败回退） |
 
 线上形态：`/opt/qqbot-course-schedule` + systemd（开机自启）+ Caddy（公网只放行
 `/webhook` `/healthz` `/images/*` `/files/*`，管理台走 ZeroTier 内网入口）。

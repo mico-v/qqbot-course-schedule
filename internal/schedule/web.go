@@ -66,6 +66,7 @@ type PageSchedule struct {
 	ScopeID  string     `json:"scope_id"`
 	UserID   string     `json:"user_id"`
 	Name     string     `json:"name"`
+	QQ       string     `json:"qq,omitempty"`
 	Revision int64      `json:"revision"`
 	Events   []WebEvent `json:"events"`
 }
@@ -98,6 +99,7 @@ func (s *Service) PageSchedule(scopeID, userID string) (*PageSchedule, bool, err
 		ScopeID:  scopeID,
 		UserID:   userID,
 		Name:     firstNonEmpty(member.Name, userID),
+		QQ:       member.QQ,
 		Revision: member.Revision,
 		Events:   events,
 	}, true, nil
@@ -129,6 +131,7 @@ type SavePagePayload struct {
 	UserID   string          `json:"user_id"`
 	Revision *int64          `json:"revision"`
 	Name     *string         `json:"name"`
+	QQ       *string         `json:"qq"`
 	Events   []WebEventInput `json:"events"`
 }
 
@@ -210,6 +213,13 @@ func (s *Service) SavePageSchedule(payload SavePagePayload, actor string) (*Save
 			return nil, fmt.Errorf("成员名称不能超过 %d 个字符。", MaxMemberNameLength)
 		}
 		updated.Name = name
+	}
+	if payload.QQ != nil {
+		qq, qqErr := NormalizeQQ(*payload.QQ)
+		if qqErr != nil {
+			return nil, qqErr
+		}
+		updated.QQ = qq
 	}
 	updated.Events = events
 	updated.ICS = SerializeScheduleICS(events, current.ICS, updated.Name)

@@ -122,6 +122,7 @@ func TestDefaultHandlerRegistersCommands(t *testing.T) {
 		"/ping", "/help", "/今日课表", "/明日课表", "/课表", "/导入课表", "/导出课表",
 		"/上课时长榜", "/休假", "/调休", "/销假", "/假期",
 		"/启用推送", "/关闭推送", "/推送时间", "/推送测试", "/同步面板",
+		"/绑定QQ", "/解绑QQ",
 	}
 	for _, prefix := range expected {
 		if _, ok := handler.Command(prefix); !ok {

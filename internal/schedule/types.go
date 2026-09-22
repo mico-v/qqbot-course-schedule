@@ -58,8 +58,10 @@ type DayOverride struct {
 
 // Member is one person's schedule inside a scope.
 type Member struct {
-	UserID            string
-	Name              string
+	UserID string
+	Name   string
+	// QQ is an optional self-reported QQ number used for avatar lookups.
+	QQ                string
 	Events            []Event
 	ICS               string
 	Schedule          string

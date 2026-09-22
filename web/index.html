@@ -60,6 +60,11 @@
                 <span>显示名称</span>
                 <input id="memberName" type="text" maxlength="200" />
               </label>
+              <label class="field compact-field">
+                <span>QQ 号 <small>可选 · 用于卡片头像</small></span>
+                <input id="memberQQ" type="text" inputmode="numeric" maxlength="11" placeholder="例如 123456789" />
+              </label>
+              <img id="memberAvatarPreview" class="avatar-preview hidden" alt="QQ 头像预览" />
               <div class="member-tip">OpenID <strong id="memberId"></strong> · 修改名称不会改变成员身份</div>
             </div>
 

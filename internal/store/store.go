@@ -142,6 +142,7 @@ func (s *Store) migrate() error {
 
 type memberMeta struct {
 	Name              string `json:"name"`
+	QQ                string `json:"qq,omitempty"`
 	Schedule          string `json:"schedule"`
 	Source            string `json:"source"`
 	SourceFile        string `json:"source_file,omitempty"`
@@ -157,6 +158,7 @@ type memberMeta struct {
 func encodeMember(member *schedule.Member) (string, []schedule.Event, error) {
 	meta := memberMeta{
 		Name:              member.Name,
+		QQ:                member.QQ,
 		Schedule:          member.Schedule,
 		Source:            member.Source,
 		SourceFile:        member.SourceFile,
@@ -183,6 +185,7 @@ func decodeMember(userID, dataJSON string, revision int64, events []schedule.Eve
 	return &schedule.Member{
 		UserID:            userID,
 		Name:              meta.Name,
+		QQ:                meta.QQ,
 		Events:            events,
 		ICS:               meta.ICS,
 		Schedule:          meta.Schedule,

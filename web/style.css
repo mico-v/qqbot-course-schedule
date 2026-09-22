@@ -785,6 +785,15 @@ h3 {
   gap: 8px;
 }
 
+.avatar-preview {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--soft);
+  align-self: center;
+}
+
 .override-section {
   margin-top: 28px;
   padding-top: 22px;

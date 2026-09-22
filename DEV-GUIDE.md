@@ -330,6 +330,8 @@ msg.Keyboard(kb)
   （指令、附件、全量模式下的普通发言都算）；官方群成员列表内邀不可用，这是降级方案。
 - 会话列表除"已有课表"的群外，还包含"只有发言记录、还没有课表"的群（`ScopeSummaries`
   合并 `seen` KV），并返回 `pending_count`，管理台显示"待添加 N 位成员"引导建表。
+- 成员编辑器可填 QQ 号（可选）：保存进成员记录（随备份/恢复一起走），用于卡片头像；
+  输入时用 `q1.qlogo.cn` 做小圆预览，校验 5-11 位数字。
 - 休假/调休标记（`internal/server/overrides.go`）：
   - `GET /api/overrides?scope_id=` 列出标记（带成员显示名，`*` 显示为"全体成员"）
   - `POST /api/overrides/set`（`scope_id`/`user_id`/`day`/`kind`/`source_day`）与
@@ -410,7 +412,7 @@ JSON 键名沿用，便于对照与手工排查。
 | 字体 | `assets/fonts/NotoSansCJKsc-{Regular,Bold}.otf`；emoji 仅单色回退，不做彩色 |
 | 文本测量 | 必须使用 `render.Measure/WrapFit`，禁止直接 `font.MeasureString` 处理混排 |
 | emoji | **已定：不做彩色 emoji**；按字素簇（`uniseg`）拆分，CJK 缺字形时回退单色 emoji 字体或占位 |
-| 头像 | 机器人：`GET /users/@me` 的 `avatar`；启动时**同步读磁盘缓存**（保证首张卡片就有头像）+ 后台刷新，失败后由渲染路径 `EnsureBotAvatar` 每 5 分钟节流重试。`circleImage` 必须先按 cover 缩放再裁圆（直接 `DrawImage` 只会显示大图中心一块）。成员：官方无头像接口（成员信息接口为内邀且无 avatar 字段），用昵称首字 + 稳定底色（openid 哈希），不发网络请求 |
+| 头像 | 机器人：`GET /users/@me` 的 `avatar`；启动时**同步读磁盘缓存**（保证首张卡片就有头像）+ 后台刷新，失败后由渲染路径 `EnsureBotAvatar` 每 5 分钟节流重试。`circleImage` 必须先按 cover 缩放再裁圆（直接 `DrawImage` 只会显示大图中心一块）。成员：官方无头像接口（OpenID，成员信息接口为内邀且无 avatar 字段），因此采用**自愿绑定 QQ 号**（`/绑定QQ` 或 WebUI）→ `q1.qlogo.cn` 公开接口取头像；`Env.MemberAvatars` 并发预取（≤6 并发）、内存 24h / 失败 10min、磁盘 `data/avatars/qq/<qq>.png`，失败或未绑定回退昵称首字 + 稳定底色（openid 哈希）。QQ 号是自报数据，不做真实性校验 |
 | 输出 | JPEG quality 80、4:2:0、optimize；写入 `data/images`；>24h 清理 |
 | 性能 | 合并连续同字体绘制；单张卡片目标 <300ms（不含上传） |
 | 可测试性 | 布局计算与绘制分离：`layout.go` 输出纯数据结构，`draw.go` 只负责画 |

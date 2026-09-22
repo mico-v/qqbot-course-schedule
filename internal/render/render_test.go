@@ -1,6 +1,8 @@
 package render
 
 import (
+	"image"
+	"image/color"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,5 +93,28 @@ func TestInitialAvatarIsDeterministic(t *testing.T) {
 	}
 	if paletteColor("U1") != paletteColor("U1") || paletteColor("U1") == paletteColor("U2") && paletteColor("U1") == "" {
 		t.Fatal("palette must be deterministic")
+	}
+}
+
+func TestDayCardUsesRealAvatars(t *testing.T) {
+	renderer, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	avatar := image.NewRGBA(image.Rect(0, 0, 100, 100))
+	for y := 0; y < 100; y++ {
+		for x := 0; x < 100; x++ {
+			avatar.Set(x, y, color.RGBA{20, 180, 90, 255})
+		}
+	}
+	rendered := renderer.DayCard(DayCardData{
+		Title:   "课程表",
+		Footer:  "footer",
+		Rows:    sampleRows()[:1],
+		Avatars: map[string]image.Image{"U1": avatar},
+	})
+	r, g, b, _ := rendered.At(62+38, headerHeight+40+38).RGBA()
+	if g>>8 < 120 || r>>8 > 120 || b>>8 > 120 {
+		t.Fatalf("avatar pixel = %d/%d/%d, want the green real avatar", r>>8, g>>8, b>>8)
 	}
 }

@@ -202,6 +202,8 @@ function renderEditor() {
   $("#memberMeta").textContent = `${schedule.events.length} 节课 · revision ${schedule.revision}`;
   $("#memberId").textContent = schedule.user_id;
   $("#memberName").value = schedule.name || "";
+  $("#memberQQ").value = schedule.qq || "";
+  updateAvatarPreview();
 
   courseList.textContent = "";
   for (const event of schedule.events) {
@@ -300,6 +302,19 @@ async function loadScopes({ keepSelection = true } = {}) {
   renderScopes();
 }
 
+function updateAvatarPreview() {
+  const preview = $("#memberAvatarPreview");
+  if (!preview) return;
+  const qq = $("#memberQQ").value.trim();
+  if (!/^[1-9][0-9]{4,10}$/.test(qq)) {
+    preview.classList.add("hidden");
+    preview.removeAttribute("src");
+    return;
+  }
+  preview.src = `https://q1.qlogo.cn/g?b=qq&nk=${qq}&s=100`;
+  preview.classList.remove("hidden");
+}
+
 async function saveSchedule() {
   if (!state.schedule) return;
   const events = collectSchedule();
@@ -316,6 +331,7 @@ async function saveSchedule() {
       user_id: state.schedule.user_id,
       revision: state.schedule.revision,
       name: $("#memberName").value.trim(),
+      qq: $("#memberQQ").value.trim(),
       events,
     });
     state.schedule.revision = saved.revision;
@@ -828,6 +844,13 @@ function start() {
     setDirty(true);
   });
   $("#memberName").addEventListener("input", () => setDirty(true));
+  $("#memberQQ").addEventListener("input", () => {
+    setDirty(true);
+    updateAvatarPreview();
+  });
+  $("#memberAvatarPreview").addEventListener("error", (event) => {
+    event.target.classList.add("hidden");
+  });
   $("#saveButton").addEventListener("click", saveSchedule);
   $("#addMemberClose").addEventListener("click", closeAddMembers);
   $("#addMemberCancel").addEventListener("click", closeAddMembers);

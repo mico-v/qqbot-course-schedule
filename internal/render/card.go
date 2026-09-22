@@ -87,6 +87,8 @@ type DayCardData struct {
 	Rows        []schedule.DayRow
 	Folded      []schedule.DayRow
 	BotAvatar   image.Image
+	// Avatars maps user_id to a real avatar; missing ids fall back to initials.
+	Avatars map[string]image.Image
 	// Legend overrides the auto-generated legend when non-nil.
 	Legend []LegendItem
 	// DurationLabel prefixes the duration line; empty means no prefix.
@@ -215,7 +217,7 @@ func (r *Renderer) DayCard(data DayCardData) image.Image {
 		dc.DrawRoundedRectangle(cardLeft, top, 8, height, 4)
 		dc.Fill()
 
-		dc.DrawImage(fc.initialAvatar(row.Name, row.UserID, avatarSize), 62, int(top)+40)
+		dc.DrawImage(fc.memberAvatar(row, data.Avatars, avatarSize), 62, int(top)+40)
 		nameTop := top + 31
 		for lineIndex, line := range block.lines {
 			fc.drawText(dc, 158, nameTop+float64(lineIndex*nameLineHeight), line, 27, "#17233c", true, nameWidth)
@@ -251,7 +253,7 @@ func (r *Renderer) DayCard(data DayCardData) image.Image {
 	}
 	if len(data.Folded) > 0 {
 		top += float64(foldedGap)
-		drawFoldedStrip(dc, fc, data.Folded, cardLeft, top, innerWidth, data.FoldedTitle)
+		drawFoldedStrip(dc, fc, data.Folded, data.Avatars, cardLeft, top, innerWidth, data.FoldedTitle)
 		top += float64(foldedHeight)
 	}
 
@@ -336,7 +338,7 @@ func foldedStripHeight(count, innerWidth int) int {
 	return foldedPadY*2 + foldedTitleH + rows*foldedRowHeight
 }
 
-func drawFoldedStrip(dc *gg.Context, fc *faceCache, rows []schedule.DayRow, left, top float64, innerWidth int, title string) {
+func drawFoldedStrip(dc *gg.Context, fc *faceCache, rows []schedule.DayRow, avatars map[string]image.Image, left, top float64, innerWidth int, title string) {
 	if len(rows) == 0 {
 		return
 	}
@@ -361,7 +363,7 @@ func drawFoldedStrip(dc *gg.Context, fc *faceCache, rows []schedule.DayRow, left
 		line := index / columns
 		cellLeft := left + foldedPadX + float64(column*foldedCellWidth)
 		cellTop := gridTop + float64(line*foldedRowHeight)
-		dc.DrawImage(fc.initialAvatar(row.Name, row.UserID, foldedAvatarSize), int(cellLeft), int(cellTop))
+		dc.DrawImage(fc.memberAvatar(row, avatars, foldedAvatarSize), int(cellLeft), int(cellTop))
 		fc.drawText(dc, cellLeft+foldedAvatarSize+12, cellTop+11, displayName(row), 19, "#64748b", false, foldedNameWidth)
 	}
 }
@@ -371,6 +373,16 @@ func displayName(row schedule.DayRow) string {
 		return row.Name
 	}
 	return row.UserID
+}
+
+// memberAvatar prefers a real avatar and falls back to the initial circle.
+func (fc *faceCache) memberAvatar(row schedule.DayRow, avatars map[string]image.Image, size int) image.Image {
+	if avatars != nil {
+		if avatar, ok := avatars[row.UserID]; ok && avatar != nil {
+			return circleImage(avatar, size)
+		}
+	}
+	return fc.initialAvatar(row.Name, row.UserID, size)
 }
 
 // initialAvatar draws a deterministic colored circle with the first grapheme.

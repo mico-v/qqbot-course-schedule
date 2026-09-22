@@ -272,3 +272,40 @@ func TestScopesIncludeSeenOnlyGroup(t *testing.T) {
 		t.Fatalf("members = %+v", members.Members)
 	}
 }
+
+func TestSaveScheduleWithQQ(t *testing.T) {
+	router, service := newAdminRouter(t, adminPassword)
+	scope := schedule.ScopeGroup("G1")
+	seedScope(t, service, scope)
+
+	recorder := adminRequest(router, http.MethodGet, "/api/schedule?scope_id="+scope+"&user_id=U1", nil, true)
+	var page schedule.PageSchedule
+	if err := json.Unmarshal(recorder.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	if page.QQ != "" {
+		t.Fatalf("initial qq = %q", page.QQ)
+	}
+
+	save := func(qq string) *httptest.ResponseRecorder {
+		return adminRequest(router, http.MethodPost, "/api/schedule/save", map[string]any{
+			"scope_id": scope, "user_id": "U1", "revision": page.Revision, "name": "小明", "qq": qq,
+			"events": []map[string]any{{
+				"id": 1, "course": "高等数学", "start": "2026-09-01T08:00", "end": "2026-09-01T09:30",
+			}},
+		}, true)
+	}
+	if recorder := save("123456789"); recorder.Code != http.StatusOK {
+		t.Fatalf("save = %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	recorder = adminRequest(router, http.MethodGet, "/api/schedule?scope_id="+scope+"&user_id=U1", nil, true)
+	if err := json.Unmarshal(recorder.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	if page.QQ != "123456789" {
+		t.Fatalf("saved qq = %q", page.QQ)
+	}
+	if recorder := save("not-a-qq"); recorder.Code != http.StatusBadRequest {
+		t.Fatalf("invalid qq save = %d, want 400", recorder.Code)
+	}
+}

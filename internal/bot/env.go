@@ -8,6 +8,7 @@ import (
 	"math"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -36,6 +37,9 @@ type Env struct {
 	botAvatar     atomic.Pointer[image.RGBA]
 	lastAvatarTry atomic.Int64
 	avatarTrying  atomic.Bool
+
+	avatarMu    sync.Mutex
+	avatarCache map[string]avatarCacheEntry
 }
 
 const (
@@ -58,6 +62,17 @@ func (e *Env) RefreshBotAvatar(ctx context.Context) {
 		e.SetBotAvatar(avatar)
 		slog.Info("机器人头像已缓存", "name", info.Username)
 	}
+}
+
+// rowUserIDs flattens the user ids of several row groups.
+func rowUserIDs(groups ...[]schedule.DayRow) []string {
+	var ids []string
+	for _, rows := range groups {
+		for _, row := range rows {
+			ids = append(ids, row.UserID)
+		}
+	}
+	return ids
 }
 
 // EnsureBotAvatar schedules a background refresh when the avatar is missing,
@@ -138,6 +153,7 @@ func (e *Env) RenderDayCard(ctx context.Context, msg *Message, day time.Time) (s
 		Rows:          card.Rows,
 		Folded:        card.Folded,
 		BotAvatar:     e.BotAvatar(),
+		Avatars:       e.MemberAvatars(ctx, e.Scope(msg), rowUserIDs(card.Rows, card.Folded)),
 		DurationLabel: "本节持续",
 	})
 	name, err := render.SaveJPEG(image, e.ImagesDir, "schedule_"+card.Selected.Format("20060102"))
@@ -236,6 +252,7 @@ func (e *Env) RenderRankCard(ctx context.Context, msg *Message, period string) (
 		Subtitle: fmt.Sprintf("%s · 共 %d 位成员 · 合计 %s", label, len(rows), schedule.FormatDurationMinutes(total)),
 		Footer:   footer,
 		Rows:     dayRows,
+		Avatars:  e.MemberAvatars(ctx, e.Scope(msg), rowUserIDs(dayRows)),
 		Legend: []render.LegendItem{
 			{Key: "none", Label: "同一时段冲突的课程只计一次"},
 			{Key: "none", Label: "全天日程不计入时长"},

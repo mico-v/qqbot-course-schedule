@@ -118,6 +118,20 @@ func NewDefaultHandler(env *Env) *Handler {
 		Handle:      h.handleDisablePush,
 	})
 	h.Register(&Command{
+		Prefix:      "/绑定QQ",
+		Description: "绑定你的 QQ 号以显示真实头像",
+		Aliases:     []string{"/绑定qq"},
+		Ready:       true,
+		Handle:      h.handleBindQQ,
+	})
+	h.Register(&Command{
+		Prefix:      "/解绑QQ",
+		Description: "解除已绑定的 QQ 号",
+		Aliases:     []string{"/解绑qq"},
+		Ready:       true,
+		Handle:      h.handleUnbindQQ,
+	})
+	h.Register(&Command{
 		Prefix:      "/推送时间",
 		Description: "查看或设置本会话的推送时间（管理员）",
 		Aliases:     []string{"/推送时刻"},
@@ -391,6 +405,54 @@ func (h *Handler) handlePushTest(ctx context.Context, msg *Message) error {
 		}
 		return msg.Reply(ctx, "推送失败："+qqapi.FriendlyError(err))
 	}
+}
+
+func (h *Handler) handleBindQQ(ctx context.Context, msg *Message) error {
+	if h.env == nil {
+		return msg.Reply(ctx, "课表功能未初始化。")
+	}
+	scope := h.env.Scope(msg)
+	members, err := h.env.Service.ScopeMembers(scope)
+	if err != nil {
+		return msg.Reply(ctx, "读取成员失败："+err.Error())
+	}
+	member, ok := members[msg.UserOpenID]
+	if !ok || member == nil {
+		return msg.Reply(ctx, "你还没有课表，请先发送 /导入课表 导入，或让管理员在管理台创建。")
+	}
+	argument := strings.TrimSpace(msg.Args)
+	if argument == "" {
+		current := "未绑定"
+		if member.QQ != "" {
+			current = member.QQ
+		}
+		return msg.Reply(ctx, "你当前绑定的 QQ 号："+current+"。\n绑定：/绑定QQ 123456789（绑定后卡片会显示该 QQ 的头像）。")
+	}
+	qq, err := h.env.Service.SetMemberQQ(scope, msg.UserOpenID, argument, msg.UserOpenID)
+	if err != nil {
+		return msg.Reply(ctx, "绑定失败："+err.Error())
+	}
+	return msg.Reply(ctx, "已绑定 QQ "+qq+"，之后生成的课表卡片会使用该 QQ 的头像。")
+}
+
+func (h *Handler) handleUnbindQQ(ctx context.Context, msg *Message) error {
+	if h.env == nil {
+		return msg.Reply(ctx, "课表功能未初始化。")
+	}
+	scope := h.env.Scope(msg)
+	members, err := h.env.Service.ScopeMembers(scope)
+	if err != nil {
+		return msg.Reply(ctx, "读取成员失败："+err.Error())
+	}
+	if member, ok := members[msg.UserOpenID]; !ok || member == nil {
+		return msg.Reply(ctx, "你还没有课表。")
+	} else if member.QQ == "" {
+		return msg.Reply(ctx, "你还没有绑定 QQ 号。")
+	}
+	if _, err := h.env.Service.SetMemberQQ(scope, msg.UserOpenID, "", msg.UserOpenID); err != nil {
+		return msg.Reply(ctx, "解绑失败："+err.Error())
+	}
+	return msg.Reply(ctx, "已解除 QQ 绑定，卡片将恢复为昵称首字头像。")
 }
 
 func (h *Handler) handlePushTime(ctx context.Context, msg *Message) error {
