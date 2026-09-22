@@ -37,6 +37,7 @@ type MessageData struct {
 	Mentions    []Author     `json:"mentions"`
 	Timestamp   string       `json:"timestamp"`
 	MsgSeq      int          `json:"msg_seq"`
+	MessageType int          `json:"message_type"`
 }
 
 // Author is the message sender in a group or single chat.

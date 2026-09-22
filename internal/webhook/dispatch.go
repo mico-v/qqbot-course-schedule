@@ -117,6 +117,7 @@ func (d *Dispatcher) process(payload Payload) {
 			Mentions:    toBotMentions(data.Mentions),
 			Client:      d.client,
 		}
+		logInboundMessage(payload.T, data.MessageType, message)
 		d.handler.Dispatch(ctx, message)
 
 	case EventC2CMessage:
@@ -128,7 +129,7 @@ func (d *Dispatcher) process(payload Payload) {
 		if data.Author.Bot {
 			return
 		}
-		d.handler.Dispatch(ctx, &bot.Message{
+		message := &bot.Message{
 			Origin:      bot.OriginPrivate,
 			UserOpenID:  firstNonEmpty(data.Author.UserOpenID, data.Author.UnionOpenID, data.Author.ID),
 			MsgID:       data.ID,
@@ -138,7 +139,9 @@ func (d *Dispatcher) process(payload Payload) {
 			Attachments: toBotAttachments(data.Attachments),
 			Mentions:    toBotMentions(data.Mentions),
 			Client:      d.client,
-		})
+		}
+		logInboundMessage(payload.T, data.MessageType, message)
+		d.handler.Dispatch(ctx, message)
 
 	case EventInteraction:
 		ackCtx, ackCancel := context.WithTimeout(context.Background(), interactionAckTTL)
