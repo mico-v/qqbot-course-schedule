@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/robfig/cron/v3"
+
 	"github.com/mico-v/qqbot-course-schedule/internal/qqapi"
 	"github.com/mico-v/qqbot-course-schedule/internal/schedule"
 )
@@ -22,9 +24,66 @@ type PushSubscription struct {
 	EnabledAt   string `json:"enabled_at,omitempty"`
 	Paused      bool   `json:"paused,omitempty"`
 	PauseReason string `json:"pause_reason,omitempty"`
+	// Cron overrides the global push_cron for this scope (5-field cron).
+	Cron string `json:"cron,omitempty"`
+	// LastRun records the minute of the last automatic push (dedupe guard).
+	LastRun string `json:"last_run,omitempty"`
 }
 
 const pushNamespace = "push"
+
+// pushCronParser parses 5-field cron expressions in local time.
+var pushCronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+
+// PushCronFor returns the effective push schedule of one subscription:
+// the per-scope override when set, otherwise the global default.
+func (e *Env) PushCronFor(sub PushSubscription) string {
+	if spec := strings.TrimSpace(sub.Cron); spec != "" {
+		return spec
+	}
+	return strings.TrimSpace(e.PushCron)
+}
+
+// cronDue reports whether a 5-field cron expression fires during now's minute.
+func cronDue(spec string, now time.Time) bool {
+	if strings.TrimSpace(spec) == "" {
+		return false
+	}
+	schedule, err := pushCronParser.Parse(spec)
+	if err != nil {
+		return false
+	}
+	minute := now.Truncate(time.Minute)
+	next := schedule.Next(minute.Add(-time.Second))
+	return next.Truncate(time.Minute).Equal(minute)
+}
+
+// parsePushTime accepts "HH:MM" or a 5-field cron expression and returns a
+// normalized cron spec. It backs the /推送时间 command.
+func parsePushTime(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", fmt.Errorf("请提供推送时间，例如 /推送时间 07:30。")
+	}
+	if strings.Contains(value, ":") {
+		parts := strings.SplitN(value, ":", 2)
+		hour, hourErr := atoiField(strings.TrimSpace(parts[0]))
+		minute, minuteErr := atoiField(strings.TrimSpace(parts[1]))
+		if hourErr != nil || minuteErr != nil || hour > 23 || minute > 59 {
+			return "", fmt.Errorf("时间格式应为 HH:MM（例如 07:30）。")
+		}
+		return fmt.Sprintf("%d %d * * *", minute, hour), nil
+	}
+	fields := strings.Fields(value)
+	if len(fields) != 5 {
+		return "", fmt.Errorf("时间格式应为 HH:MM 或 5 段 cron 表达式（例如 30 7 * * *）。")
+	}
+	spec := strings.Join(fields, " ")
+	if _, err := pushCronParser.Parse(spec); err != nil {
+		return "", fmt.Errorf("cron 表达式无效：%v", err)
+	}
+	return spec, nil
+}
 
 // SetPushSubscription stores or replaces one scope's subscription.
 func (e *Env) SetPushSubscription(scope string, sub PushSubscription) error {
@@ -54,8 +113,28 @@ func (e *Env) PushSubscriptions() (map[string]PushSubscription, error) {
 	return result, nil
 }
 
-// PushDaily sends the day card to every subscribed scope.
+// PushDaily sends the day card to every enabled scope, ignoring per-scope
+// times. It is the manual/bulk path; the scheduler uses PushDue.
 func (e *Env) PushDaily(ctx context.Context) (sent, skipped, failed int) {
+	return e.pushSubscriptions(ctx, nil)
+}
+
+// PushDue sends the day card to every scope whose schedule fires during now's
+// minute, skipping scopes already pushed in that minute (restart-safe).
+func (e *Env) PushDue(ctx context.Context, now time.Time) (sent, skipped, failed int) {
+	stamp := now.Format("2006-01-02 15:04")
+	return e.pushSubscriptions(ctx, func(scope string, sub PushSubscription) (PushSubscription, bool) {
+		if !cronDue(e.PushCronFor(sub), now) || sub.LastRun == stamp {
+			return sub, false
+		}
+		sub.LastRun = stamp
+		return sub, true
+	})
+}
+
+// pushSubscriptions walks every subscription. When prepare is non-nil it may
+// veto or amend a subscription; the result is persisted after the attempt.
+func (e *Env) pushSubscriptions(ctx context.Context, prepare func(scope string, sub PushSubscription) (PushSubscription, bool)) (sent, skipped, failed int) {
 	subscriptions, err := e.PushSubscriptions()
 	if err != nil {
 		slog.Error("读取推送订阅失败", "err", err)
@@ -64,6 +143,15 @@ func (e *Env) PushDaily(ctx context.Context) (sent, skipped, failed int) {
 	for scope, sub := range subscriptions {
 		if !sub.Enabled || sub.OpenID == "" || sub.Paused {
 			continue
+		}
+		dirty := false
+		if prepare != nil {
+			updated, ok := prepare(scope, sub)
+			if !ok {
+				continue
+			}
+			sub = updated
+			dirty = true
 		}
 		switch err := e.PushScope(ctx, scope, sub); {
 		case err == nil:
@@ -76,9 +164,12 @@ func (e *Env) PushDaily(ctx context.Context) (sent, skipped, failed int) {
 			if qqapi.IsActiveMessageDenied(err) {
 				sub.Paused = true
 				sub.PauseReason = qqapi.FriendlyError(err)
-				if saveErr := e.SetPushSubscription(scope, sub); saveErr != nil {
-					slog.Warn("暂停推送失败", "scope", scope, "err", saveErr)
-				}
+				dirty = true
+			}
+		}
+		if dirty {
+			if saveErr := e.SetPushSubscription(scope, sub); saveErr != nil {
+				slog.Warn("保存推送订阅失败", "scope", scope, "err", saveErr)
 			}
 		}
 	}
@@ -111,7 +202,7 @@ func (e *Env) PushScope(ctx context.Context, scope string, sub PushSubscription)
 // pushTimeText renders the cron time for replies ("每天 07:30").
 func pushTimeText(spec string) string {
 	fields := strings.Fields(spec)
-	if len(fields) >= 2 {
+	if len(fields) == 5 && fields[2] == "*" && fields[3] == "*" && fields[4] == "*" {
 		minute, minuteErr := atoiField(fields[0])
 		hour, hourErr := atoiField(fields[1])
 		if minuteErr == nil && hourErr == nil {

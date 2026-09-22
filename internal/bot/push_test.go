@@ -6,8 +6,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mico-v/qqbot-course-schedule/internal/qqapi"
+	"github.com/mico-v/qqbot-course-schedule/internal/schedule"
 )
 
 func TestEnableDisablePushAndPushDaily(t *testing.T) {
@@ -137,14 +139,157 @@ func TestHandleCallbackRendersRequestedDay(t *testing.T) {
 
 func TestStartSchedulerValidatesCron(t *testing.T) {
 	env, _ := newTestEnv(t, newFakeQQ(), "http://127.0.0.1:1")
-	if _, err := StartScheduler(env, "not a cron"); err == nil {
+	env.PushCron = "not a cron"
+	if _, err := StartScheduler(env); err == nil {
 		t.Fatal("invalid cron should fail")
 	}
-	scheduler, err := StartScheduler(env, "0 7 * * *")
+	env.PushCron = "0 7 * * *"
+	scheduler, err := StartScheduler(env)
 	if err != nil {
 		t.Fatalf("StartScheduler: %v", err)
 	}
 	scheduler.Stop()
+}
+
+func TestPushDuePerScopeCron(t *testing.T) {
+	fake := newFakeQQ()
+	apiServer := httptest.NewServer(fake.handler())
+	t.Cleanup(apiServer.Close)
+	icsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(testICS))
+	}))
+	t.Cleanup(icsServer.Close)
+
+	env, base := newTestEnv(t, fake, apiServer.URL)
+	ctx := context.Background()
+	if err := env.ImportICS(ctx, freshMessage(base), Attachment{URL: icsServer.URL + "/s.ics", Filename: "s.ics"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = waitMessage(t, fake)
+
+	env.PushCron = "30 7 * * *"
+	baseScope := env.Scope(base)
+	if err := env.SetPushSubscription(baseScope, PushSubscription{
+		Enabled: true, Origin: "group", OpenID: base.GroupOpenID, Cron: "0 8 * * *",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	other := schedule.ScopeGroup("OTHER")
+	if err := env.SetPushSubscription(other, PushSubscription{
+		Enabled: true, Origin: "group", OpenID: "OTHER-OPENID",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	at := func(value string) time.Time {
+		parsed, err := time.ParseInLocation("2006-01-02 15:04", value, schedule.LocalTZ)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return parsed
+	}
+
+	// 07:30 is the default time: the other scope has no schedule (skipped),
+	// while the base scope waits for its own 08:00.
+	if sent, skipped, failed := env.PushDue(ctx, at("2026-09-17 07:30")); sent != 0 || skipped != 1 || failed != 0 {
+		t.Fatalf("07:30 PushDue = %d/%d/%d", sent, skipped, failed)
+	}
+	if sent, skipped, failed := env.PushDue(ctx, at("2026-09-17 08:00")); sent != 1 || skipped != 0 || failed != 0 {
+		t.Fatalf("08:00 PushDue = %d/%d/%d", sent, skipped, failed)
+	}
+	// The same minute must not double-send (restart/duplicate tick guard).
+	if sent, _, _ := env.PushDue(ctx, at("2026-09-17 08:00")); sent != 0 {
+		t.Fatalf("duplicate minute sent %d", sent)
+	}
+	if sent, _, _ := env.PushDue(ctx, at("2026-09-18 08:00")); sent != 1 {
+		t.Fatalf("next day sent %d", sent)
+	}
+}
+
+func TestPushTimeCommand(t *testing.T) {
+	fake := newFakeQQ()
+	apiServer := httptest.NewServer(fake.handler())
+	t.Cleanup(apiServer.Close)
+	icsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(testICS))
+	}))
+	t.Cleanup(icsServer.Close)
+
+	env, base := newTestEnv(t, fake, apiServer.URL)
+	handler := NewDefaultHandler(env)
+	ctx := context.Background()
+	if err := env.ImportICS(ctx, freshMessage(base), Attachment{URL: icsServer.URL + "/s.ics", Filename: "s.ics"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = waitMessage(t, fake)
+
+	// Not subscribed yet.
+	msg := freshMessage(base)
+	msg.MemberRole = "owner"
+	msg.Content = "/推送时间"
+	handler.Dispatch(ctx, msg)
+	reply := waitMessage(t, fake)
+	if content, _ := reply["content"].(string); !strings.Contains(content, "请先发送 /启用推送") {
+		t.Fatalf("reply = %q", content)
+	}
+
+	enable := freshMessage(base)
+	enable.MemberRole = "owner"
+	enable.Content = "/启用推送"
+	handler.Dispatch(ctx, enable)
+	_ = waitMessage(t, fake)
+
+	// Normal members cannot change the group time.
+	member := freshMessage(base)
+	member.Content = "/推送时间 08:15"
+	handler.Dispatch(ctx, member)
+	reply = waitMessage(t, fake)
+	if content, _ := reply["content"].(string); !strings.Contains(content, "只有群管理员") {
+		t.Fatalf("member reply = %q", content)
+	}
+
+	set := freshMessage(base)
+	set.MemberRole = "owner"
+	set.Content = "/推送时间 08:15"
+	handler.Dispatch(ctx, set)
+	reply = waitMessage(t, fake)
+	if content, _ := reply["content"].(string); !strings.Contains(content, "每天 08:15") {
+		t.Fatalf("set reply = %q", content)
+	}
+	subscriptions, err := env.PushSubscriptions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := subscriptions[env.Scope(base)].Cron; got != "15 8 * * *" {
+		t.Fatalf("stored cron = %q", got)
+	}
+
+	show := freshMessage(base)
+	show.MemberRole = "owner"
+	show.Content = "/推送时间"
+	handler.Dispatch(ctx, show)
+	reply = waitMessage(t, fake)
+	if content, _ := reply["content"].(string); !strings.Contains(content, "每天 08:15") || !strings.Contains(content, "自定义") {
+		t.Fatalf("show reply = %q", content)
+	}
+
+	bad := freshMessage(base)
+	bad.MemberRole = "owner"
+	bad.Content = "/推送时间 25:99"
+	handler.Dispatch(ctx, bad)
+	reply = waitMessage(t, fake)
+	if content, _ := reply["content"].(string); !strings.Contains(content, "HH:MM") {
+		t.Fatalf("bad reply = %q", content)
+	}
+
+	reset := freshMessage(base)
+	reset.MemberRole = "owner"
+	reset.Content = "/推送时间 默认"
+	handler.Dispatch(ctx, reset)
+	reply = waitMessage(t, fake)
+	if content, _ := reply["content"].(string); !strings.Contains(content, "每天 07:30") {
+		t.Fatalf("reset reply = %q", content)
+	}
 }
 
 var _ = qqapi.Keyboard{}

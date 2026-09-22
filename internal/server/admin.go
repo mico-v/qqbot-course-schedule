@@ -27,6 +27,7 @@ func RegisterAdmin(router *gin.Engine, service *schedule.Service, password strin
 
 	api := router.Group("/api", auth)
 	registerTransferRoutes(api, service)
+	registerOverrideRoutes(api, service)
 	api.GET("/scopes", func(c *gin.Context) {
 		summaries, err := service.ScopeSummaries()
 		if err != nil {

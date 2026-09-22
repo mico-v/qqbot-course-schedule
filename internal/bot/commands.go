@@ -118,6 +118,13 @@ func NewDefaultHandler(env *Env) *Handler {
 		Handle:      h.handleDisablePush,
 	})
 	h.Register(&Command{
+		Prefix:      "/推送时间",
+		Description: "查看或设置本会话的推送时间（管理员）",
+		Aliases:     []string{"/推送时刻"},
+		Ready:       true,
+		Handle:      h.handlePushTime,
+	})
+	h.Register(&Command{
 		Prefix:      "/推送测试",
 		Description: "立即推送一次当日课表（管理员）",
 		Handle:      h.handlePushTest,
@@ -384,6 +391,50 @@ func (h *Handler) handlePushTest(ctx context.Context, msg *Message) error {
 		}
 		return msg.Reply(ctx, "推送失败："+qqapi.FriendlyError(err))
 	}
+}
+
+func (h *Handler) handlePushTime(ctx context.Context, msg *Message) error {
+	if h.env == nil {
+		return msg.Reply(ctx, "课表功能未初始化。")
+	}
+	if msg.Origin == OriginGroup && !msg.IsAdmin() {
+		return msg.Reply(ctx, "只有群管理员可以调整推送时间。")
+	}
+	scope := h.env.Scope(msg)
+	subscriptions, err := h.env.PushSubscriptions()
+	if err != nil {
+		return msg.Reply(ctx, "读取订阅失败："+err.Error())
+	}
+	sub, ok := subscriptions[scope]
+	if !ok || !sub.Enabled {
+		return msg.Reply(ctx, "本会话还没有开启推送，请先发送 /启用推送。")
+	}
+
+	argument := strings.TrimSpace(msg.Args)
+	if argument == "" {
+		current := h.env.PushCronFor(sub)
+		if strings.TrimSpace(sub.Cron) == "" {
+			return msg.Reply(ctx, "本会话的推送时间是 "+pushTimeText(current)+"（默认时间）。\n修改：/推送时间 07:30 或 /推送时间 30 7 * * *。")
+		}
+		return msg.Reply(ctx, "本会话的推送时间是 "+pushTimeText(current)+"（自定义）。\n恢复默认：/推送时间 默认。")
+	}
+	switch strings.ToLower(argument) {
+	case "默认", "default", "重置":
+		sub.Cron = ""
+	default:
+		spec, parseErr := parsePushTime(argument)
+		if parseErr != nil {
+			return msg.Reply(ctx, parseErr.Error())
+		}
+		sub.Cron = spec
+	}
+	if err := h.env.SetPushSubscription(scope, sub); err != nil {
+		return msg.Reply(ctx, "保存失败："+err.Error())
+	}
+	if strings.TrimSpace(sub.Cron) == "" {
+		return msg.Reply(ctx, "已恢复默认推送时间："+pushTimeText(h.env.PushCron)+"。")
+	}
+	return msg.Reply(ctx, "已设置本会话的推送时间为 "+pushTimeText(sub.Cron)+"。")
 }
 
 func (h *Handler) handleSyncPanelCommand(ctx context.Context, msg *Message) error {

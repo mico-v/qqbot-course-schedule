@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 // ScopeMemberSummary is one member row in the admin scope list.
@@ -317,6 +318,142 @@ func (s *Service) RecordSeenMember(scopeID, userID, name string) error {
 	}
 	seen[userID] = name
 	return s.store.SetKV("global", seenNamespace, scopeID, seen)
+}
+
+// WebDayOverride is one holiday/shift marker in the admin page.
+type WebDayOverride struct {
+	UserID    string `json:"user_id"`
+	Name      string `json:"name"`
+	Day       string `json:"day"`
+	Kind      string `json:"kind"`
+	SourceDay string `json:"source_day,omitempty"`
+	CreatedBy string `json:"created_by,omitempty"`
+	CreatedAt string `json:"created_at,omitempty"`
+}
+
+// WebDayOverrides lists one scope's markers with display names.
+func (s *Service) WebDayOverrides(scopeID string) ([]WebDayOverride, error) {
+	scopeID = strings.TrimSpace(scopeID)
+	if scopeID == "" {
+		return nil, fmt.Errorf("scope_id 不能为空。")
+	}
+	rows, err := s.store.ListDayOverrides(scopeID)
+	if err != nil {
+		return nil, err
+	}
+	members, err := s.store.GetScopeMembers(scopeID)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]WebDayOverride, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, WebDayOverride{
+			UserID:    row.UserID,
+			Name:      overrideDisplayName(members, row.UserID),
+			Day:       row.Day,
+			Kind:      row.Kind,
+			SourceDay: row.SourceDay,
+			CreatedBy: row.CreatedBy,
+			CreatedAt: row.CreatedAt,
+		})
+	}
+	return result, nil
+}
+
+func overrideDisplayName(members map[string]*Member, userID string) string {
+	if userID == DayOverrideAll {
+		return "全体成员"
+	}
+	if member, ok := members[userID]; ok && member != nil && strings.TrimSpace(member.Name) != "" {
+		return member.Name
+	}
+	return userID
+}
+
+// SetWebDayOverride writes one marker from the admin page.
+func (s *Service) SetWebDayOverride(scopeID, userID, day, kind, sourceDay, actor string) error {
+	scopeID = strings.TrimSpace(scopeID)
+	userID = strings.TrimSpace(userID)
+	if scopeID == "" || userID == "" {
+		return fmt.Errorf("scope_id 和 user_id 不能为空。")
+	}
+	target, err := parseWebDay(day, "日期")
+	if err != nil {
+		return err
+	}
+	if kind != DayOverrideHoliday && kind != DayOverrideShift {
+		return fmt.Errorf("标记类型只能是休假或调休。")
+	}
+	if userID != DayOverrideAll {
+		members, err := s.store.GetScopeMembers(scopeID)
+		if err != nil {
+			return err
+		}
+		if _, ok := members[userID]; !ok {
+			return fmt.Errorf("找不到该成员，请先为其创建课表。")
+		}
+	}
+	var source *time.Time
+	if kind == DayOverrideShift {
+		parsed, err := parseWebDay(sourceDay, "调休来源日期")
+		if err != nil {
+			return err
+		}
+		if sameDay(parsed, target) {
+			return fmt.Errorf("调休的来源日期不能和调休日期相同。")
+		}
+		if absInt(int(parsed.Sub(target).Hours()/24)) > MaxDayOverrideSpanDays {
+			return fmt.Errorf("调休的来源日期与目标日期相差不能超过 %d 天。", MaxDayOverrideSpanDays)
+		}
+		source = &parsed
+	}
+
+	dayText := target.Format("2006-01-02")
+	rows, err := s.store.ListDayOverrides(scopeID)
+	if err != nil {
+		return err
+	}
+	found := false
+	for _, row := range rows {
+		if row.UserID == userID && row.Day == dayText {
+			found = true
+			break
+		}
+	}
+	if !found && len(rows) >= MaxDayOverridesPerScope {
+		return fmt.Errorf("本会话的休假/调休标记已达上限 %d 条，请先取消一些标记。", MaxDayOverridesPerScope)
+	}
+	override := DayOverride{Kind: kind}
+	if source != nil {
+		override.SourceDay = source.Format("2006-01-02")
+	}
+	return s.store.SetDayOverride(scopeID, userID, dayText, override, firstNonEmpty(actor, "webui"), NowISO())
+}
+
+// DeleteWebDayOverride removes one marker from the admin page.
+func (s *Service) DeleteWebDayOverride(scopeID, userID, day string) (bool, error) {
+	scopeID = strings.TrimSpace(scopeID)
+	userID = strings.TrimSpace(userID)
+	if scopeID == "" || userID == "" {
+		return false, fmt.Errorf("scope_id 和 user_id 不能为空。")
+	}
+	target, err := parseWebDay(day, "日期")
+	if err != nil {
+		return false, err
+	}
+	return s.store.DeleteDayOverride(scopeID, userID, target.Format("2006-01-02"))
+}
+
+func parseWebDay(value, label string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, fmt.Errorf("请提供%s。", label)
+	}
+	parsed, err := time.ParseInLocation("2006-01-02", value, LocalTZ)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("%s格式应为 YYYY-MM-DD。", label)
+	}
+	return parsed, nil
 }
 
 // PendingMembers returns observed members who do not have a schedule yet.

@@ -4,29 +4,36 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/robfig/cron/v3"
 )
 
-// Scheduler runs the daily push job.
+// Scheduler drives the daily push. It ticks every minute; each subscription's
+// effective cron (per-scope override or the global default) decides whether the
+// scope is pushed. This keeps runtime changes to /推送时间 effective without
+// rebuilding cron entries.
 type Scheduler struct {
 	cron *cron.Cron
 }
 
-// StartScheduler registers the daily push on a 5-field cron expression and
-// starts it. The expression is interpreted in the server's local timezone.
-func StartScheduler(env *Env, spec string) (*Scheduler, error) {
-	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
-	scheduler := cron.New(cron.WithParser(parser))
-	_, err := scheduler.AddFunc(spec, func() {
+// StartScheduler validates the default push_cron and starts the minute ticker.
+func StartScheduler(env *Env) (*Scheduler, error) {
+	if _, err := pushCronParser.Parse(strings.TrimSpace(env.PushCron)); err != nil {
+		return nil, fmt.Errorf("push_cron 无效: %w", err)
+	}
+	scheduler := cron.New(cron.WithParser(pushCronParser))
+	_, err := scheduler.AddFunc("* * * * *", func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
-		sent, skipped, failed := env.PushDaily(ctx)
-		slog.Info("每日课表推送完成", "sent", sent, "skipped", skipped, "failed", failed)
+		sent, skipped, failed := env.PushDue(ctx, env.now())
+		if sent+skipped+failed > 0 {
+			slog.Info("定时课表推送完成", "sent", sent, "skipped", skipped, "failed", failed)
+		}
 	})
 	if err != nil {
-		return nil, fmt.Errorf("push_cron 无效: %w", err)
+		return nil, err
 	}
 	scheduler.Start()
 	return &Scheduler{cron: scheduler}, nil

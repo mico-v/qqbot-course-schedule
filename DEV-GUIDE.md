@@ -153,7 +153,7 @@ schedule 包内不得 import gin/qqapi/store
 | `public_base_url` | string | | — | 对外 HTTPS 地址，用于图床与分享链接 |
 | `database` | string | | `data/course_schedule.sqlite3` | SQLite 路径 |
 | `admin_password` | string | | 空 | 管理台密码；空时仅本机可访问 |
-| `push_cron` | string | | `30 7 * * *` | 每日课表推送（5 段 cron，本地时区）；`/启用推送` 后才推送 |
+| `push_cron` | string | | `30 7 * * *` | 推送默认时间（5 段 cron，本地时区）；`/启用推送` 后生效，会话可用 `/推送时间` 覆盖 |
 | `buttons` | bool | | false | 卡片按钮（markdown+keyboard）；官方为内邀能力，默认关闭 |
 | `log_level` | string | | `info` | `debug/info/warn/error` |
 | `data_dir` | string | | `data` | 图片、缓存根目录 |
@@ -273,17 +273,19 @@ if errors.Is(err, store.ErrConflict) {
 ### 6.4 定时任务
 
 ```go
-scheduler.Register(&scheduler.Job{
-    ID:       "daily-push",
-    Cron:     "0 7 * * *",       // 每天 07:00
-    Handle:   pushDailyCards,    // 内部遍历订阅目标
-    Immediate: false,
+// StartScheduler 校验默认 push_cron 后，注册一个每分钟触发的 tick。
+scheduler.AddFunc("* * * * *", func() {
+    env.PushDue(ctx, env.now()) // 每个订阅按自己的 cron 判断是否到点
 })
 ```
 
+- 推送时间逐会话存储：订阅里的 `cron` 优先，缺省用全局 `push_cron`；
+  `/推送时间 HH:MM`（或 5 段 cron）修改，`/推送时间 默认` 恢复。
+- `cronDue(spec, now)` 用 `cron.Schedule.Next(minute-1s)` 判断本分钟是否命中，
+  支持任意 5 段表达式；订阅里的 `last_run`（分钟精度）防止重启/重复 tick 二次发送。
 - 任务回调在独立 goroutine 执行，注意并发安全（store 已串行化）。
-- 主动推送必须 `msg.SetInitiative()`；失败按错误码分类：频控退避、无权限则关闭该目标订阅并记录原因。
-- 任务状态仅内存；重启后以 `init()` 注册为准。
+- 主动推送必须 `msg.SetInitiative()`；失败按错误码分类：频控退避、无权限则暂停该目标订阅并记录原因。
+- 修改推送时间立即生效，无需重建 cron 条目；重启后以订阅存储为准。
 
 ### 6.5 按钮与互动回调
 
@@ -326,6 +328,12 @@ msg.Keyboard(kb)
 - 所有输入在服务端重新校验（长度、时间、RRULE），前端校验只是体验。
 - 观察成员：`Handler.Dispatch` 在指令/附件消息上调用 `Service.RecordSeenMember`，
   管理台用它给"没有课表"的成员建空表；官方群成员列表内邀不可用，这是降级方案。
+- 休假/调休标记（`internal/server/overrides.go`）：
+  - `GET /api/overrides?scope_id=` 列出标记（带成员显示名，`*` 显示为"全体成员"）
+  - `POST /api/overrides/set`（`scope_id`/`user_id`/`day`/`kind`/`source_day`）与
+    `POST /api/overrides/delete`（`scope_id`/`user_id`/`day`）
+  - 服务端复用 `SetWebDayOverride`/`DeleteWebDayOverride`，与机器人指令共享同一张表与校验
+    （类型、来源日期、上限），`created_by` 记为 `webui`
 - 批量导入/导出（`internal/server/transfer.go`）：
   - `GET /api/export?scope_id=&format=ics|backup`：ICS 压缩包（每成员 `schedule_<OpenID>.ics`
     + `manifest.json`）或原始备份 JSON（成员 + 休假/调休标记）

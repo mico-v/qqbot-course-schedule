@@ -106,12 +106,12 @@ func run() error {
 	go syncCommandPanels(env, handler)
 	go syncMenu(env)
 
-	scheduler, err := bot.StartScheduler(env, cfg.PushCron)
+	scheduler, err := bot.StartScheduler(env)
 	if err != nil {
-		slog.Warn("每日推送未启用", "err", err)
+		slog.Warn("定时推送未启用", "err", err)
 	} else {
 		defer scheduler.Stop()
-		slog.Info("每日推送已启用", "cron", cfg.PushCron)
+		slog.Info("定时推送已启用", "default_cron", cfg.PushCron)
 	}
 
 	serveErr := make(chan error, 1)

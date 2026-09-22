@@ -6,6 +6,7 @@ const state = {
   selectedScopeId: "",
   selectedUserId: "",
   schedule: null,
+  overrides: [],
   dirty: false,
 };
 
@@ -279,6 +280,7 @@ async function loadMember(scopeId, userId) {
   state.selectedUserId = userId;
   renderEditor();
   renderScopes();
+  await loadOverrides(scopeId);
 }
 
 async function loadScopes({ keepSelection = true } = {}) {
@@ -617,6 +619,154 @@ async function importArchive() {
   }
 }
 
+function overrideKindText(kind) {
+  return kind === "shift" ? "调休" : "休假";
+}
+
+function todayValue() {
+  const now = new Date();
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+async function loadOverrides(scopeId) {
+  try {
+    const data = await apiGet("/api/overrides", { scope_id: scopeId });
+    if (state.selectedScopeId !== scopeId) return;
+    state.overrides = data.overrides || [];
+  } catch (error) {
+    if (state.selectedScopeId !== scopeId) return;
+    state.overrides = [];
+    showNotice(error.message, "error");
+  }
+  renderOverrides();
+}
+
+function renderOverrideMembers() {
+  const select = $("#overrideMember");
+  if (!select) return;
+  const scope = currentScope();
+  const previous = select.value;
+  select.textContent = "";
+  const all = document.createElement("option");
+  all.value = "*";
+  all.textContent = "全体成员";
+  select.append(all);
+  for (const member of scope?.members || []) {
+    const option = document.createElement("option");
+    option.value = member.user_id;
+    option.textContent = member.name || member.user_id;
+    select.append(option);
+  }
+  const preferred = previous || state.selectedUserId || "*";
+  const exists = [...select.options].some((option) => option.value === preferred);
+  select.value = exists ? preferred : "*";
+}
+
+function renderOverrides() {
+  const list = $("#overrideList");
+  if (!list) return;
+  list.textContent = "";
+  const rows = state.overrides || [];
+  if (!rows.length) {
+    const empty = document.createElement("p");
+    empty.className = "no-courses";
+    empty.textContent = "暂无休假/调休标记。";
+    list.append(empty);
+  }
+  for (const row of rows) {
+    const item = document.createElement("div");
+    item.className = "override-item";
+
+    const text = document.createElement("div");
+    text.className = "override-item-text";
+    const title = document.createElement("strong");
+    title.textContent = `${row.day} · ${overrideKindText(row.kind)}`;
+    const meta = document.createElement("span");
+    meta.className = "muted";
+    meta.textContent =
+      row.kind === "shift" && row.source_day
+        ? `${row.name} · 按 ${row.source_day} 的课程上课`
+        : `${row.name} · 当天课程全部取消`;
+    text.append(title, meta);
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "remove-course";
+    remove.textContent = "删除";
+    remove.addEventListener("click", () => deleteOverride(row));
+
+    item.append(text, remove);
+    list.append(item);
+  }
+  renderOverrideMembers();
+}
+
+function openOverrideForm() {
+  $("#overrideForm").classList.remove("hidden");
+  $("#overrideDay").value = $("#overrideDay").value || todayValue();
+  $("#overrideKind").value = "holiday";
+  $("#overrideSourceField").classList.add("hidden");
+  $("#overrideSourceDay").value = "";
+  renderOverrideMembers();
+  $("#overrideMember").value = state.selectedUserId || "*";
+}
+
+function closeOverrideForm() {
+  $("#overrideForm").classList.add("hidden");
+}
+
+async function submitOverride() {
+  const scopeId = state.selectedScopeId;
+  if (!scopeId) return;
+  const day = $("#overrideDay").value;
+  const kind = $("#overrideKind").value;
+  const sourceDay = $("#overrideSourceDay").value;
+  const userId = $("#overrideMember").value;
+  if (!day) {
+    showNotice("请选择标记日期。", "error");
+    return;
+  }
+  if (kind === "shift" && !sourceDay) {
+    showNotice("调休需要选择来源日期。", "error");
+    return;
+  }
+  const button = $("#overrideSubmit");
+  setBusy(button, true);
+  try {
+    await apiPost("/api/overrides/set", {
+      scope_id: scopeId,
+      user_id: userId,
+      day,
+      kind,
+      source_day: sourceDay,
+    });
+    closeOverrideForm();
+    showNotice(`已保存 ${day} 的${overrideKindText(kind)}标记。`, "success");
+    await loadOverrides(scopeId);
+  } catch (error) {
+    showNotice(error.message, "error");
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+async function deleteOverride(row) {
+  if (!state.selectedScopeId) return;
+  if (!window.confirm(`删除 ${row.day} 的${overrideKindText(row.kind)}标记（${row.name}）？`)) return;
+  try {
+    await apiPost("/api/overrides/delete", {
+      scope_id: state.selectedScopeId,
+      user_id: row.user_id,
+      day: row.day,
+    });
+    showNotice(`已删除 ${row.day} 的标记。`, "success");
+    await loadOverrides(state.selectedScopeId);
+  } catch (error) {
+    showNotice(error.message, "error");
+  }
+}
+
 function start() {
   $("#refreshButton").addEventListener("click", refresh);
   $("#scopeSearch").addEventListener("input", renderScopes);
@@ -648,6 +798,12 @@ function start() {
   });
   $("#transferDialog").addEventListener("click", (event) => {
     if (event.target === $("#transferDialog")) closeTransfer();
+  });
+  $("#addOverrideButton").addEventListener("click", openOverrideForm);
+  $("#overrideCancel").addEventListener("click", closeOverrideForm);
+  $("#overrideSubmit").addEventListener("click", submitOverride);
+  $("#overrideKind").addEventListener("change", (event) => {
+    $("#overrideSourceField").classList.toggle("hidden", event.target.value !== "shift");
   });
   refresh();
 }

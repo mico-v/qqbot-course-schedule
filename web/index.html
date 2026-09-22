@@ -73,6 +73,44 @@
 
             <div id="courseList" class="course-list"></div>
             <div id="noCourses" class="no-courses hidden">暂无课程，点击“添加课程”创建第一节课。</div>
+
+            <div class="override-section">
+              <div class="course-toolbar">
+                <div>
+                  <h3>休假 / 调休标记</h3>
+                  <p class="muted">
+                    休假会取消当天全部课程；调休改为按来源日期的课程上课。标记「全体成员」对群内所有人生效。
+                  </p>
+                </div>
+                <button id="addOverrideButton" class="button button-secondary" type="button">＋ 添加标记</button>
+              </div>
+              <div id="overrideList" class="override-list"></div>
+              <div id="overrideForm" class="override-form hidden">
+                <label class="field compact-field">
+                  <span>日期</span>
+                  <input id="overrideDay" type="date" />
+                </label>
+                <label class="field compact-field">
+                  <span>类型</span>
+                  <select id="overrideKind">
+                    <option value="holiday">休假（当天无课）</option>
+                    <option value="shift">调休（按来源日期上课）</option>
+                  </select>
+                </label>
+                <label id="overrideSourceField" class="field compact-field hidden">
+                  <span>来源日期</span>
+                  <input id="overrideSourceDay" type="date" />
+                </label>
+                <label class="field compact-field">
+                  <span>成员</span>
+                  <select id="overrideMember"></select>
+                </label>
+                <div class="override-form-actions">
+                  <button id="overrideCancel" class="button button-ghost" type="button">取消</button>
+                  <button id="overrideSubmit" class="button button-primary" type="button">保存标记</button>
+                </div>
+              </div>
+            </div>
           </div>
         </section>
       </section>
