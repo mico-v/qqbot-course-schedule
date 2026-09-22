@@ -26,6 +26,7 @@ func RegisterAdmin(router *gin.Engine, service *schedule.Service, password strin
 	admin.GET("/style.css", serveAsset("style.css", "text/css; charset=utf-8"))
 
 	api := router.Group("/api", auth)
+	registerTransferRoutes(api, service)
 	api.GET("/scopes", func(c *gin.Context) {
 		summaries, err := service.ScopeSummaries()
 		if err != nil {

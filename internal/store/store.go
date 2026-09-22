@@ -488,6 +488,16 @@ func (s *Store) ListDayOverrides(scopeID string) ([]schedule.DayOverrideRow, err
 	return result, rows.Err()
 }
 
+// DeleteScopeDayOverrides removes every marker in a scope (backup restore).
+func (s *Store) DeleteScopeDayOverrides(scopeID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := s.db.Exec(`DELETE FROM schedule_day_overrides WHERE scope_id = ?`, scopeID); err != nil {
+		return fmt.Errorf("清空休假标记失败: %w", err)
+	}
+	return nil
+}
+
 // SetDayOverride upserts one marker.
 func (s *Store) SetDayOverride(scopeID, userID, day string, override schedule.DayOverride, createdBy, createdAt string) error {
 	s.mu.Lock()

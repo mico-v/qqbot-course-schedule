@@ -82,6 +82,7 @@ type Storage interface {
 	GetScopeMembers(scopeID string) (map[string]*Member, error)
 	PutMember(scopeID, userID string, member *Member, expectedRevision *int64) error
 	ListDayOverrides(scopeID string) ([]DayOverrideRow, error)
+	DeleteScopeDayOverrides(scopeID string) error
 	ListScopeSummaries() ([]ScopeSummary, error)
 	SetDayOverride(scopeID, userID, day string, override DayOverride, createdBy, createdAt string) error
 	DeleteDayOverride(scopeID, userID, day string) (bool, error)

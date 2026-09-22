@@ -18,6 +18,13 @@ const addMembers = {
   loading: false,
 };
 
+const transfer = {
+  scopeId: "",
+  label: "",
+  memberCount: 0,
+  file: null,
+};
+
 const notice = $("#notice");
 const scopeList = $("#scopeList");
 const courseList = $("#courseList");
@@ -155,6 +162,17 @@ function renderScopes() {
       });
       header.append(addButton);
     }
+    const transferButton = document.createElement("button");
+    transferButton.type = "button";
+    transferButton.className = "scope-add";
+    transferButton.title = `导入 / 导出「${scope.label}」`;
+    transferButton.setAttribute("aria-label", `导入或导出${scope.label}`);
+    transferButton.textContent = "⇅";
+    transferButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openTransfer(scope);
+    });
+    header.append(transferButton);
     wrapper.append(header);
 
     const members = document.createElement("div");
@@ -434,6 +452,171 @@ async function refresh() {
   }
 }
 
+function canExport() {
+  return !state.dirty || window.confirm("当前课表有未保存的修改，导出的是已保存的版本。确定继续吗？");
+}
+
+function safeFileLabel(value) {
+  const cleaned = String(value || "scope").replace(/[\\/:*?"<>|\s]+/g, "_").slice(0, 40);
+  return cleaned || "scope";
+}
+
+function timestamp() {
+  const now = new Date();
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function selectedMemberName(scopeId) {
+  if (state.selectedScopeId !== scopeId || !state.selectedUserId) return "";
+  const scope = state.scopes.find((item) => item.scope_id === scopeId);
+  const member = scope?.members?.find((item) => item.user_id === state.selectedUserId);
+  return member ? `${member.name || member.user_id}（${member.user_id}）` : "";
+}
+
+async function downloadExport(params, filename) {
+  showNotice(`正在导出 ${filename}…`);
+  const response = await fetch(`/api/export?${new URLSearchParams(params)}`);
+  if (!response.ok) {
+    let message = `导出失败（HTTP ${response.status}）`;
+    try {
+      const data = await response.json();
+      if (data && data.error) message = data.error;
+    } catch {
+      /* not JSON */
+    }
+    throw new Error(message);
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+  showNotice(`已开始下载 ${filename}。`, "success");
+}
+
+async function exportScopeArchive(format) {
+  if (!transfer.scopeId || !canExport()) return;
+  const isBackup = format === "backup";
+  const suffix = isBackup ? "原始备份" : "ICS";
+  const extension = isBackup ? "json" : "zip";
+  try {
+    await downloadExport(
+      { scope_id: transfer.scopeId, format },
+      `课表-${suffix}-${safeFileLabel(transfer.label)}-${timestamp()}.${extension}`,
+    );
+  } catch (error) {
+    showNotice(error.message, "error");
+  }
+}
+
+function importSummary(result) {
+  const summary = result || {};
+  const parts = [
+    `已导入 ${summary.member_count || 0} 位成员的课表（新增 ${summary.created_count || 0}、` +
+      `覆盖 ${summary.updated_count || 0}），共 ${summary.event_count || 0} 节课程。`,
+  ];
+  if (summary.day_override_count) {
+    parts.push(`同时恢复 ${summary.day_override_count} 条休假/调休标记。`);
+  }
+  const skipped = Array.isArray(summary.skipped) ? summary.skipped : [];
+  if (skipped.length) {
+    const shown = skipped.slice(0, 3).join("、");
+    parts.push(`忽略 ${skipped.length} 个文件：${shown}${skipped.length > 3 ? "…" : ""}`);
+  }
+  return parts.join("");
+}
+
+function renderTransfer() {
+  $("#transferMeta").textContent = `${transfer.label} · ${transfer.memberCount} 位成员`;
+  $("#transferScopeCount").textContent = String(transfer.memberCount);
+  $("#transferExportIcs").disabled = transfer.memberCount === 0;
+  $("#transferExportBackup").disabled = transfer.memberCount === 0;
+  $("#transferFileName").textContent = transfer.file
+    ? `${transfer.file.name} · ${formatSize(transfer.file.size)}`
+    : "未选择文件";
+  $("#transferImport").disabled = !transfer.file;
+  const member = selectedMemberName(transfer.scopeId);
+  $("#transferHint").textContent = member
+    ? `单个 .ics 会导入到当前选中的 ${member}；文件名形如 schedule<OpenID>.ics 时以文件名为准。`
+    : "本会话还没有选中成员：导入单个 .ics 前请先选中成员，或把文件命名为 schedule<OpenID>.ics。";
+}
+
+function openTransfer(scope) {
+  transfer.scopeId = scope.scope_id;
+  transfer.label = scope.label;
+  transfer.memberCount = scope.member_count || 0;
+  transfer.file = null;
+  $("#transferFile").value = "";
+  $("#transferDialog").classList.remove("hidden");
+  renderTransfer();
+}
+
+function closeTransfer() {
+  $("#transferDialog").classList.add("hidden");
+  transfer.scopeId = "";
+  transfer.label = "";
+  transfer.memberCount = 0;
+  transfer.file = null;
+  $("#transferFile").value = "";
+}
+
+async function importArchive() {
+  const file = transfer.file;
+  if (!file || !transfer.scopeId) return;
+  if (!canLeaveEditor()) return;
+  const button = $("#transferImport");
+  setBusy(button, true);
+  showNotice("正在导入…");
+  try {
+    const form = new FormData();
+    form.append("scope_id", transfer.scopeId);
+    if (
+      file.name.toLocaleLowerCase().endsWith(".ics") &&
+      state.selectedScopeId === transfer.scopeId &&
+      state.selectedUserId
+    ) {
+      form.append("user_id", state.selectedUserId);
+    }
+    form.append("file", file);
+    const response = await fetch("/api/import", { method: "POST", body: form });
+    const text = await response.text();
+    let result = null;
+    try {
+      result = text ? JSON.parse(text) : null;
+    } catch {
+      result = null;
+    }
+    if (!response.ok) {
+      throw new Error((result && result.error) || `导入失败（HTTP ${response.status}）`);
+    }
+    closeTransfer();
+    await loadScopes();
+    if (state.selectedScopeId && state.selectedUserId) {
+      try {
+        await loadMember(state.selectedScopeId, state.selectedUserId);
+      } catch {
+        /* member may have been replaced */
+      }
+    }
+    showNotice(importSummary(result), "success");
+  } catch (error) {
+    showNotice(error.message, "error");
+  } finally {
+    setBusy(button, false);
+  }
+}
+
 function start() {
   $("#refreshButton").addEventListener("click", refresh);
   $("#scopeSearch").addEventListener("input", renderScopes);
@@ -454,6 +637,17 @@ function start() {
   });
   $("#addMemberDialog").addEventListener("click", (event) => {
     if (event.target === $("#addMemberDialog")) closeAddMembers();
+  });
+  $("#transferClose").addEventListener("click", closeTransfer);
+  $("#transferExportIcs").addEventListener("click", () => exportScopeArchive("ics"));
+  $("#transferExportBackup").addEventListener("click", () => exportScopeArchive("backup"));
+  $("#transferImport").addEventListener("click", importArchive);
+  $("#transferFile").addEventListener("change", (event) => {
+    transfer.file = event.target.files[0] || null;
+    renderTransfer();
+  });
+  $("#transferDialog").addEventListener("click", (event) => {
+    if (event.target === $("#transferDialog")) closeTransfer();
   });
   refresh();
 }

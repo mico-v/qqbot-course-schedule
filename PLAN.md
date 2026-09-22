@@ -17,6 +17,7 @@
 | M3 Web 管理台 | ✅ 已上线 | `/admin` + 5 个 API + Basic Auth + revision 409 |
 | M4 面板/菜单/推送/按钮 | ✅ 已上线 | 指令面板（13 项）、自定义菜单（5 项）、定时推送（默认 07:30）、按钮框架（内邀默认关闭） |
 | M5 收尾 | ✅ 已上线 | `/导出课表`、错误码分类、文档与测试补齐 |
+| M6 增强 | ✅ 已上线 | WebUI 批量导入/导出：ICS 压缩包（含 manifest）、原始备份 JSON、单文件导入 |
 
 线上形态：`/opt/qqbot-course-schedule` + systemd（开机自启）+ Caddy（公网只放行
 `/webhook` `/healthz` `/images/*` `/files/*`，管理台走 ZeroTier 内网入口）。

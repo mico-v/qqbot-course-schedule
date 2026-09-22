@@ -40,7 +40,7 @@ curl -s localhost:18080/healthz      # {"ok":true,"version":"dev"}
 | 休假调休 | `/休假` `/调休` `/销假` `/假期`（别名齐全，管理员默认全体，普通成员限自己，支持 @） |
 | 推送 | `/启用推送` `/关闭推送` `/推送测试`；`push_cron` 默认每天 07:30，无权限自动暂停 |
 | 平台交互 | 指令面板（c2c + group）、自定义菜单、卡片按钮框架（`buttons`，内邀能力默认关闭） |
-| Web 管理台 | `/admin`（Basic Auth）按会话/成员增删改课程、批量建空课表、revision 409 冲突提示 |
+| Web 管理台 | `/admin`（Basic Auth）按会话/成员增删改课程、批量建空课表、revision 409 冲突提示、批量导入/导出（ICS 压缩包 / 原始备份） |
 
 ## 部署
 
@@ -60,6 +60,7 @@ curl -s localhost:18080/healthz      # {"ok":true,"version":"dev"}
 - [x] M3 Web 管理台
 - [x] M4 指令面板 / 自定义菜单 / 定时推送 / 按钮框架
 - [x] M5 收尾：导出、错误码、文档与测试
+- [x] M6 增强：WebUI 批量导入/导出（ICS 压缩包 + 原始备份）
 
 ## 许可证
 

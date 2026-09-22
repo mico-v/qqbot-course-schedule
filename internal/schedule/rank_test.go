@@ -189,6 +189,11 @@ func (m *memoryStorage) ListDayOverrides(scopeID string) ([]DayOverrideRow, erro
 	return append([]DayOverrideRow(nil), m.overrides[scopeID]...), nil
 }
 
+func (m *memoryStorage) DeleteScopeDayOverrides(scopeID string) error {
+	delete(m.overrides, scopeID)
+	return nil
+}
+
 func (m *memoryStorage) SetDayOverride(scopeID, userID, day string, override DayOverride, createdBy, createdAt string) error {
 	rows := m.overrides[scopeID]
 	for index, row := range rows {

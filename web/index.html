@@ -119,6 +119,67 @@
       </div>
     </div>
 
+    <div
+      id="transferDialog"
+      class="dialog-overlay hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="transferTitle"
+    >
+      <div class="dialog-card transfer-card">
+        <header class="dialog-head">
+          <div>
+            <p class="section-kicker">IMPORT / EXPORT</p>
+            <h2 id="transferTitle">导入 / 导出</h2>
+            <p id="transferMeta" class="muted"></p>
+          </div>
+          <button id="transferClose" class="dialog-close" type="button" aria-label="关闭">×</button>
+        </header>
+
+        <section class="transfer-section">
+          <div class="transfer-heading">
+            <h3>导出全部成员</h3>
+            <span id="transferScopeCount" class="count-pill">0</span>
+          </div>
+          <p class="muted">
+            「ICS 压缩包」每位成员一个 <code>schedule&lt;OpenID&gt;.ics</code> 加
+            <code>manifest.json</code>，可导入手机或电脑日历，也能在本页面重新导入；
+            「原始备份」包含课表与休假/调休标记，用于完整还原。
+          </p>
+          <div class="dialog-actions">
+            <button id="transferExportIcs" class="button button-secondary" type="button">导出 ICS 压缩包</button>
+            <button id="transferExportBackup" class="button button-secondary" type="button">导出原始备份</button>
+          </div>
+        </section>
+
+        <section class="transfer-section">
+          <div class="transfer-heading">
+            <h3>导入到本会话</h3>
+          </div>
+          <p class="muted">
+            <code>.zip</code> 按包内 <code>manifest.json</code>（或文件名
+            <code>schedule&lt;OpenID&gt;.ics</code>）导入，不在包里的成员不受影响；
+            <code>.json</code> 原始备份恢复课表与休假/调休标记，并清除包内没有的标记；
+            <code>.ics</code> 导入到当前选中的成员。已有昵称不会被覆盖。
+          </p>
+          <div class="dialog-toolbar">
+            <label class="button button-ghost file-button">
+              选择文件
+              <input id="transferFile" type="file" accept=".zip,.ics,.json,application/zip,text/calendar,application/json" />
+            </label>
+            <span id="transferFileName" class="muted">未选择文件</span>
+          </div>
+          <div class="dialog-actions">
+            <button id="transferImport" class="button button-primary" type="button" disabled>开始导入</button>
+          </div>
+        </section>
+
+        <footer class="dialog-foot">
+          <p id="transferHint" class="muted"></p>
+        </footer>
+      </div>
+    </div>
+
     <template id="courseTemplate">
       <article class="course-card">
         <div class="course-card-head">
