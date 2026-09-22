@@ -19,23 +19,28 @@ func main() {
 	output := flag.String("o", "card-preview.jpg", "output JPEG path")
 	rankMode := flag.Bool("rank", false, "render a sample rank board instead of a day card")
 	avatarPath := flag.String("avatar", "", "optional avatar image to draw in the card header")
+	memberAvatarPath := flag.String("member-avatar", "", "optional avatar image to use for every member row")
 	flag.Parse()
 
-	var avatar image.Image
-	if *avatarPath != "" {
-		file, err := os.Open(*avatarPath)
+	loadImage := func(path, label string) image.Image {
+		if path == "" {
+			return nil
+		}
+		file, err := os.Open(path)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "打开头像失败:", err)
+			fmt.Fprintln(os.Stderr, label+"失败:", err)
 			os.Exit(1)
 		}
 		decoded, _, err := image.Decode(file)
 		file.Close()
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "解析头像失败:", err)
+			fmt.Fprintln(os.Stderr, "解析"+label+"失败:", err)
 			os.Exit(1)
 		}
-		avatar = decoded
+		return decoded
 	}
+	avatar := loadImage(*avatarPath, "打开头像")
+	memberAvatar := loadImage(*memberAvatarPath, "打开成员头像")
 
 	renderer, err := render.New()
 	if err != nil {
@@ -67,6 +72,16 @@ func main() {
 		{UserID: "F6A1B2C3D4E5", Name: "小张", StatusKey: "holiday", Status: "今日休假"},
 	}
 
+	memberAvatars := map[string]image.Image{}
+	if memberAvatar != nil {
+		for _, row := range rows {
+			memberAvatars[row.UserID] = memberAvatar
+		}
+		for _, row := range folded {
+			memberAvatars[row.UserID] = memberAvatar
+		}
+	}
+
 	var image = renderer.DayCard(render.DayCardData{
 		Title:         "课程表 · 2026-09-17 周四",
 		Footer:        schedule.ScheduleFooter(time.Now(), time.Now()),
@@ -75,6 +90,7 @@ func main() {
 		Folded:        folded,
 		DurationLabel: "本节持续",
 		BotAvatar:     avatar,
+		Avatars:       memberAvatars,
 	})
 	if *rankMode {
 		image = renderer.DayCard(render.DayCardData{
