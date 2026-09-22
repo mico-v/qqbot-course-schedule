@@ -778,6 +778,13 @@ h3 {
   }
 }
 
+.course-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
 .override-section {
   margin-top: 28px;
   padding-top: 22px;

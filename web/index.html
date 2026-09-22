@@ -66,9 +66,14 @@
             <div class="course-toolbar">
               <div>
                 <h3>课程列表</h3>
-                <p class="muted">时间按本地时区保存；重复课程可填写 iCalendar RRULE。</p>
+                <p class="muted">时间按本地时区保存；重复课程可填写 iCalendar RRULE。导入 .ics 会覆盖该成员现有课程。</p>
               </div>
-              <button id="addCourseButton" class="button button-secondary" type="button">＋ 添加课程</button>
+              <div class="course-toolbar-actions">
+                <input id="memberImportFile" type="file" accept=".ics,text/calendar" class="hidden" />
+                <button id="memberImportButton" class="button button-ghost" type="button">导入 .ics</button>
+                <button id="memberExportButton" class="button button-ghost" type="button">导出 .ics</button>
+                <button id="addCourseButton" class="button button-secondary" type="button">＋ 添加课程</button>
+              </div>
             </div>
 
             <div id="courseList" class="course-list"></div>

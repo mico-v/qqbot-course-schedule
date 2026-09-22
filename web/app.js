@@ -773,6 +773,53 @@ async function deleteOverride(row) {
   }
 }
 
+async function exportMemberICS() {
+  const schedule = state.schedule;
+  if (!schedule || !canExport()) return;
+  const label = safeFileLabel(schedule.name || schedule.user_id);
+  try {
+    await downloadExport(
+      { scope_id: schedule.scope_id, user_id: schedule.user_id, format: "ics" },
+      `课表-${label}-${timestamp()}.ics`,
+    );
+  } catch (error) {
+    showNotice(error.message, "error");
+  }
+}
+
+async function importMemberICS(file) {
+  const schedule = state.schedule;
+  if (!schedule || !file) return;
+  if (!file.name.toLocaleLowerCase().endsWith(".ics")) {
+    showNotice("单个成员只能导入 .ics 文件；.zip / .json 请在会话的导入/导出对话框中使用。", "error");
+    return;
+  }
+  if (!canLeaveEditor()) return;
+  showNotice(`正在导入 ${file.name}…`);
+  try {
+    const form = new FormData();
+    form.append("scope_id", schedule.scope_id);
+    form.append("user_id", schedule.user_id);
+    form.append("file", file);
+    const response = await fetch("/api/import", { method: "POST", body: form });
+    const text = await response.text();
+    let result = null;
+    try {
+      result = text ? JSON.parse(text) : null;
+    } catch {
+      result = null;
+    }
+    if (!response.ok) {
+      throw new Error((result && result.error) || `导入失败（HTTP ${response.status}）`);
+    }
+    await loadScopes();
+    await loadMember(schedule.scope_id, schedule.user_id);
+    showNotice(importSummary(result), "success");
+  } catch (error) {
+    showNotice(error.message, "error");
+  }
+}
+
 function start() {
   $("#refreshButton").addEventListener("click", refresh);
   $("#scopeSearch").addEventListener("input", renderScopes);
@@ -804,6 +851,13 @@ function start() {
   });
   $("#transferDialog").addEventListener("click", (event) => {
     if (event.target === $("#transferDialog")) closeTransfer();
+  });
+  $("#memberExportButton").addEventListener("click", exportMemberICS);
+  $("#memberImportButton").addEventListener("click", () => $("#memberImportFile").click());
+  $("#memberImportFile").addEventListener("change", (event) => {
+    const file = event.target.files[0] || null;
+    event.target.value = "";
+    importMemberICS(file);
   });
   $("#addOverrideButton").addEventListener("click", openOverrideForm);
   $("#overrideCancel").addEventListener("click", closeOverrideForm);

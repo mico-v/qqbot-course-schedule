@@ -157,3 +157,32 @@ func TestImportFilenameConvention(t *testing.T) {
 var _ = io.Discard
 var _ = strings.TrimSpace
 var _ = time.Now
+
+func TestExportSingleMemberICS(t *testing.T) {
+	router, service := newAdminRouter(t, adminPassword)
+	scope := schedule.ScopeGroup("G1")
+	seedScope(t, service, scope)
+
+	recorder := adminRequest(router, http.MethodGet, "/api/export?scope_id="+scope+"&user_id=U1", nil, true)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("member export = %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	if contentType := recorder.Header().Get("Content-Type"); contentType != "text/calendar; charset=utf-8" {
+		t.Fatalf("content type = %q", contentType)
+	}
+	if body := recorder.Body.String(); !strings.Contains(body, "BEGIN:VEVENT") || !strings.Contains(body, "高等数学") {
+		t.Fatalf("body = %q", body)
+	}
+	if disposition := recorder.Header().Get("Content-Disposition"); !strings.Contains(disposition, ".ics") {
+		t.Fatalf("disposition = %q", disposition)
+	}
+
+	// An empty member has nothing to export.
+	if recorder := adminRequest(router, http.MethodGet, "/api/export?scope_id="+scope+"&user_id=U2", nil, true); recorder.Code != http.StatusBadRequest {
+		t.Fatalf("empty member export = %d, want 400", recorder.Code)
+	}
+	// Unknown member.
+	if recorder := adminRequest(router, http.MethodGet, "/api/export?scope_id="+scope+"&user_id=U9", nil, true); recorder.Code != http.StatusNotFound {
+		t.Fatalf("unknown member export = %d, want 404", recorder.Code)
+	}
+}

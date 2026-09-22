@@ -339,6 +339,8 @@ msg.Keyboard(kb)
 - 批量导入/导出（`internal/server/transfer.go`）：
   - `GET /api/export?scope_id=&format=ics|backup`：ICS 压缩包（每成员 `schedule_<OpenID>.ics`
     + `manifest.json`）或原始备份 JSON（成员 + 休假/调休标记）
+  - `GET /api/export?scope_id=&user_id=&format=ics`：单成员 `.ics` 直下（`text/calendar`；
+    空课表 400、成员不存在 404），对应编辑器里的「导入 .ics / 导出 .ics」按钮
   - `POST /api/import`（multipart：`scope_id`、可选 `user_id`、`file`）：`.zip` 按 manifest 或
     文件名约定导入、`.json` 备份恢复（清空并重建标记）、`.ics` 导入到选中成员
   - 上限：总文件 20 MiB、压缩包条目 ≤ 510、单 ICS 2 MiB；空课表成员不进入 ICS 压缩包

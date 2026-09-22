@@ -39,7 +39,26 @@ func registerTransferRoutes(api *gin.RouterGroup, service *schedule.Service) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "scope_id 不能为空。"})
 			return
 		}
-		if c.DefaultQuery("format", "ics") == "backup" {
+		format := c.DefaultQuery("format", "ics")
+		userID := strings.TrimSpace(c.Query("user_id"))
+		if format != "backup" && userID != "" {
+			name, content, found, err := service.WebMemberICS(scopeID, userID)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			if !found {
+				c.JSON(http.StatusNotFound, gin.H{"error": "找不到指定成员的课程表。"})
+				return
+			}
+			if content == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "该成员还没有课程可导出。"})
+				return
+			}
+			writeAttachment(c, "text/calendar; charset=utf-8", "schedule-"+safeToken(name)+".ics", []byte(content))
+			return
+		}
+		if format == "backup" {
 			backup, err := service.ExportBackup(scopeID)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

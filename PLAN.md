@@ -19,6 +19,7 @@
 | M5 收尾 | ✅ 已上线 | `/导出课表`、错误码分类、文档与测试补齐 |
 | M6 增强 | ✅ 已上线 | WebUI 批量导入/导出：ICS 压缩包（含 manifest）、原始备份 JSON、单文件导入 |
 | M7 增强 | ✅ 已上线 | 按会话自定义推送时间（`/推送时间`，调度器每分钟按订阅 cron 触发）、WebUI 休假/调休标记管理 |
+| M8 增强 | ✅ 已上线 | 成员页单成员 `.ics` 导入/导出（`/api/export?...&user_id=`，编辑器内一键完成） |
 
 线上形态：`/opt/qqbot-course-schedule` + systemd（开机自启）+ Caddy（公网只放行
 `/webhook` `/healthz` `/images/*` `/files/*`，管理台走 ZeroTier 内网入口）。

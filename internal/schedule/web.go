@@ -338,6 +338,29 @@ func (s *Service) RecordSeenMember(scopeID, userID, name string) error {
 	return s.store.SetKV("global", seenNamespace, scopeID, seen)
 }
 
+// WebMemberICS returns one member's ICS content for a direct download.
+// content is empty when the member has no events yet.
+func (s *Service) WebMemberICS(scopeID, userID string) (name, content string, found bool, err error) {
+	scopeID = strings.TrimSpace(scopeID)
+	userID = strings.TrimSpace(userID)
+	if scopeID == "" || userID == "" {
+		return "", "", false, fmt.Errorf("scope_id 和 user_id 不能为空。")
+	}
+	member, found, err := s.store.GetMember(scopeID, userID)
+	if err != nil || !found || member == nil {
+		return "", "", false, err
+	}
+	name = firstNonEmpty(member.Name, userID)
+	if len(member.Events) == 0 {
+		return name, "", true, nil
+	}
+	content = strings.TrimSpace(member.ICS)
+	if content == "" {
+		content = SerializeScheduleICS(member.Events, "", member.Name)
+	}
+	return name, content, true, nil
+}
+
 // WebDayOverride is one holiday/shift marker in the admin page.
 type WebDayOverride struct {
 	UserID    string `json:"user_id"`
