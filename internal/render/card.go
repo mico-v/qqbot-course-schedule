@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/fogleman/gg"
+	xdraw "golang.org/x/image/draw"
 
 	"github.com/mico-v/qqbot-course-schedule/internal/schedule"
 )
@@ -419,14 +420,30 @@ func firstGrapheme(text string) string {
 	return clusters[0]
 }
 
-// circleImage crops a square image into a circle.
+// circleImage scales src to cover size x size (center-cropped) and masks it
+// into a circle. Scaling is required: DrawImage alone would paste the source at
+// its native resolution, showing only the middle of a large avatar.
 func circleImage(src image.Image, size int) *image.RGBA {
+	bounds := src.Bounds()
+	width, height := bounds.Dx(), bounds.Dy()
+	masked := image.NewRGBA(image.Rect(0, 0, size, size))
+	if width <= 0 || height <= 0 {
+		return masked
+	}
+	scale := math.Max(float64(size)/float64(width), float64(size)/float64(height))
+	stageWidth := int(math.Ceil(float64(width) * scale))
+	stageHeight := int(math.Ceil(float64(height) * scale))
+	stage := image.NewRGBA(image.Rect(0, 0, stageWidth, stageHeight))
+	xdraw.CatmullRom.Scale(stage, stage.Bounds(), src, bounds, xdraw.Src, nil)
 	scaled := image.NewRGBA(image.Rect(0, 0, size, size))
-	dc := gg.NewContextForRGBA(scaled)
+	offset := image.Point{X: (stageWidth - size) / 2, Y: (stageHeight - size) / 2}
+	xdraw.Draw(scaled, scaled.Bounds(), stage, offset, xdraw.Src)
+
+	dc := gg.NewContextForRGBA(masked)
 	dc.DrawCircle(float64(size)/2, float64(size)/2, float64(size)/2)
 	dc.Clip()
-	dc.DrawImageAnchored(src, size/2, size/2, 0.5, 0.5)
-	return scaled
+	dc.DrawImage(scaled, 0, 0)
+	return masked
 }
 
 // sortRowsForTest keeps deterministic output when callers pass unsorted rows.

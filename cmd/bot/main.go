@@ -102,7 +102,10 @@ func run() error {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	go refreshBotAvatar(client, env)
+	if cached := render.LoadCachedBotAvatar(env.DataDir); cached != nil {
+		env.SetBotAvatar(cached)
+	}
+	go env.RefreshBotAvatar(context.Background())
 	go syncCommandPanels(env, handler)
 	go syncMenu(env)
 
@@ -160,21 +163,6 @@ func syncCommandPanels(env *bot.Env, handler *bot.Handler) {
 		return
 	}
 	slog.Info("指令面板同步完成", "created", created, "updated", updated)
-}
-
-func refreshBotAvatar(client *qqapi.Client, env *bot.Env) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	info, err := client.GetBotInfo(ctx)
-	if err != nil {
-		slog.Warn("获取机器人信息失败", "err", err)
-		return
-	}
-	avatar := render.FetchBotAvatar(ctx, info.Avatar, env.DataDir)
-	if avatar != nil {
-		env.SetBotAvatar(avatar)
-		slog.Info("机器人头像已缓存", "name", info.Username)
-	}
 }
 
 func setupLogger(level string) {

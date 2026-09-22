@@ -37,6 +37,7 @@ type fakeQQ struct {
 	messages    []map[string]any
 	msgCh       chan map[string]any
 	failUploads bool
+	avatarURL   string
 }
 
 func newFakeQQ() *fakeQQ {
@@ -47,6 +48,12 @@ func (f *fakeQQ) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/app/getAppAccessToken", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "test-token", "expires_in": "7200"})
+	})
+	mux.HandleFunc("/users/@me", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		avatarURL := f.avatarURL
+		f.mu.Unlock()
+		_ = json.NewEncoder(w).Encode(map[string]string{"username": "课表机器人", "avatar": avatarURL})
 	})
 	mux.HandleFunc("/v2/groups/GROUP/files", func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any

@@ -33,7 +33,54 @@ type Env struct {
 	// Now is overridable in tests.
 	Now func() time.Time
 
-	botAvatar atomic.Pointer[image.RGBA]
+	botAvatar     atomic.Pointer[image.RGBA]
+	lastAvatarTry atomic.Int64
+	avatarTrying  atomic.Bool
+}
+
+const (
+	botAvatarFetchTimeout  = 15 * time.Second
+	botAvatarRetryInterval = 5 * time.Minute
+)
+
+// RefreshBotAvatar fetches the bot's own avatar once and caches it in memory
+// (and on disk). Failures are logged and never block card rendering.
+func (e *Env) RefreshBotAvatar(ctx context.Context) {
+	if e == nil || e.Client == nil {
+		return
+	}
+	info, err := e.Client.GetBotInfo(ctx)
+	if err != nil {
+		slog.Warn("获取机器人信息失败", "err", err)
+		return
+	}
+	if avatar := render.FetchBotAvatar(ctx, info.Avatar, e.DataDir); avatar != nil {
+		e.SetBotAvatar(avatar)
+		slog.Info("机器人头像已缓存", "name", info.Username)
+	}
+}
+
+// EnsureBotAvatar schedules a background refresh when the avatar is missing,
+// so a failed startup fetch self-heals. It never blocks and tries at most once
+// per retry interval.
+func (e *Env) EnsureBotAvatar() {
+	if e == nil || e.Client == nil || e.BotAvatar() != nil {
+		return
+	}
+	now := time.Now()
+	if last := e.lastAvatarTry.Load(); last != 0 && now.Sub(time.Unix(0, last)) < botAvatarRetryInterval {
+		return
+	}
+	if !e.avatarTrying.CompareAndSwap(false, true) {
+		return
+	}
+	e.lastAvatarTry.Store(now.UnixNano())
+	go func() {
+		defer e.avatarTrying.Store(false)
+		ctx, cancel := context.WithTimeout(context.Background(), botAvatarFetchTimeout)
+		defer cancel()
+		e.RefreshBotAvatar(ctx)
+	}()
 }
 
 // SetBotAvatar stores the fetched bot avatar for card headers.
@@ -78,6 +125,7 @@ func (e *Env) PublicImageURL(name string) string {
 // ok is false when the scope has no saved schedules.
 func (e *Env) RenderDayCard(ctx context.Context, msg *Message, day time.Time) (string, bool, error) {
 	_ = ctx
+	e.EnsureBotAvatar()
 	card, ok, err := e.Service.BuildDayCard(e.Scope(msg), day, e.now())
 	if err != nil || !ok {
 		return "", ok, err
@@ -135,6 +183,7 @@ func (e *Env) SendCard(ctx context.Context, msg *Message, imageURL string, keybo
 // ok is false when the scope has no countable courses.
 func (e *Env) RenderRankCard(ctx context.Context, msg *Message, period string) (string, bool, error) {
 	_ = ctx
+	e.EnsureBotAvatar()
 	rows, label, err := e.Service.RankBoardRows(e.Scope(msg), period, e.now())
 	if err != nil {
 		return "", false, err

@@ -410,11 +410,11 @@ JSON 键名沿用，便于对照与手工排查。
 | 字体 | `assets/fonts/NotoSansCJKsc-{Regular,Bold}.otf`；emoji 仅单色回退，不做彩色 |
 | 文本测量 | 必须使用 `render.Measure/WrapFit`，禁止直接 `font.MeasureString` 处理混排 |
 | emoji | **已定：不做彩色 emoji**；按字素簇（`uniseg`）拆分，CJK 缺字形时回退单色 emoji 字体或占位 |
-| 头像 | 机器人：`GET /users/@me` 的 `avatar`，启动拉取 + 24h 缓存；成员：无接口，用昵称首字/首 emoji + 稳定底色（openid 哈希），不发网络请求 |
+| 头像 | 机器人：`GET /users/@me` 的 `avatar`；启动时**同步读磁盘缓存**（保证首张卡片就有头像）+ 后台刷新，失败后由渲染路径 `EnsureBotAvatar` 每 5 分钟节流重试。`circleImage` 必须先按 cover 缩放再裁圆（直接 `DrawImage` 只会显示大图中心一块）。成员：官方无头像接口（成员信息接口为内邀且无 avatar 字段），用昵称首字 + 稳定底色（openid 哈希），不发网络请求 |
 | 输出 | JPEG quality 80、4:2:0、optimize；写入 `data/images`；>24h 清理 |
 | 性能 | 合并连续同字体绘制；单张卡片目标 <300ms（不含上传） |
 | 可测试性 | 布局计算与绘制分离：`layout.go` 输出纯数据结构，`draw.go` 只负责画 |
-| 预览 | `go run ./cmd/cardpreview -o /tmp/card.jpg` 生成样例卡片，改版式时先看预览 |
+| 预览 | `go run ./cmd/cardpreview -o /tmp/card.jpg` 生成样例卡片；`-avatar path.png` 可带上真实头像，改版式时先看预览 |
 
 ---
 

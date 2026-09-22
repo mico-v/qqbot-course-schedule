@@ -57,6 +57,10 @@ func readFreshImage(path string, maxAge time.Duration) image.Image {
 	if err != nil || time.Since(info.ModTime()) > maxAge {
 		return nil
 	}
+	return readImage(path)
+}
+
+func readImage(path string) image.Image {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil
@@ -67,6 +71,16 @@ func readFreshImage(path string, maxAge time.Duration) image.Image {
 		return nil
 	}
 	return img
+}
+
+// LoadCachedBotAvatar returns the on-disk bot avatar for immediate display
+// after a restart, regardless of the refresh TTL. It returns nil when absent.
+func LoadCachedBotAvatar(dataDir string) *image.RGBA {
+	img := readImage(filepath.Join(dataDir, "avatars", "bot.png"))
+	if img == nil {
+		return nil
+	}
+	return circleImage(img, botAvatarSize)
 }
 
 func writeImageCache(path string, img image.Image) {

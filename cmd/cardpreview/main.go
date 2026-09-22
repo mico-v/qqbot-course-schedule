@@ -6,6 +6,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"image"
 	"image/jpeg"
 	"os"
 	"time"
@@ -17,7 +18,24 @@ import (
 func main() {
 	output := flag.String("o", "card-preview.jpg", "output JPEG path")
 	rankMode := flag.Bool("rank", false, "render a sample rank board instead of a day card")
+	avatarPath := flag.String("avatar", "", "optional avatar image to draw in the card header")
 	flag.Parse()
+
+	var avatar image.Image
+	if *avatarPath != "" {
+		file, err := os.Open(*avatarPath)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "打开头像失败:", err)
+			os.Exit(1)
+		}
+		decoded, _, err := image.Decode(file)
+		file.Close()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "解析头像失败:", err)
+			os.Exit(1)
+		}
+		avatar = decoded
+	}
 
 	renderer, err := render.New()
 	if err != nil {
@@ -56,6 +74,7 @@ func main() {
 		Rows:          rows,
 		Folded:        folded,
 		DurationLabel: "本节持续",
+		BotAvatar:     avatar,
 	})
 	if *rankMode {
 		image = renderer.DayCard(render.DayCardData{
