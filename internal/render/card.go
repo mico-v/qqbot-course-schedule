@@ -222,7 +222,6 @@ func (r *Renderer) DayCard(data DayCardData) image.Image {
 		for lineIndex, line := range block.lines {
 			fc.drawText(dc, 158, nameTop+float64(lineIndex*nameLineHeight), line, 27, "#17233c", true, nameWidth)
 		}
-		fc.drawText(dc, 158, top+76+float64(maxInt(0, len(block.lines)-1)*nameLineHeight), row.UserID, 17, "#94a3b8", false, 0)
 
 		courseColor := "#17233c"
 		if row.StatusKey == "none" {
