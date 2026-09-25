@@ -149,6 +149,7 @@ func TestSyncPanelsCreatesBothScopes(t *testing.T) {
 		expected := []string{
 			"/今日课表", "/明日课表", "/课表", "/上课时长榜",
 			"/休假", "/调休", "/销假", "/假期", "/导入课表", "/导出课表",
+			"/绑定QQ", "/解绑QQ",
 			"/启用推送", "/关闭推送", "/推送时间", "/help",
 		}
 		if strings.Join(names, ",") != strings.Join(expected, ",") {
@@ -235,6 +236,23 @@ func TestSyncPanelsAdoptsExistingAndRecreatesDeleted(t *testing.T) {
 	}
 	if created != 1 || fake.creates != 3 {
 		t.Fatalf("recreate created=%d creates=%d, want 1/3", created, fake.creates)
+	}
+}
+
+func TestPanelItemsIncludeNewReadyCommand(t *testing.T) {
+	env, handler := newPanelTestEnv(t, newFakePanelServer())
+	_ = env
+	handler.Register(&Command{
+		Prefix:      "/新指令",
+		Description: "自动加入面板",
+		Ready:       true,
+		Handle:      func(ctx context.Context, msg *Message) error { return nil },
+	})
+
+	items := panelItems(handler)
+	last := items[len(items)-1]
+	if last.Name != "/新指令" || last.Desc != "自动加入面板" {
+		t.Fatalf("last item = %+v, want /新指令 appended", last)
 	}
 }
 

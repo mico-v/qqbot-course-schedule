@@ -22,13 +22,16 @@ const (
 	panelDescLimit = 30
 )
 
-// panelOrder is the curated order of commands shown in the panel.
+// panelOrder is the curated order of commands shown in the panel. Commands not
+// listed here are appended automatically when they are marked Ready, so a newly
+// registered command shows up without editing this list.
 var panelOrder = []string{
 	"/今日课表", "/明日课表", "/课表",
 	"/上课时长榜",
 	"/休假", "/调休", "/销假", "/假期",
 	"/导入课表",
 	"/导出课表",
+	"/绑定QQ", "/解绑QQ",
 	"/启用推送",
 	"/关闭推送",
 	"/推送时间",
@@ -106,22 +109,33 @@ func SyncPanels(ctx context.Context, env *Env, handler *Handler) (created, updat
 	return created, updated, nil
 }
 
-// panelItems builds the platform items from ready commands in curated order.
+// panelItems builds the platform items from ready commands. Commands listed in
+// panelOrder keep their curated position; any other ready command is appended
+// in prefix order, so the panel follows the current version automatically.
 func panelItems(handler *Handler) []qqapi.PanelItem {
 	var items []qqapi.PanelItem
-	for _, prefix := range panelOrder {
-		command, ok := handler.Command(prefix)
-		if !ok || !command.Ready || command.Description == "" {
-			continue
+	used := make(map[string]bool)
+	add := func(command *Command) {
+		if command == nil || !command.Ready || command.Description == "" || used[command.Prefix] {
+			return
 		}
+		if len(items) >= maxPanelItems {
+			return
+		}
+		used[command.Prefix] = true
 		items = append(items, qqapi.PanelItem{
 			Type: "command",
-			Name: truncateDisplay(prefix, panelNameLimit),
+			Name: truncateDisplay(command.Prefix, panelNameLimit),
 			Desc: truncateDisplay(command.Description, panelDescLimit),
 		})
-		if len(items) >= maxPanelItems {
-			break
+	}
+	for _, prefix := range panelOrder {
+		if command, ok := handler.Command(prefix); ok {
+			add(command)
 		}
+	}
+	for _, command := range handler.Commands() {
+		add(command)
 	}
 	return items
 }
