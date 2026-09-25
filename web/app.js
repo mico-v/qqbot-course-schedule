@@ -836,8 +836,61 @@ async function importMemberICS(file) {
   }
 }
 
+function settingsDialog() {
+  return $("#settingsDialog");
+}
+
+async function loadSettings() {
+  try {
+    const data = await apiGet("/api/settings");
+    const settings = (data && data.settings) || {};
+    // Treat an absent flag as on so an older payload never hides the bot.
+    $("#settingsEnabled").checked = settings.enabled !== false;
+    $("#settingsReplyPlain").checked = settings.reply_plain !== false;
+    $("#settingsReplySlash").checked = settings.reply_slash !== false;
+    $("#settingsReplyMention").checked = settings.reply_mention !== false;
+  } catch (error) {
+    showNotice(error.message, "error");
+  }
+}
+
+function openSettings() {
+  $("#settingsHint").textContent = "";
+  settingsDialog().classList.remove("hidden");
+  loadSettings();
+}
+
+function closeSettings() {
+  settingsDialog().classList.add("hidden");
+}
+
+async function saveSettings() {
+  const button = $("#settingsSave");
+  setBusy(button, true);
+  try {
+    await apiPost("/api/settings", {
+      enabled: $("#settingsEnabled").checked,
+      reply_plain: $("#settingsReplyPlain").checked,
+      reply_slash: $("#settingsReplySlash").checked,
+      reply_mention: $("#settingsReplyMention").checked,
+    });
+    $("#settingsHint").textContent = "已保存，立即生效。";
+    showNotice("机器人设置已保存。", "success");
+  } catch (error) {
+    showNotice(error.message, "error");
+  } finally {
+    setBusy(button, false);
+  }
+}
+
 function start() {
   $("#refreshButton").addEventListener("click", refresh);
+  $("#settingsButton").addEventListener("click", openSettings);
+  $("#settingsClose").addEventListener("click", closeSettings);
+  $("#settingsSave").addEventListener("click", saveSettings);
+  settingsDialog().addEventListener("click", (event) => {
+    if (event.target === settingsDialog()) closeSettings();
+  });
   $("#scopeSearch").addEventListener("input", renderScopes);
   $("#addCourseButton").addEventListener("click", () => {
     addCourseCard({});

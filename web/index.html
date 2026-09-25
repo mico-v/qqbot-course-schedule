@@ -14,7 +14,10 @@
           <h1>课表管理</h1>
           <p class="hero-copy">按群组和成员手动维护课程，保存后会同步更新图片课表、查询结果和本地 ICS。</p>
         </div>
-        <button id="refreshButton" class="button button-ghost" type="button">刷新数据</button>
+        <div class="hero-actions">
+          <button id="settingsButton" class="button button-ghost" type="button">设置</button>
+          <button id="refreshButton" class="button button-ghost" type="button">刷新数据</button>
+        </div>
       </header>
 
       <section id="notice" class="notice" role="status" aria-live="polite"></section>
@@ -224,6 +227,69 @@
 
         <footer class="dialog-foot">
           <p id="transferHint" class="muted"></p>
+        </footer>
+      </div>
+    </div>
+
+    <div
+      id="settingsDialog"
+      class="dialog-overlay hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="settingsTitle"
+    >
+      <div class="dialog-card settings-card">
+        <header class="dialog-head">
+          <div>
+            <p class="section-kicker">BOT SETTINGS</p>
+            <h2 id="settingsTitle">机器人设置</h2>
+            <p class="muted">修改后立即生效，与群内 <code>/设置</code> 指令共用同一份配置。</p>
+          </div>
+          <button id="settingsClose" class="dialog-close" type="button" aria-label="关闭">×</button>
+        </header>
+
+        <section class="settings-group">
+          <h3>总开关</h3>
+          <label class="switch-row">
+            <input id="settingsEnabled" type="checkbox" />
+            <span>
+              <strong>启用机器人</strong>
+              <small>关闭后机器人忽略所有消息；管理员仍可用 <code>/设置</code> 重新开启。</small>
+            </span>
+          </label>
+        </section>
+
+        <section class="settings-group">
+          <h3>回复策略</h3>
+          <p class="muted">选择哪些触发方式会得到回复，可多选；全部关闭时机器人只响应管理员设置。</p>
+          <label class="switch-row">
+            <input id="settingsReplyPlain" type="checkbox" />
+            <span>
+              <strong>无斜杠指令</strong>
+              <small>例如：今日课表</small>
+            </span>
+          </label>
+          <label class="switch-row">
+            <input id="settingsReplySlash" type="checkbox" />
+            <span>
+              <strong>斜杠指令</strong>
+              <small>例如：/今日课表</small>
+            </span>
+          </label>
+          <label class="switch-row">
+            <input id="settingsReplyMention" type="checkbox" />
+            <span>
+              <strong>@机器人</strong>
+              <small>例如：@课表Bot /今日课表</small>
+            </span>
+          </label>
+        </section>
+
+        <footer class="dialog-foot">
+          <p id="settingsHint" class="muted"></p>
+          <div class="dialog-actions">
+            <button id="settingsSave" class="button button-primary" type="button">保存设置</button>
+          </div>
         </footer>
       </div>
     </div>

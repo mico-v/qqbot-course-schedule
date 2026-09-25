@@ -139,6 +139,13 @@ func NewDefaultHandler(env *Env) *Handler {
 		Handle:      h.handlePushTime,
 	})
 	h.Register(&Command{
+		Prefix:      "/设置",
+		Description: "查看或修改机器人设置（管理员）",
+		Aliases:     []string{"/配置", "/settings"},
+		Ready:       true,
+		Handle:      h.handleSettings,
+	})
+	h.Register(&Command{
 		Prefix:      "/推送测试",
 		Description: "立即推送一次当日课表（管理员）",
 		Handle:      h.handlePushTest,

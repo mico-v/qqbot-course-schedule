@@ -93,14 +93,19 @@ var mentionPrefix = regexp.MustCompile(`^(?:<@!?[0-9A-Za-z_=-]+>\s*)+`)
 // Dispatch matches the message against registered commands. Unknown messages
 // are ignored without a reply, matching the platform's group-chat etiquette.
 func (h *Handler) Dispatch(ctx context.Context, msg *Message) {
-	content := strings.TrimSpace(mentionPrefix.ReplaceAllString(msg.Content, ""))
-	msg.Content = content
-	// Every accepted message marks the sender as seen, so the admin page can
-	// offer an empty schedule even for members who only chat (full-message mode).
-	h.recordSeen(msg)
+	settings := h.currentSettings()
 
-	// An .ics attachment imports itself, whether or not it came with a command.
-	if h.env != nil {
+	// Trim first so a mention preceded by whitespace is still stripped.
+	raw := strings.TrimSpace(msg.Content)
+	mentioned := mentionPrefix.MatchString(raw)
+	content := strings.TrimSpace(mentionPrefix.ReplaceAllString(raw, ""))
+	msg.Content = content
+
+	// Member discovery and .ics auto-import only run while the bot is enabled.
+	if settings.Enabled && h.env != nil {
+		// Every accepted message marks the sender as seen, so the admin page can
+		// offer an empty schedule even for members who only chat (full-message mode).
+		h.recordSeen(msg)
 		for _, attachment := range msg.Attachments {
 			if isICSFile(attachment) {
 				if err := h.env.ImportICS(ctx, msg, attachment); err != nil {
@@ -126,11 +131,26 @@ func (h *Handler) Dispatch(ctx context.Context, msg *Message) {
 	}
 	h.mu.RUnlock()
 	if !ok {
-		slog.Debug("未命中指令", "prefix", prefix, "origin", msg.Origin)
+		if settings.Enabled {
+			slog.Debug("未命中指令", "prefix", prefix, "origin", msg.Origin)
+		}
 		return
 	}
+
+	// An administrator may always manage the switches, even while the bot is off,
+	// so it can be turned back on from chat.
+	managingSettings := cmd.Prefix == settingsCommandPrefix && canManageSettings(msg)
+	if !settings.Enabled && !managingSettings {
+		slog.Debug("机器人已关闭，忽略指令", "prefix", prefix, "origin", msg.Origin)
+		return
+	}
+	mode := classifyReplyMode(mentioned, strings.HasPrefix(prefix, "/"))
+	if !managingSettings && !allowsReply(settings, mode) {
+		slog.Debug("回复策略已关闭，忽略指令", "prefix", prefix, "mode", string(mode), "origin", msg.Origin)
+		return
+	}
+
 	msg.Args = strings.TrimSpace(strings.TrimPrefix(content, prefix))
-	h.recordSeen(msg)
 	slog.Info("执行指令", "prefix", prefix, "origin", msg.Origin, "user", shortID(msg.UserOpenID))
 	if err := cmd.Handle(ctx, msg); err != nil {
 		slog.Error("指令执行失败", "prefix", prefix, "err", err)
