@@ -105,6 +105,7 @@ func (d *Dispatcher) process(payload Payload) {
 		if data.Author.Bot {
 			return
 		}
+		slog.Debug("群消息原始负载", "d", string(payload.D))
 		message := &bot.Message{
 			Origin:      bot.OriginGroup,
 			GroupOpenID: data.GroupOpenID,
