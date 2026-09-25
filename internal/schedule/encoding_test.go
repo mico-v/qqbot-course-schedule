@@ -62,3 +62,19 @@ func TestParseICSEventsErrorHints(t *testing.T) {
 		}
 	}
 }
+
+func TestParseICSEventsSniffsErrorJSON(t *testing.T) {
+	content := `{"status":"error","message":"未找到该路由","data":{}}`
+	_, err := ParseICSEvents(content)
+	if err == nil {
+		t.Fatal("error JSON should not parse as ICS")
+	}
+	if !strings.Contains(err.Error(), "未找到该路由") || !strings.Contains(err.Error(), "错误响应") {
+		t.Fatalf("error = %q", err.Error())
+	}
+	// A plain JSON blob without a message field keeps a generic hint.
+	_, err = ParseICSEvents(`{"a":1,"b":2}`)
+	if err == nil || !strings.Contains(err.Error(), "不是 .ics") {
+		t.Fatalf("plain json error = %v", err)
+	}
+}
