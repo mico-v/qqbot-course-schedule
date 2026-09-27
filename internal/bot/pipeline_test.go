@@ -94,6 +94,12 @@ func waitMessage(t *testing.T, fake *fakeQQ) map[string]any {
 
 func newTestEnv(t *testing.T, fake *fakeQQ, apiURL string) (*Env, *Inbound) {
 	t.Helper()
+	env, message, _ := newTestEnvWithStore(t, fake, apiURL)
+	return env, message
+}
+
+func newTestEnvWithStore(t *testing.T, fake *fakeQQ, apiURL string) (*Env, *Inbound, *store.Store) {
+	t.Helper()
 	cfg := &config.Config{
 		Port:          8080,
 		AppID:         "10000",
@@ -116,7 +122,8 @@ func newTestEnv(t *testing.T, fake *fakeQQ, apiURL string) (*Env, *Inbound) {
 	fixedNow := time.Date(2026, 9, 17, 9, 30, 0, 0, schedule.LocalTZ)
 	env := &Env{
 		Client:        client,
-		Store:         storeHandle,
+		PushStore:     storeHandle,
+		PanelStore:    storeHandle,
 		Service:       schedule.NewService(storeHandle),
 		Renderer:      renderer,
 		DataDir:       cfg.DataDir,
@@ -133,7 +140,7 @@ func newTestEnv(t *testing.T, fake *fakeQQ, apiURL string) (*Env, *Inbound) {
 		Username:    "小明",
 		MemberRole:  "member",
 	}
-	return env, message
+	return env, message, storeHandle
 }
 
 // dispatch routes one inbound through the handler with a fresh replier, which

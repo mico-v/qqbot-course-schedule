@@ -2,7 +2,6 @@ package bot
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -16,21 +15,7 @@ import (
 )
 
 // PushSubscription is one scope that receives the daily card.
-type PushSubscription struct {
-	Enabled     bool   `json:"enabled"`
-	Origin      string `json:"origin"` // group / private
-	OpenID      string `json:"openid"`
-	EnabledBy   string `json:"enabled_by,omitempty"`
-	EnabledAt   string `json:"enabled_at,omitempty"`
-	Paused      bool   `json:"paused,omitempty"`
-	PauseReason string `json:"pause_reason,omitempty"`
-	// Cron overrides the global push_cron for this scope (5-field cron).
-	Cron string `json:"cron,omitempty"`
-	// LastRun records the minute of the last automatic push (dedupe guard).
-	LastRun string `json:"last_run,omitempty"`
-}
-
-const pushNamespace = "push"
+type PushSubscription = schedule.PushSubscription
 
 // pushCronParser parses 5-field cron expressions in local time.
 var pushCronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
@@ -87,30 +72,17 @@ func parsePushTime(value string) (string, error) {
 
 // SetPushSubscription stores or replaces one scope's subscription.
 func (e *Env) SetPushSubscription(scope string, sub PushSubscription) error {
-	return e.Store.SetKV("global", pushNamespace, scope, sub)
+	return e.PushStore.SetPushSubscription(scope, sub)
 }
 
 // RemovePushSubscription disables the daily card for one scope.
 func (e *Env) RemovePushSubscription(scope string) error {
-	return e.Store.DeleteKV("global", pushNamespace, scope)
+	return e.PushStore.DeletePushSubscription(scope)
 }
 
 // PushSubscriptions lists every subscribed scope.
 func (e *Env) PushSubscriptions() (map[string]PushSubscription, error) {
-	entries, err := e.Store.ListKV("global", pushNamespace)
-	if err != nil {
-		return nil, err
-	}
-	result := make(map[string]PushSubscription, len(entries))
-	for _, entry := range entries {
-		var sub PushSubscription
-		if err := json.Unmarshal(entry.Value, &sub); err != nil {
-			slog.Warn("解析推送订阅失败", "scope", entry.Key, "err", err)
-			continue
-		}
-		result[entry.Key] = sub
-	}
-	return result, nil
+	return e.PushStore.ListPushSubscriptions()
 }
 
 // PushDaily sends the day card to every enabled scope, ignoring per-scope

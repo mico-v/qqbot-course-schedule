@@ -10,13 +10,12 @@ import (
 	"strings"
 
 	"github.com/mico-v/qqbot-course-schedule/internal/qqapi"
+	"github.com/mico-v/qqbot-course-schedule/internal/schedule"
 )
 
 const (
-	panelRemark    = "qqbot-course-schedule"
-	panelKVScope   = "global"
-	panelNamespace = "panel"
-	maxPanelItems  = 20
+	panelRemark   = "qqbot-course-schedule"
+	maxPanelItems = 20
 	// Panel item limits are counted in display columns: a CJK rune counts 2.
 	panelNameLimit = 14
 	panelDescLimit = 30
@@ -39,16 +38,12 @@ var panelOrder = []string{
 	"/help",
 }
 
-type panelState struct {
-	PanelID   string `json:"panel_id"`
-	ItemsHash string `json:"items_hash"`
-	Version   int    `json:"version"`
-}
+type panelState = schedule.PanelState
 
 // SyncPanels creates or updates the c2c and group command panels. It is safe to
 // call on every startup: unchanged panels are skipped.
 func SyncPanels(ctx context.Context, env *Env, handler *Handler) (created, updated int, err error) {
-	if env == nil || env.Store == nil || env.Client == nil || handler == nil {
+	if env == nil || env.PanelStore == nil || env.Client == nil || handler == nil {
 		return 0, 0, fmt.Errorf("同步指令面板缺少依赖")
 	}
 	items := panelItems(handler)
@@ -156,13 +151,11 @@ func findOurPanel(ctx context.Context, env *Env, scope string) (*qqapi.PanelReco
 }
 
 func loadPanelState(env *Env, scope string) (panelState, bool, error) {
-	var state panelState
-	found, err := env.Store.GetKV(panelKVScope, panelNamespace, scope, &state)
-	return state, found, err
+	return env.PanelStore.GetPanelState(scope)
 }
 
 func savePanelState(env *Env, scope string, state panelState) error {
-	return env.Store.SetKV(panelKVScope, panelNamespace, scope, state)
+	return env.PanelStore.SetPanelState(scope, state)
 }
 
 func hashPanelItems(items []qqapi.PanelItem) string {

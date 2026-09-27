@@ -10,6 +10,7 @@ import (
 
 	"github.com/mico-v/qqbot-course-schedule/internal/render"
 	"github.com/mico-v/qqbot-course-schedule/internal/schedule"
+	"github.com/mico-v/qqbot-course-schedule/internal/store"
 	"github.com/mico-v/qqbot-course-schedule/internal/timing"
 )
 
@@ -79,7 +80,7 @@ func TestInboundReceivedAtFallsBackToNow(t *testing.T) {
 // card footer carries the timing and exactly one record lands in storage.
 func TestDayCardPipelineRecordsRenderStats(t *testing.T) {
 	env := newStatsTestEnv(t)
-	handler := NewDefaultHandler(env)
+	handler := NewDefaultHandler(env.Env)
 	in := &Inbound{Origin: OriginGroup, GroupOpenID: "GROUP", UserOpenID: "U1", MsgID: "m1"}
 	in.Content = "/今日课表"
 	received := time.Now()
@@ -119,7 +120,7 @@ func TestDayCardPipelineRecordsRenderStats(t *testing.T) {
 // TestTextReplyRecordsStats covers the non-card path.
 func TestTextReplyRecordsStats(t *testing.T) {
 	env := newStatsTestEnv(t)
-	handler := NewDefaultHandler(env)
+	handler := NewDefaultHandler(env.Env)
 	in := &Inbound{Origin: OriginGroup, GroupOpenID: "GROUP", UserOpenID: "U1", MsgID: "m1"}
 	in.Content = "/ping"
 	ctx := timing.WithReceived(context.Background(), time.Now())
@@ -150,7 +151,7 @@ func TestTextReplyRecordsStats(t *testing.T) {
 // would otherwise leave no trace in the table.
 func TestUnmatchedCommandStillRecords(t *testing.T) {
 	env := newStatsTestEnv(t)
-	handler := NewDefaultHandler(env)
+	handler := NewDefaultHandler(env.Env)
 	in := &Inbound{Origin: OriginGroup, GroupOpenID: "GROUP", UserOpenID: "U1", MsgID: "m1"}
 	in.Content = "你好啊"
 	ctx := timing.WithReceived(context.Background(), time.Now())
@@ -171,7 +172,7 @@ func TestUnmatchedCommandStillRecords(t *testing.T) {
 
 func TestInboundCommandTaggedOnMatch(t *testing.T) {
 	env := newStatsTestEnv(t)
-	handler := NewDefaultHandler(env)
+	handler := NewDefaultHandler(env.Env)
 	in := &Inbound{Origin: OriginGroup, GroupOpenID: "GROUP", UserOpenID: "U1", MsgID: "m1"}
 	in.Content = "课表"
 	handler.Dispatch(context.Background(), in, env.newReplier(context.Background(), in))
@@ -181,18 +182,23 @@ func TestInboundCommandTaggedOnMatch(t *testing.T) {
 }
 
 // loadStats reads every record currently stored.
-func loadStats(t *testing.T, env *Env) []schedule.MessageStats {
+func loadStats(t *testing.T, env *statsTestEnv) []schedule.MessageStats {
 	t.Helper()
-	records, err := env.Store.ListMessageStats(time.Now().Add(-time.Hour), "")
+	records, err := env.store.ListMessageStats(time.Now().Add(-time.Hour), "")
 	if err != nil {
 		t.Fatalf("ListMessageStats: %v", err)
 	}
 	return records
 }
 
+type statsTestEnv struct {
+	*Env
+	store *store.Store
+}
+
 // newStatsTestEnv builds an Env wired to a fake QQ API and a real store, with a
 // scope that already has a schedule so the day card renders.
-func newStatsTestEnv(t *testing.T) *Env {
+func newStatsTestEnv(t *testing.T) *statsTestEnv {
 	t.Helper()
 	fake := newFakeQQ()
 	apiServer := httptest.NewServer(fake.handler())
@@ -203,7 +209,7 @@ func newStatsTestEnv(t *testing.T) *Env {
 	}))
 	t.Cleanup(icsServer.Close)
 
-	env, base := newTestEnv(t, fake, apiServer.URL)
+	env, base, storeHandle := newTestEnvWithStore(t, fake, apiServer.URL)
 	ctx := context.Background()
 	freshImport := freshMessage(base)
 	if err := env.ImportICS(ctx, freshImport, env.newReplier(ctx, freshImport), Attachment{
@@ -211,18 +217,19 @@ func newStatsTestEnv(t *testing.T) *Env {
 	}); err != nil {
 		t.Fatalf("ImportICS: %v", err)
 	}
+	testEnv := &statsTestEnv{Env: env, store: storeHandle}
 	// The import replies, so it records one row; drop it so each test starts
 	// from an empty table.
-	if records := loadStats(t, env); len(records) != 1 {
+	if records := loadStats(t, testEnv); len(records) != 1 {
 		t.Fatalf("seeding records = %d, want 1 (the import replies)", len(records))
 	}
-	if _, err := env.Store.PruneMessageStats(time.Now().Add(time.Hour)); err != nil {
+	if _, err := storeHandle.PruneMessageStats(time.Now().Add(time.Hour)); err != nil {
 		t.Fatalf("PruneMessageStats: %v", err)
 	}
-	if records := loadStats(t, env); len(records) != 0 {
+	if records := loadStats(t, testEnv); len(records) != 0 {
 		t.Fatalf("table not cleared, %d rows left", len(records))
 	}
-	return env
+	return testEnv
 }
 
 // TestStatsLogModeReading checks the environment switch, which is not otherwise
@@ -264,7 +271,7 @@ func TestRecordStatsNeverPanicsWithoutService(t *testing.T) {
 // every real message recorded only the handler row.
 func TestDispatchInstallsRecorder(t *testing.T) {
 	env := newStatsTestEnv(t)
-	handler := NewDefaultHandler(env)
+	handler := NewDefaultHandler(env.Env)
 	in := &Inbound{Origin: OriginGroup, GroupOpenID: "GROUP", UserOpenID: "U1", MsgID: "m1"}
 	in.Content = "/ping"
 	ctx := timing.WithReceived(context.Background(), time.Now())

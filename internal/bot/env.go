@@ -20,7 +20,8 @@ import (
 // Env carries everything the command handlers need.
 type Env struct {
 	Client        *qqapi.Client
-	Store         schedule.Storage
+	PushStore     schedule.PushStore
+	PanelStore    schedule.PanelStore
 	Service       *schedule.Service
 	Renderer      *render.Renderer
 	DataDir       string

@@ -41,7 +41,7 @@ go run ./cmd/cardpreview -o /tmp/card.jpg     # 改卡片版式时先看预览�
 ## 依赖方向（禁止反向依赖）
 
 ```
-webhook → bot → schedule → store
+webhook → bot → schedule
               ↘ qqapi
 render  只依赖 schedule 的数据结构
 server  依赖 store/schedule/render，不依赖 webhook
@@ -49,10 +49,12 @@ schedule 包内不得 import gin / qqapi / store（只认 types.go 里的 Storag
 ```
 
 `main` 只做装配：`config → store → render → qqapi → bot.Env → webhook.Dispatcher → gin 路由 → scheduler`（见 `cmd/bot/main.go`）。
+`bot.Env` 不持有通用 `schedule.Storage`：推送订阅与面板状态分别只依赖 `schedule.PushStore` /
+`schedule.PanelStore`，非测试代码不得 import `store`。
 
 ## 关键约定
 
-**所有写路径都经过 `schedule.Service`**（`internal/schedule/service.go`、`web.go`）。它负责排序、ICS 重建、派生字段、`course_id` 重排。机器人指令、WebUI `/api/*`、批量导入导出共用同一层，不要绕过它直接写 store。
+**所有课表写路径都经过 `schedule.Service`**（`internal/schedule/service.go`、`web.go`）。它负责排序、ICS 重建、派生字段、`course_id` 重排。机器人指令、WebUI `/api/*`、批量导入导出共用同一层，不要绕过它直接写 store。推送订阅/面板状态属于独立的 KV 配置，只能走 `schedule.PushStore` / `schedule.PanelStore`。
 
 **乐观锁**：`Storage.PutMember(scopeID, userID, member, expectedRevision)`，`expectedRevision=nil` 表示新建。
 `store.ErrConflict` → WebUI 返回 409（提示刷新，**不自动重试覆盖**）；机器人侧回中文提示。
@@ -61,13 +63,13 @@ schedule 包内不得 import gin / qqapi / store（只认 types.go 里的 Storag
 **指令注册**（`internal/bot/commands.go` 的 `NewDefaultHandler`）：一个 `Command{Prefix, Aliases, Description, Ready, Handle}`。
 - 新指令标 `Ready: true` 就会自动进入平台指令面板，**不需要改 `panelOrder`**（`panel.go` 用 `panelOrder` 仅做排序，未列出的按前缀顺序追加）。
 - `panel.go` 用 items 的 SHA-256 存 KV 做变更检测；面板错误只记日志，不影响启动与消息链路，管理员可用 `/同步面板` 手动触发。
-- `Handler.Dispatch` 已剥离命中的前缀并放入 `msg.Args`（群内平台面板会去掉前导 `/`，`Dispatch` 同时接受 `/课表` 与 `课表`）。
+- `Handler.Dispatch` 已剥离命中的前缀并放入 `in.Args`（群内平台面板会去掉前导 `/`，`Dispatch` 同时接受 `/课表` 与 `课表`）。
 
 **`Dispatch` 的处理顺序**（改动消息链路前必读 `internal/bot/handler.go`）：去 @ 前缀 → 总开关开时 `recordSeenMember` + `.ics` 附件自动导入（直接 return，不再走指令）→ 查指令 → `/设置` 可绕过总开关 → 回复策略过滤（无斜杠/斜杠/@机器人，提到 @ 优先于斜杠判定）→ 执行。
 `Handler.currentSettings()` 读设置失败时回退默认值，绝不因此静默静音机器人。
 
 **会话作用域**：`group:<group_openid>` / `private:<user_openid>`（`schedule.ScopeGroup` / `ScopePrivate` / `ParseScope`）。
-成员标识用 `msg.UserOpenID`（群内为 member_openid），**不与 QQ 号对应**；QQ 号只是成员记录里的自报字段（`/绑定QQ` 或 WebUI），用于 `q1.qlogo.cn` 头像，不做真实性校验。
+成员标识用 `in.UserOpenID`（群内为 member_openid），**不与 QQ 号对应**；QQ 号只是成员记录里的自报字段（`/绑定QQ` 或 WebUI），用于 `q1.qlogo.cn` 头像，不做真实性校验。
 
 **时区**：全项目唯一 `schedule.LocalTZ = Asia/Shanghai`（`_now_iso` 等记账字段才用 UTC）。日界 = 本地 00:00，区间 `[start, end)`。写时间相关代码若出现 8 小时偏差，就是这里错了。
 
@@ -94,7 +96,7 @@ schedule 包内不得 import gin / qqapi / store（只认 types.go 里的 Storag
 前端不用 `window.AstrBotPluginPage`，统一 `fetch('/api/...')`，错误统一 `{error: "..."}`。
 服务端必须重新校验所有输入，前端校验只是体验。公网只放行 `/webhook`、`/healthz`、`/images/*`、`/files/*`。
 
-**日志与错误**：`log/slog` 字段化（`event`/`group`/`user`(脱敏短 ID)/`cmd`/`err`）。请求路径禁止 `panic`；启动配置错误可 `log.Fatal` + 中文指引。用户可见错误必须显式回复（`msg.Reply(...)` 或 `UserError`），`Handle` 返回的裸 error 只写日志、用户看不到。
+**日志与错误**：`log/slog` 字段化（`event`/`group`/`user`(脱敏短 ID)/`cmd`/`err`）。请求路径禁止 `panic`；启动配置错误可 `log.Fatal` + 中文指引。用户可见错误必须显式回复（`r.Reply(...)` 或 `UserError`），`Handle` 返回的裸 error 只写日志、用户看不到。
 
 ## 代码风格
 

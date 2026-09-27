@@ -32,7 +32,7 @@ func (s *Service) ScopeSummaries() ([]ScopeSummary, error) {
 	for _, summary := range summaries {
 		known[summary.ScopeID] = true
 	}
-	entries, err := s.store.ListKV("global", seenNamespace)
+	entries, err := s.store.ListKV(KVScopeGlobal, KVNamespaceSeen)
 	if err != nil {
 		return nil, err
 	}
@@ -310,10 +310,7 @@ func (s *Service) CreateMemberSchedules(scopeID string, inputs []NewMember, acto
 	return created, nil
 }
 
-const (
-	seenNamespace   = "seen"
-	seenMemberLimit = 500
-)
+const seenMemberLimit = 500
 
 // RecordSeenMember remembers a member who interacted with the bot, so the admin
 // page can offer empty schedules for people without one.
@@ -323,7 +320,7 @@ func (s *Service) RecordSeenMember(scopeID, userID, name string) error {
 		return nil
 	}
 	var seen map[string]string
-	if _, err := s.store.GetKV("global", seenNamespace, scopeID, &seen); err != nil {
+	if _, err := s.store.GetKV(KVScopeGlobal, KVNamespaceSeen, scopeID, &seen); err != nil {
 		return err
 	}
 	if seen == nil {
@@ -345,7 +342,7 @@ func (s *Service) RecordSeenMember(scopeID, userID, name string) error {
 		}
 	}
 	seen[userID] = name
-	return s.store.SetKV("global", seenNamespace, scopeID, seen)
+	return s.store.SetKV(KVScopeGlobal, KVNamespaceSeen, scopeID, seen)
 }
 
 // WebMemberICS returns one member's ICS content for a direct download.
@@ -510,7 +507,7 @@ func parseWebDay(value, label string) (time.Time, error) {
 // PendingMembers returns observed members who do not have a schedule yet.
 func (s *Service) PendingMembers(scopeID string) ([]NewMember, error) {
 	var seen map[string]string
-	if _, err := s.store.GetKV("global", seenNamespace, scopeID, &seen); err != nil {
+	if _, err := s.store.GetKV(KVScopeGlobal, KVNamespaceSeen, scopeID, &seen); err != nil {
 		return nil, err
 	}
 	members, err := s.store.GetScopeMembers(scopeID)

@@ -3,6 +3,7 @@
 > 适用对象：本项目全部 Go 代码。
 > 配套文档：[PLAN.md](PLAN.md)（功能规格与决策记录）、[DEV-GUIDE.md](DEV-GUIDE.md)（开发手册）、[CLAUDE.md](CLAUDE.md)（速查约定）。
 > 本手册记录**架构评估结论**与**分阶段重构方案**，每条结论都标明证据（文件:行号），可直接核对。
+> 实施状态（2026-09-27）：阶段一已于 `05004bb` 完成；阶段二已完成，阶段三仍按需排期。
 
 ---
 
@@ -25,14 +26,14 @@ qqapi         → config
 schedule      → (无内部依赖)      ← 内核
 store         → schedule          ← 适配器（方向被反转）
 render        → schedule
-bot           → config qqapi render schedule store
+bot           → config qqapi render schedule
 webhook       → bot config qqapi
 server        → schedule store
 ```
 
-实测 `bot` 不 import `store` 的**具体类型**（只经 `Env.Store` 这个 `schedule.Storage` 接口）、
-`schedule` 不 import `gin/qqapi/store`、`server` 不 import `webhook`。**没有任何一个包同时依赖
-`gin` 和 `modernc.org/sqlite`** —— HTTP 边界与持久化边界从未相遇。
+实测 `bot` 的非测试代码不 import `store`，只依赖 `schedule.PushStore` / `schedule.PanelStore`
+两个窄接口；`schedule` 不 import `gin/qqapi/store`、`server` 不 import `webhook`。
+**没有任何一个包同时依赖 `gin` 和 `modernc.org/sqlite`** —— HTTP 边界与持久化边界从未相遇。
 
 ---
 
@@ -40,7 +41,7 @@ server        → schedule store
 
 按「改动成本」排序，而不是按「理论丑度」排序。
 
-### D1 `Message` 把入站载体、出站 API、可变状态压成一个类型 ★★★
+### D1 `Message` 把入站载体、出站 API、可变状态压成一个类型 ★★★ ✅ 已完成
 
 **现状**（`internal/bot/message.go`，180 行）：
 
@@ -110,7 +111,7 @@ DeleteWebDayOverride / PendingMembers
 
 ---
 
-### D3 `Env` 是 12 字段的服务定位器，只有 1 个字段真正需要收窄 ★
+### D3 `Env` 是 12 字段的服务定位器，只有 1 个字段真正需要收窄 ★ ✅ 已完成
 
 **实测每个 `Env` 字段被多少文件使用**：
 
@@ -119,13 +120,13 @@ DeleteWebDayOverride / PendingMembers
 | `DataDir` | 4（avatars/env/import/export） | 宽 |
 | `Client` | 7（handler/env/push/message/panel/import/menu） | 宽，但合理 |
 | `Service` | 6 | 宽，但合理 |
-| `Store` | **3（panel/push/env）** | **唯一的真问题** |
+| `Store` | 已移除 | 已拆为 `PushStore` / `PanelStore` 两个窄接口 |
 | `PublicBaseURL` | 2 | 合理 |
 | `PushCron` | 3 | 合理 |
 | `Now` | 4 | 合理（测试注入点） |
 | `Renderer` / `ImagesDir` / `FilesDir` / `Buttons` | 各 1～2 | 合理 |
 
-**为什么只有 `Store` 是真问题**：**`bot` 通过 `Env.Store` 绕过 `Service` 直接读写了 5 处 KV**
+**为什么只有 `Store` 曾是唯一真问题**：**`bot` 通过 `Env.Store` 绕过 `Service` 直接读写了 5 处 KV**
 （另有 3 处在 `panel_test.go` 的测试断言里），且全部是裸字符串命名空间：
 
 ```go
@@ -138,6 +139,11 @@ internal/bot/panel.go:165  env.Store.SetKV(panelKVScope, panelNamespace, scope, 
 
 这**违反了 DEV-GUIDE §6.3「所有写操作走服务层」的自我约定**，而且是唯一一处违反。
 好在这 5 处全部只碰 KV，没有碰课表数据。
+
+**处理结果（2026-09-27）**：`PushSubscription` / `PanelState` 与对应持久化接口已移到
+`schedule`，`store` 实现 `schedule.PushStore` / `schedule.PanelStore`；`Env.Store` 已删除，
+`panel.go` / `push.go` 不再接触通用 KV。四个 KV 命名空间也集中定义在
+`internal/schedule/kv_namespaces.go`。
 
 **注意反例（不要改）**：`Env` 有 12 个宽字段，看起来像「上帝对象」，但实测绝大多数字段是
 **不可变配置**（`DataDir`/`PushCron`/`PublicBaseURL`…）。把 12 个字段拆成 12 个窄参数只会
@@ -270,7 +276,7 @@ func (h *Handler) handleXxx(ctx context.Context, in *Inbound, r *Replier) error
 
 ---
 
-## 4. 阶段二：KV 走服务层（小、独立、可单独发布）
+## 4. 阶段二：KV 走服务层（小、独立、可单独发布）✅ 已完成
 
 ### 4.1 目标
 
@@ -294,6 +300,10 @@ type PushStore interface {
 `Store schedule.Storage` 收窄为按需的最小接口集合。`panel.go` 的 `panelState` 同理
 （`PanelStore`）。
 
+实际实现为 `internal/schedule/pushstore.go`、`internal/schedule/panelstore.go` 和
+`internal/store/kv_state.go`。`PushSubscription` 在 `bot` 保留类型别名，指令和测试无需感知
+DTO 搬家。
+
 **注意（R1 的适用）**：**只收窄实际被 `bot` 使用的 `Store`**，不要把 `Env` 的另外 11 个
 字段也拆成接口。`Service`/`Client` 虽然宽，但它们是「一个入口需要一个应用层/一个 API 客户端」
 的自然形态。
@@ -301,11 +311,9 @@ type PushStore interface {
 ### 4.3 验收标准
 
 - `grep -rn "\.Store\.GetKV\|\.Store\.SetKV\|\.Store\.ListKV\|\.Store\.DeleteKV" internal/bot/`
-  **无结果**。
-- `Env.Store` 字段在 `panel.go`/`push.go` 中不再被直接引用。
-- 命名空间常量只有一处定义（现在 `panelNamespace` 在 `panel.go:18`、`pushNamespace` 在
-  `push.go:33`、`seenNamespace` 在 `schedule/web.go:314`、`settingsNamespace` 在
-  `schedule/settings.go:32`，**四处分散**）。
+  **无结果**（已加入 `deploy/deploy.sh` 守卫）。
+- `Env.Store` 字段已删除，`panel.go` / `push.go` 只依赖两个窄接口。
+- 命名空间常量集中定义在 `internal/schedule/kv_namespaces.go`。
 
 ---
 
@@ -351,7 +359,7 @@ type Service struct {
 
 ## 6. 防止倒退：可执行的守卫
 
-### 6.1 依赖边界断言（建议加入 CI / deploy.sh）
+### 6.1 依赖边界断言（已加入 `deploy/deploy.sh`）
 
 ```bash
 # R3：用命令断言，而不是靠 review 自觉
@@ -375,9 +383,9 @@ done
 （`panel_test.go`、`settings_test.go`、`pipeline_test.go` 用 `store.Open` 起真库），
 但非测试代码零引用 —— 边界看的是后者。
 
-（当前三条断言**全部通过**，加进去是为了锁住现状。）
+（三条断言**全部通过**，已加入部署前的 `check_architecture`。）
 
-### 6.2 阶段一完成后的结构断言
+### 6.2 阶段一、二完成后的结构断言（已加入 `deploy/deploy.sh`）
 
 ```bash
 ! grep -rn '&Message{\|bot\.Message' --include='*.go' .
@@ -398,14 +406,14 @@ done
 ## 7. 排期与顺序
 
 ```
-阶段一（Message 拆分）   ← 先做，唯一「每次改动都付费」的债务
+阶段一（Message 拆分）   ✅ 已完成（05004bb）
   1.1 类型别名 + 转发层（可编译中间态）
   1.2 改 4 个构造点
   1.3 逐指令改签名（16 个，一次一个提交）
   1.4 HandleCallback / PushScope
   1.5 删 Message
   1.6 加统计字段（Inbound.ReceivedAt）      ← 与「耗时统计」功能合并交付
-阶段二（KV 走服务层）    ← 独立发布，不依赖阶段一
+阶段二（KV 走服务层）    ✅ 已完成（窄接口 + 集中命名空间 + 部署守卫）
 阶段三（web.go 归位）    ← 可选，等下次需要动管理台时再做
 ```
 
@@ -436,9 +444,9 @@ done
 这是本项目最值钱的架构资产（G1/G2）。
 
 四个「耦合」（作用域、指令注册、revision 写入、KV 命名空间）都是**有意的收敛**，
-耦合只存在一次，不是失控蔓延。真正需要还的债只有一处：**`Message` 把入站/出站/可变状态
-压成一个类型（D1）** —— 它是唯一「每次改消息链路都要付费」的结构性成本，
-本手册建议的「耗时统计」功能就是现成的证据。
+耦合只存在一次，不是失控蔓延。阶段一已消除 `Message` 把入站/出站/可变状态压成一个
+类型的结构性成本；阶段二已删除 `Env.Store`，让机器人入口只能通过
+`schedule.PushStore` / `schedule.PanelStore` 访问持久化。
 
-其余两处（D2 `web.go` 错位、D3 `Env.Store` 绕过服务层）都在可维护范围内，
-按 §7 排期，**不必现在动**。
+剩余 D2（`web.go` 错位）仍在可维护范围内。它没有实际改动痛感，按 §7 等到下一次需要动
+管理台时再做，避免现在为了分层额外引入 `internal/admin`。

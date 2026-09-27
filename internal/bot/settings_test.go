@@ -17,7 +17,7 @@ func newSettingsEnv(t *testing.T) (*Env, *Handler) {
 		t.Fatalf("store.Open: %v", err)
 	}
 	t.Cleanup(func() { storeHandle.Close() })
-	env := &Env{Store: storeHandle, Service: schedule.NewService(storeHandle)}
+	env := &Env{Service: schedule.NewService(storeHandle)}
 	handler := NewHandler()
 	handler.env = env
 	return env, handler

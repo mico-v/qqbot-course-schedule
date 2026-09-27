@@ -68,7 +68,8 @@ func run() error {
 	client := qqapi.New(cfg)
 	env := &bot.Env{
 		Client:        client,
-		Store:         storeHandle,
+		PushStore:     storeHandle,
+		PanelStore:    storeHandle,
 		Service:       schedule.NewService(storeHandle),
 		Renderer:      renderer,
 		DataDir:       cfg.DataDir,

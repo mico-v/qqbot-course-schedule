@@ -13,11 +13,7 @@ type Settings struct {
 	ReplyMention bool `json:"reply_mention"`
 }
 
-const (
-	settingsScope     = "global"
-	settingsNamespace = "settings"
-	settingsKey       = "bot"
-)
+const settingsKey = "bot"
 
 // DefaultSettings returns the switches used before any customization. All of
 // them are on so an upgrade keeps the previous behaviour.
@@ -30,7 +26,7 @@ func DefaultSettings() Settings {
 // switch on instead of silently disabling it.
 func (s *Service) BotSettings() (Settings, error) {
 	settings := DefaultSettings()
-	if _, err := s.store.GetKV(settingsScope, settingsNamespace, settingsKey, &settings); err != nil {
+	if _, err := s.store.GetKV(KVScopeGlobal, KVNamespaceSettings, settingsKey, &settings); err != nil {
 		return DefaultSettings(), err
 	}
 	return settings, nil
@@ -38,5 +34,5 @@ func (s *Service) BotSettings() (Settings, error) {
 
 // SaveBotSettings stores the bot switches.
 func (s *Service) SaveBotSettings(settings Settings) error {
-	return s.store.SetKV(settingsScope, settingsNamespace, settingsKey, settings)
+	return s.store.SetKV(KVScopeGlobal, KVNamespaceSettings, settingsKey, settings)
 }

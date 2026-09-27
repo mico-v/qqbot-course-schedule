@@ -77,9 +77,10 @@ qqbot-course-schedule/
 │   │   ├── payload.go           #   事件 Payload DTO
 │   │   └── dispatch.go          #   事件分发、msg_id 幂等、互动回调
 │   ├── bot/
-│   │   ├── handler.go           #   指令路由、别名、msg.Args、观察成员记录
+│   │   ├── handler.go           #   指令路由、别名、args、观察成员记录
 │   │   ├── commands.go          #   全部指令处理器（课表/榜单/休假/推送/面板）
-│   │   ├── message.go           #   Message、被动/主动回复、event_id 回复、5 次计数
+│   │   ├── inbound.go           #   Inbound 入站事实、Args/Command、收到时刻
+│   │   ├── replier.go           #   被动/主动回复、event_id 回复、5 次计数
 │   │   ├── env.go               #   Env 依赖与卡片发送（媒体 / markdown+键盘）
 │   │   ├── import.go            #   .ics 附件下载与导入、失败留存
 │   │   ├── export.go            #   .ics 导出与公开文件
@@ -87,7 +88,9 @@ qqbot-course-schedule/
 │   │   ├── menu.go              #   自定义菜单同步
 │   │   ├── push.go              #   推送订阅、每日推送、卡片键盘
 │   │   └── scheduler.go         #   robfig/cron 调度
-│   ├── store/store.go           # SQLite：三表 + KV + revision 乐观锁
+│   ├── store/                   # SQLite：三表 + KV + revision 乐观锁
+│   │   ├── store.go             #   课表、标记、统计与通用 KV
+│   │   └── kv_state.go          #   推送订阅/面板状态的窄接口适配
 │   ├── schedule/                # 课表领域（纯逻辑，无框架依赖）
 │   │   ├── types.go             #   Event/Member/DayOverride/Storage 接口
 │   │   ├── ics.go               #   VEVENT 解析/序列化、RAW_ICAL、嵌套组件
@@ -98,6 +101,9 @@ qqbot-course-schedule/
 │   │   ├── daycard.go           #   每日状态行、收纳拆分、区间合并
 │   │   ├── rank.go              #   时长榜口径
 │   │   ├── override.go          #   休假/调休目标解析与写入
+│   │   ├── kv_namespaces.go     #   四个 KV 命名空间集中定义
+│   │   ├── pushstore.go         #   推送订阅 DTO 与存储接口
+│   │   ├── panelstore.go        #   面板状态 DTO 与存储接口
 │   │   ├── web.go               #   管理台服务层（汇总/读写/建表/观察成员）
 │   │   └── service.go           #   ICS 导入与日卡数据
 │   ├── render/
@@ -129,12 +135,15 @@ qqbot-course-schedule/
 **依赖规则**（禁止反向依赖）：
 
 ```
-webhook → bot → schedule → store
+webhook → bot → schedule
               ↘ qqapi
 render 只依赖 schedule 的数据结构
 server 依赖 store/schedule/render，不依赖 webhook
 schedule 包内不得 import gin/qqapi/store
 ```
+
+`bot` 的非测试代码不得 import `store`；`Env` 只暴露 `schedule.PushStore` /
+`schedule.PanelStore` 两个窄接口。KV 命名空间集中定义在 `schedule/kv_namespaces.go`。
 
 ---
 
@@ -215,34 +224,34 @@ schedule 包内不得 import gin/qqapi/store
 
 ```go
 // internal/bot/command/schedule.go（示意 API，M0 冻结）
-func init() {
-    command.Register(&command.Command{
+func newScheduleCommand(env *Env) *Command {
+    return &Command{
         Prefix:      "/课表",
-        Role:        role.Member,
         Description: "查询指定日期课程表",
+        Ready:       true,
         Handle:      handleSchedule,
-    })
+    }
 }
 
-func handleSchedule(ctx *context.MessageContext) error {
-    target, err := dayoff.SingleDay(strings.TrimSpace(ctx.Args), time.Now().In(schedule.LocalTZ))
+func handleSchedule(ctx context.Context, in *Inbound, r *Replier) error {
+    target, err := dayoff.SingleDay(strings.TrimSpace(in.Args), time.Now().In(schedule.LocalTZ))
     if err != nil {
-        return ctx.Text(err.Error()).Send()
+        return r.Reply(ctx, err.Error())
     }
-    path, err := schedule.RenderDayCard(ctx.Scope(), target)
-    if err != nil {
-        return ctx.Text("当前会话还没有可展示的课程表。").Send()
+    imageURL, ok, err := env.RenderDayCard(ctx, in, r, target)
+    if err != nil || !ok {
+        return r.Reply(ctx, "当前会话还没有可展示的课程表。")
     }
-    return ctx.Image(path).Send() // 内部完成媒体上传
+    return r.ReplyImage(ctx, imageURL)
 }
 ```
 
 约定：
 
 - `Handle` 返回的 `error` 只写日志；用户可见错误必须显式 `ctx.Text(...).Send()` 或返回带用户文案的错误类型。
-- 指令参数用 `msg.Args`（`Dispatch` 已剥离命中的前缀），不要自己 `TrimPrefix`。
+- 指令参数用 `in.Args`（`Dispatch` 已剥离命中的前缀），不要自己 `TrimPrefix`。
 - 别名在 `Command.Aliases` 声明，会注册到同一处理器；`Commands()` 会去重，面板只展示 `panelOrder` 中的主指令。
-- 群成员身份用 `msg.UserOpenID`（群内为 member_openid），@ 目标从 `msg.Mentions` 解析。
+- 群成员身份用 `in.UserOpenID`（群内为 member_openid），@ 目标从 `in.Mentions` 解析。
 
 ### 6.2 新增一个事件
 

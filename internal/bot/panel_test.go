@@ -13,6 +13,7 @@ import (
 
 	"github.com/mico-v/qqbot-course-schedule/internal/config"
 	"github.com/mico-v/qqbot-course-schedule/internal/qqapi"
+	"github.com/mico-v/qqbot-course-schedule/internal/schedule"
 	"github.com/mico-v/qqbot-course-schedule/internal/store"
 )
 
@@ -99,7 +100,7 @@ func (f *fakePanelServer) panelForScope(scope string) *qqapi.PanelRecord {
 	return nil
 }
 
-func newPanelTestEnv(t *testing.T, fake *fakePanelServer) (*Env, *Handler) {
+func newPanelTestEnv(t *testing.T, fake *fakePanelServer) (*Env, *Handler, *store.Store) {
 	t.Helper()
 	server := httptest.NewServer(fake.handler())
 	t.Cleanup(server.Close)
@@ -115,14 +116,14 @@ func newPanelTestEnv(t *testing.T, fake *fakePanelServer) (*Env, *Handler) {
 	}
 	t.Cleanup(func() { storeHandle.Close() })
 
-	env := &Env{Client: qqapi.New(cfg), Store: storeHandle}
+	env := &Env{Client: qqapi.New(cfg), PanelStore: storeHandle}
 	handler := NewDefaultHandler(env)
-	return env, handler
+	return env, handler, storeHandle
 }
 
 func TestSyncPanelsCreatesBothScopes(t *testing.T) {
 	fake := newFakePanelServer()
-	env, handler := newPanelTestEnv(t, fake)
+	env, handler, _ := newPanelTestEnv(t, fake)
 
 	created, updated, err := SyncPanels(context.Background(), env, handler)
 	if err != nil {
@@ -172,7 +173,7 @@ func TestSyncPanelsCreatesBothScopes(t *testing.T) {
 
 func TestSyncPanelsUpdatesWhenItemsChange(t *testing.T) {
 	fake := newFakePanelServer()
-	env, handler := newPanelTestEnv(t, fake)
+	env, handler, _ := newPanelTestEnv(t, fake)
 	if _, _, err := SyncPanels(context.Background(), env, handler); err != nil {
 		t.Fatalf("initial sync: %v", err)
 	}
@@ -202,16 +203,16 @@ func TestSyncPanelsUpdatesWhenItemsChange(t *testing.T) {
 
 func TestSyncPanelsAdoptsExistingAndRecreatesDeleted(t *testing.T) {
 	fake := newFakePanelServer()
-	env, handler := newPanelTestEnv(t, fake)
+	env, handler, storeHandle := newPanelTestEnv(t, fake)
 	if _, _, err := SyncPanels(context.Background(), env, handler); err != nil {
 		t.Fatalf("initial sync: %v", err)
 	}
 
 	// Lose local state: the existing panels must be adopted, not duplicated.
-	if err := env.Store.DeleteKV(panelKVScope, panelNamespace, "c2c"); err != nil {
+	if err := storeHandle.DeleteKV(schedule.KVScopeGlobal, schedule.KVNamespacePanel, "c2c"); err != nil {
 		t.Fatal(err)
 	}
-	if err := env.Store.DeleteKV(panelKVScope, panelNamespace, "group"); err != nil {
+	if err := storeHandle.DeleteKV(schedule.KVScopeGlobal, schedule.KVNamespacePanel, "group"); err != nil {
 		t.Fatal(err)
 	}
 	created, _, err := SyncPanels(context.Background(), env, handler)
@@ -227,7 +228,7 @@ func TestSyncPanelsAdoptsExistingAndRecreatesDeleted(t *testing.T) {
 	fake.mu.Lock()
 	delete(fake.panels, record.PanelID)
 	fake.mu.Unlock()
-	if err := env.Store.DeleteKV(panelKVScope, panelNamespace, "group"); err != nil {
+	if err := storeHandle.DeleteKV(schedule.KVScopeGlobal, schedule.KVNamespacePanel, "group"); err != nil {
 		t.Fatal(err)
 	}
 	created, _, err = SyncPanels(context.Background(), env, handler)
@@ -240,7 +241,7 @@ func TestSyncPanelsAdoptsExistingAndRecreatesDeleted(t *testing.T) {
 }
 
 func TestPanelItemsIncludeNewReadyCommand(t *testing.T) {
-	env, handler := newPanelTestEnv(t, newFakePanelServer())
+	env, handler, _ := newPanelTestEnv(t, newFakePanelServer())
 	_ = env
 	handler.Register(&Command{
 		Prefix:      "/新指令",
