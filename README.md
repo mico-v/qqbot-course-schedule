@@ -24,6 +24,17 @@ go run ./cmd/bot                     # 默认监听 127.0.0.1:18080，回调路�
 curl -s localhost:18080/healthz      # {"ok":true,"version":"dev"}
 ```
 
+提交前检查：
+
+```bash
+bash scripts/check-architecture.sh
+gofmt -l .
+go vet ./...
+go test ./...
+```
+
+这些检查也会由 `.github/workflows/ci.yml` 在 push 与 PR 上自动执行。
+
 卡片预览（开发用）：`go run ./cmd/cardpreview -o /tmp/card.jpg`（`-rank` 预览榜单）。
 
 ![课表卡片预览](assets/preview/card-preview.jpg)
@@ -65,7 +76,9 @@ curl -s localhost:18080/healthz      # {"ok":true,"version":"dev"}
 - [x] M6 增强：WebUI 批量导入/导出（ICS 压缩包 + 原始备份）
 - [x] M7 增强：逐会话推送时间 + WebUI 休假/调休管理
 - [x] M8 增强：成员页单成员 .ics 导入/导出
+- [x] M9 修复：卡片头像缩放、启动缓存与渲染路径重试
 - [x] M10 增强：QQ 号绑定 + 真实头像
+- [x] M11 增强：机器人总开关 + 回复策略设置
 
 ## 许可证
 

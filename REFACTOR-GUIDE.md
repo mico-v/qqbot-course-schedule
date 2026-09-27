@@ -311,7 +311,7 @@ DTO 搬家。
 ### 4.3 验收标准
 
 - `grep -rn "\.Store\.GetKV\|\.Store\.SetKV\|\.Store\.ListKV\|\.Store\.DeleteKV" internal/bot/`
-  **无结果**（已加入 `deploy/deploy.sh` 守卫）。
+  **无结果**（已加入 `scripts/check-architecture.sh` 守卫）。
 - `Env.Store` 字段已删除，`panel.go` / `push.go` 只依赖两个窄接口。
 - 命名空间常量集中定义在 `internal/schedule/kv_namespaces.go`。
 
@@ -359,7 +359,7 @@ type Service struct {
 
 ## 6. 防止倒退：可执行的守卫
 
-### 6.1 依赖边界断言（已加入 `deploy/deploy.sh`）
+### 6.1 依赖边界断言（已加入 `scripts/check-architecture.sh`）
 
 ```bash
 # R3：用命令断言，而不是靠 review 自觉
@@ -383,9 +383,10 @@ done
 （`panel_test.go`、`settings_test.go`、`pipeline_test.go` 用 `store.Open` 起真库），
 但非测试代码零引用 —— 边界看的是后者。
 
-（三条断言**全部通过**，已加入部署前的 `check_architecture`。）
+（三条断言**全部通过**，部署脚本与 GitHub Actions CI 共用
+`scripts/check-architecture.sh`。）
 
-### 6.2 阶段一、二完成后的结构断言（已加入 `deploy/deploy.sh`）
+### 6.2 阶段一、二完成后的结构断言（已加入 `scripts/check-architecture.sh`）
 
 ```bash
 ! grep -rn '&Message{\|bot\.Message' --include='*.go' .

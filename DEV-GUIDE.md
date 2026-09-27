@@ -443,10 +443,17 @@ JSON 键名沿用，便于对照与手工排查。
 ## 11. 测试规范
 
 ```bash
+bash scripts/check-architecture.sh # 依赖边界与重构守卫
+gofmt -l .                       # 应为空
+go vet ./...                     # 静态检查
 go test ./...                    # 全量
 go test ./internal/schedule/... -run TestDayoff -v
 go test ./internal/render/... -update   # 更新 golden（仅限有意改版式）
 ```
+
+`.github/workflows/ci.yml` 会在 push 到 `main` 和所有 PR 上重复执行上述检查，并额外做
+`CGO_ENABLED=0 go build ./cmd/...` 的静态构建。架构规则只维护在
+`scripts/check-architecture.sh`，部署脚本与 CI 共用，禁止复制第二份断言。
 
 | 类型 | 要求 |
 | --- | --- |
@@ -489,7 +496,7 @@ func (e *UserError) Error() string { return e.Msg }
 HOST=myserver ./deploy/deploy.sh   # 换 SSH 主机
 ```
 
-脚本行为：`gofmt` 检查 → `go test` → 构建 linux/amd64 → 首次自动创建用户/目录并上传 config.json 与 systemd unit → 原子替换二进制 → 重启服务 → 健康检查（失败打印 journalctl）。完整参数见脚本头部与 `deploy/README.md`。
+脚本行为：架构检查 → `gofmt` 检查 → `go test` → 构建 linux/amd64 → 首次自动创建用户/目录并上传 config.json 与 systemd unit → 原子替换二进制 → 重启服务 → 健康检查（失败打印 journalctl）。完整参数见脚本头部与 `deploy/README.md`。
 
 ### 13.2 手动构建
 
