@@ -92,7 +92,7 @@ func waitMessage(t *testing.T, fake *fakeQQ) map[string]any {
 	}
 }
 
-func newTestEnv(t *testing.T, fake *fakeQQ, apiURL string) (*Env, *Message) {
+func newTestEnv(t *testing.T, fake *fakeQQ, apiURL string) (*Env, *Inbound) {
 	t.Helper()
 	cfg := &config.Config{
 		Port:          8080,
@@ -125,16 +125,26 @@ func newTestEnv(t *testing.T, fake *fakeQQ, apiURL string) (*Env, *Message) {
 		PushCron:      "30 7 * * *",
 		Now:           func() time.Time { return fixedNow },
 	}
-	message := &Message{
+	message := &Inbound{
 		Origin:      OriginGroup,
 		GroupOpenID: "GROUP",
 		UserOpenID:  "U1",
 		MsgID:       "m1",
 		Username:    "小明",
 		MemberRole:  "member",
-		Client:      client,
 	}
 	return env, message
+}
+
+// dispatch routes one inbound through the handler with a fresh replier, which
+// is how the webhook dispatcher calls it in production. env may be nil for the
+// routing-only tests, which never reach a command that sends.
+func dispatch(ctx context.Context, env *Env, handler *Handler, in *Inbound) {
+	var client *qqapi.Client
+	if env != nil {
+		client = env.Client
+	}
+	handler.Dispatch(ctx, in, NewReplier(in, client))
 }
 
 func TestImportThenDayCardPipeline(t *testing.T) {
@@ -152,7 +162,7 @@ func TestImportThenDayCardPipeline(t *testing.T) {
 	ctx := context.Background()
 
 	// 1. Import the ICS attachment.
-	if err := env.ImportICS(ctx, message, Attachment{
+	if err := env.ImportICS(ctx, message, NewReplier(message, env.Client), Attachment{
 		URL:      icsServer.URL + "/schedule.ics",
 		Filename: "schedule.ics",
 	}); err != nil {
@@ -165,7 +175,7 @@ func TestImportThenDayCardPipeline(t *testing.T) {
 
 	// 2. /今日课表 renders a card and sends it as a media message.
 	message.Content = "/今日课表"
-	handler.Dispatch(ctx, message)
+	dispatch(ctx, env, handler, message)
 	cardReply := waitMessage(t, fake)
 
 	msgType, _ := cardReply["msg_type"].(float64)
@@ -208,7 +218,7 @@ func TestDayCardWithoutScheduleRepliesText(t *testing.T) {
 	env, message := newTestEnv(t, fake, apiServer.URL)
 	handler := NewDefaultHandler(env)
 	message.Content = "/课表"
-	handler.Dispatch(context.Background(), message)
+	dispatch(context.Background(), env, handler, message)
 
 	reply := waitMessage(t, fake)
 	content, _ := reply["content"].(string)
@@ -225,7 +235,7 @@ func TestScheduleCommandParsesDate(t *testing.T) {
 	env, message := newTestEnv(t, fake, apiServer.URL)
 	handler := NewDefaultHandler(env)
 	message.Content = "/课表 不存在的东西"
-	handler.Dispatch(context.Background(), message)
+	dispatch(context.Background(), env, handler, message)
 
 	reply := waitMessage(t, fake)
 	content, _ := reply["content"].(string)
@@ -245,7 +255,7 @@ func TestImportFailureSavesFileAndReplies(t *testing.T) {
 	t.Cleanup(garbageServer.Close)
 
 	env, message := newTestEnv(t, fake, apiServer.URL)
-	if err := env.ImportICS(context.Background(), message, Attachment{
+	if err := env.ImportICS(context.Background(), message, NewReplier(message, env.Client), Attachment{
 		URL:      garbageServer.URL + "/schedule.ics",
 		Filename: "schedule.ics",
 	}); err != nil {
@@ -263,15 +273,14 @@ func TestImportFailureSavesFileAndReplies(t *testing.T) {
 }
 
 // freshMessage clones the envelope so every command gets its own reply budget.
-func freshMessage(base *Message) *Message {
-	return &Message{
+func freshMessage(base *Inbound) *Inbound {
+	return &Inbound{
 		Origin:      base.Origin,
 		GroupOpenID: base.GroupOpenID,
 		UserOpenID:  base.UserOpenID,
 		MsgID:       base.MsgID,
 		Username:    base.Username,
 		MemberRole:  base.MemberRole,
-		Client:      base.Client,
 	}
 }
 
@@ -289,7 +298,8 @@ func TestDayOffAndRankPipeline(t *testing.T) {
 	handler := NewDefaultHandler(env)
 	ctx := context.Background()
 
-	if err := env.ImportICS(ctx, freshMessage(base), Attachment{
+	freshImport := freshMessage(base)
+	if err := env.ImportICS(ctx, freshImport, NewReplier(freshImport, env.Client), Attachment{
 		URL: icsServer.URL + "/schedule.ics", Filename: "schedule.ics",
 	}); err != nil {
 		t.Fatalf("ImportICS: %v", err)
@@ -300,7 +310,7 @@ func TestDayOffAndRankPipeline(t *testing.T) {
 	admin := freshMessage(base)
 	admin.MemberRole = "owner"
 	admin.Content = "/休假 明天"
-	handler.Dispatch(ctx, admin)
+	dispatch(ctx, env, handler, admin)
 	reply := waitMessage(t, fake)
 	if content, _ := reply["content"].(string); !strings.Contains(content, "已将 2026-09-18 标记为休假（全体成员）") {
 		t.Fatalf("day off reply = %q", content)
@@ -309,7 +319,7 @@ func TestDayOffAndRankPipeline(t *testing.T) {
 	// /假期 lists it.
 	list := freshMessage(base)
 	list.Content = "/假期"
-	handler.Dispatch(ctx, list)
+	dispatch(ctx, env, handler, list)
 	reply = waitMessage(t, fake)
 	if content, _ := reply["content"].(string); !strings.Contains(content, "2026-09-18 休假") {
 		t.Fatalf("holiday list = %q", content)
@@ -318,7 +328,7 @@ func TestDayOffAndRankPipeline(t *testing.T) {
 	// A normal member cannot target everyone.
 	member := freshMessage(base)
 	member.Content = "/休假 明天 全体"
-	handler.Dispatch(ctx, member)
+	dispatch(ctx, env, handler, member)
 	reply = waitMessage(t, fake)
 	if content, _ := reply["content"].(string); !strings.Contains(content, "只有管理员") {
 		t.Fatalf("member reply = %q", content)
@@ -328,7 +338,7 @@ func TestDayOffAndRankPipeline(t *testing.T) {
 	cancel := freshMessage(base)
 	cancel.MemberRole = "owner"
 	cancel.Content = "/销假 明天"
-	handler.Dispatch(ctx, cancel)
+	dispatch(ctx, env, handler, cancel)
 	reply = waitMessage(t, fake)
 	if content, _ := reply["content"].(string); !strings.Contains(content, "已取消 2026-09-18 的休假标记") {
 		t.Fatalf("cancel reply = %q", content)
@@ -337,7 +347,7 @@ func TestDayOffAndRankPipeline(t *testing.T) {
 	// Alias command renders the rank card as an image.
 	rank := freshMessage(base)
 	rank.Content = "/本周上课排行"
-	handler.Dispatch(ctx, rank)
+	dispatch(ctx, env, handler, rank)
 	reply = waitMessage(t, fake)
 	if msgType, _ := reply["msg_type"].(float64); msgType != 7 {
 		t.Fatalf("rank reply = %+v", reply)
@@ -358,7 +368,7 @@ func TestPlainMessageRecordsSeenMember(t *testing.T) {
 	handler := NewDefaultHandler(env)
 	msg := freshMessage(base)
 	msg.Content = "大家早上好"
-	handler.Dispatch(context.Background(), msg)
+	dispatch(context.Background(), env, handler, msg)
 
 	pending, err := env.Service.PendingMembers(env.Scope(base))
 	if err != nil {

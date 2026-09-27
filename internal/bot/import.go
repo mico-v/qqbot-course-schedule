@@ -17,28 +17,28 @@ import (
 const attachmentTimeout = 10 * time.Second
 
 // ImportICS downloads one .ics attachment and stores it as the sender's schedule.
-func (e *Env) ImportICS(ctx context.Context, msg *Message, attachment Attachment) error {
+func (e *Env) ImportICS(ctx context.Context, in *Inbound, r *Replier, attachment Attachment) error {
 	data, err := downloadAttachment(ctx, attachment.URL, schedule.MaxICSBytes)
 	if err != nil {
 		slog.Warn("下载课表文件失败", "filename", attachment.Filename, "err", err)
-		return msg.Reply(ctx, "下载 .ics 文件失败："+err.Error())
+		return r.Reply(ctx, "下载 .ics 文件失败："+err.Error())
 	}
 	content := schedule.DecodeICSBytes(data)
 	slog.Info("收到课表文件",
 		"filename", attachment.Filename,
 		"bytes", len(data),
 		"content_type", attachment.ContentType,
-		"origin", msg.Origin,
+		"origin", in.Origin,
 	)
 
 	result, err := e.Service.SaveICS(
-		e.Scope(msg), msg.UserOpenID, msg.Username,
-		content, attachment.Filename, msg.UserOpenID,
+		e.Scope(in), in.UserOpenID, in.Username,
+		content, attachment.Filename, in.UserOpenID,
 	)
 	if err != nil {
 		slog.Warn("导入课表失败", "filename", attachment.Filename, "bytes", len(data), "err", err)
 		e.saveFailedICS(attachment.Filename, data)
-		return msg.Reply(ctx, err.Error())
+		return r.Reply(ctx, err.Error())
 	}
 	slog.Info("导入课表成功",
 		"filename", attachment.Filename,
@@ -50,7 +50,7 @@ func (e *Env) ImportICS(ctx context.Context, msg *Message, attachment Attachment
 	if result.Created {
 		action = "已创建"
 	}
-	return msg.Reply(ctx, fmt.Sprintf("%s %s 的课表：%d 个课程事件。", action, result.Name, result.EventCount))
+	return r.Reply(ctx, fmt.Sprintf("%s %s 的课表：%d 个课程事件。", action, result.Name, result.EventCount))
 }
 
 // saveFailedICS keeps the raw upload so a parse failure can be inspected later.

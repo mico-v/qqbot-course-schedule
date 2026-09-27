@@ -17,7 +17,7 @@ type Command struct {
 	Prefix      string
 	Aliases     []string
 	Description string
-	Handle      func(ctx context.Context, msg *Message) error
+	Handle      func(ctx context.Context, in *Inbound, r *Replier) error
 	// Ready marks a command that is implemented and safe to advertise in the
 	// platform command panel.
 	Ready bool
@@ -92,23 +92,40 @@ var mentionPrefix = regexp.MustCompile(`^(?:<@!?[0-9A-Za-z_=-]+>\s*)+`)
 
 // Dispatch matches the message against registered commands. Unknown messages
 // are ignored without a reply, matching the platform's group-chat etiquette.
-func (h *Handler) Dispatch(ctx context.Context, msg *Message) {
+func (h *Handler) Dispatch(ctx context.Context, in *Inbound, r *Replier) {
+	// dispatchErr is what the record below reports; only the command stage can
+	// set it, so the paths that never reach a command record a success.
+	var dispatchErr error
+	if h.env != nil {
+		// Install the recorder here rather than at every construction site, so a
+		// caller that builds a bare replier still gets its stages recorded.
+		if r != nil {
+			r.WithRecorder(ctx, h.env.recordStats)
+		}
+		// Every exit is recorded, including the ones that send nothing (unknown
+		// command, bot off, reply policy off). A later send stage supersedes it,
+		// so a card does not also log its fallback reply.
+		defer func() {
+			h.env.recordStats(ctx, in, r, schedule.StatsStageHandler, dispatchErr)
+		}()
+	}
+
 	settings := h.currentSettings()
 
 	// Trim first so a mention preceded by whitespace is still stripped.
-	raw := strings.TrimSpace(msg.Content)
+	raw := strings.TrimSpace(in.Content)
 	mentioned := mentionPrefix.MatchString(raw)
 	content := strings.TrimSpace(mentionPrefix.ReplaceAllString(raw, ""))
-	msg.Content = content
+	in.Content = content
 
 	// Member discovery and .ics auto-import only run while the bot is enabled.
 	if settings.Enabled && h.env != nil {
 		// Every accepted message marks the sender as seen, so the admin page can
 		// offer an empty schedule even for members who only chat (full-message mode).
-		h.recordSeen(msg)
-		for _, attachment := range msg.Attachments {
+		h.recordSeen(in)
+		for _, attachment := range in.Attachments {
 			if isICSFile(attachment) {
-				if err := h.env.ImportICS(ctx, msg, attachment); err != nil {
+				if err := h.env.ImportICS(ctx, in, r, attachment); err != nil {
 					slog.Error("导入课表失败", "err", err)
 				}
 				return
@@ -132,29 +149,32 @@ func (h *Handler) Dispatch(ctx context.Context, msg *Message) {
 	h.mu.RUnlock()
 	if !ok {
 		if settings.Enabled {
-			slog.Debug("未命中指令", "prefix", prefix, "origin", msg.Origin)
+			slog.Debug("未命中指令", "prefix", prefix, "origin", in.Origin)
 		}
 		return
 	}
 
 	// An administrator may always manage the switches, even while the bot is off,
 	// so it can be turned back on from chat.
-	managingSettings := cmd.Prefix == settingsCommandPrefix && canManageSettings(msg)
+	managingSettings := cmd.Prefix == settingsCommandPrefix && canManageSettings(in)
 	if !settings.Enabled && !managingSettings {
-		slog.Debug("机器人已关闭，忽略指令", "prefix", prefix, "origin", msg.Origin)
+		slog.Debug("机器人已关闭，忽略指令", "prefix", prefix, "origin", in.Origin)
 		return
 	}
 	mode := classifyReplyMode(mentioned, strings.HasPrefix(prefix, "/"))
 	if !managingSettings && !allowsReply(settings, mode) {
-		slog.Debug("回复策略已关闭，忽略指令", "prefix", prefix, "mode", string(mode), "origin", msg.Origin)
+		slog.Debug("回复策略已关闭，忽略指令", "prefix", prefix, "mode", string(mode), "origin", in.Origin)
 		return
 	}
 
-	msg.Args = strings.TrimSpace(strings.TrimPrefix(content, prefix))
-	slog.Info("执行指令", "prefix", prefix, "origin", msg.Origin, "user", shortID(msg.UserOpenID))
-	if err := cmd.Handle(ctx, msg); err != nil {
+	in.Args = strings.TrimSpace(strings.TrimPrefix(content, prefix))
+	in.Command = cmd.Prefix
+	slog.Info("执行指令", "prefix", prefix, "origin", in.Origin, "user", shortID(in.UserOpenID))
+	err := cmd.Handle(ctx, in, r)
+	if err != nil {
 		slog.Error("指令执行失败", "prefix", prefix, "err", err)
 	}
+	dispatchErr = err
 }
 
 // Callback is one button press delivered as an INTERACTION_CREATE event.
@@ -171,12 +191,13 @@ func (h *Handler) HandleCallback(ctx context.Context, cb *Callback) {
 	if h.env == nil || cb == nil || cb.Data == "" {
 		return
 	}
-	msg := &Message{Client: h.env.Client, EventID: cb.EventID, UserOpenID: cb.UserOpenID, GroupOpenID: cb.GroupOpenID}
+	in := &Inbound{EventID: cb.EventID, UserOpenID: cb.UserOpenID, GroupOpenID: cb.GroupOpenID}
 	if cb.GroupOpenID != "" {
-		msg.Origin = OriginGroup
+		in.Origin = OriginGroup
 	} else {
-		msg.Origin = OriginPrivate
+		in.Origin = OriginPrivate
 	}
+	r := h.env.newReplier(ctx, in)
 	action, param, ok := strings.Cut(cb.Data, ":")
 	if !ok {
 		return
@@ -187,13 +208,13 @@ func (h *Handler) HandleCallback(ctx context.Context, cb *Callback) {
 		if err != nil {
 			return
 		}
-		url, found, err := h.env.RenderDayCard(ctx, msg, day)
+		url, found, err := h.env.RenderDayCard(ctx, in, r, day)
 		if err != nil || !found {
-			_ = msg.Reply(ctx, "当前会话还没有可展示的课程表。")
+			_ = r.Reply(ctx, "当前会话还没有可展示的课程表。")
 			return
 		}
 		keyboard := cardKeyboardForDay(day.Format("2006-01-02"), h.env.now().Format("2006-01-02"), cb.UserOpenID)
-		if err := h.env.SendCard(ctx, msg, url, keyboard); err != nil {
+		if err := h.env.SendCard(ctx, in, r, url, keyboard); err != nil {
 			slog.Error("按钮卡片发送失败", "err", err)
 		}
 	case "rank":
@@ -201,23 +222,23 @@ func (h *Handler) HandleCallback(ctx context.Context, cb *Callback) {
 		if period == "" {
 			return
 		}
-		url, found, err := h.env.RenderRankCard(ctx, msg, period)
+		url, found, err := h.env.RenderRankCard(ctx, in, r, period)
 		if err != nil || !found {
-			_ = msg.Reply(ctx, "当前会话还没有可统计的课程。")
+			_ = r.Reply(ctx, "当前会话还没有可统计的课程。")
 			return
 		}
-		if err := h.env.SendCard(ctx, msg, url, cardKeyboardForRank(cb.UserOpenID)); err != nil {
+		if err := h.env.SendCard(ctx, in, r, url, cardKeyboardForRank(cb.UserOpenID)); err != nil {
 			slog.Error("按钮榜单发送失败", "err", err)
 		}
 	}
 }
 
 // recordSeen remembers the sender so the admin page can offer an empty schedule.
-func (h *Handler) recordSeen(msg *Message) {
-	if h.env == nil || msg.UserOpenID == "" {
+func (h *Handler) recordSeen(in *Inbound) {
+	if h.env == nil || in.UserOpenID == "" {
 		return
 	}
-	if err := h.env.Service.RecordSeenMember(h.env.Scope(msg), msg.UserOpenID, msg.Username); err != nil {
+	if err := h.env.Service.RecordSeenMember(h.env.Scope(in), in.UserOpenID, in.Username); err != nil {
 		slog.Warn("记录成员失败", "err", err)
 	}
 }

@@ -23,7 +23,8 @@ func TestExportCommand(t *testing.T) {
 	env, base := newTestEnv(t, fake, apiServer.URL)
 	handler := NewDefaultHandler(env)
 	ctx := context.Background()
-	if err := env.ImportICS(ctx, freshMessage(base), Attachment{URL: icsServer.URL + "/s.ics", Filename: "s.ics"}); err != nil {
+	freshImport := freshMessage(base)
+	if err := env.ImportICS(ctx, freshImport, NewReplier(freshImport, env.Client), Attachment{URL: icsServer.URL + "/s.ics", Filename: "s.ics"}); err != nil {
 		t.Fatal(err)
 	}
 	_ = waitMessage(t, fake)
@@ -31,7 +32,7 @@ func TestExportCommand(t *testing.T) {
 	// Export own schedule.
 	msg := freshMessage(base)
 	msg.Content = "/导出课表"
-	handler.Dispatch(ctx, msg)
+	dispatch(ctx, env, handler, msg)
 	reply := waitMessage(t, fake)
 	if msgType, _ := reply["msg_type"].(float64); msgType != 7 {
 		t.Fatalf("export reply = %+v", reply)
@@ -63,7 +64,7 @@ func TestExportCommand(t *testing.T) {
 	empty := freshMessage(base)
 	empty.UserOpenID = "U2"
 	empty.Content = "/导出课表"
-	handler.Dispatch(ctx, empty)
+	dispatch(ctx, env, handler, empty)
 	reply = waitMessage(t, fake)
 	if content, _ := reply["content"].(string); !strings.Contains(content, "还没有课程") {
 		t.Fatalf("empty export reply = %q", content)
@@ -72,7 +73,7 @@ func TestExportCommand(t *testing.T) {
 	// A member cannot export someone else's schedule.
 	other := freshMessage(base)
 	other.Content = "/导出课表 小红"
-	handler.Dispatch(ctx, other)
+	dispatch(ctx, env, handler, other)
 	reply = waitMessage(t, fake)
 	if content, _ := reply["content"].(string); !strings.Contains(content, "普通成员只能操作自己") {
 		t.Fatalf("permission reply = %q", content)
@@ -92,7 +93,8 @@ func TestPushPausesOnPermissionError(t *testing.T) {
 	env, base := newTestEnv(t, fake, apiServer.URL)
 	handler := NewDefaultHandler(env)
 	ctx := context.Background()
-	if err := env.ImportICS(ctx, freshMessage(base), Attachment{URL: icsServer.URL + "/s.ics", Filename: "s.ics"}); err != nil {
+	freshImport := freshMessage(base)
+	if err := env.ImportICS(ctx, freshImport, NewReplier(freshImport, env.Client), Attachment{URL: icsServer.URL + "/s.ics", Filename: "s.ics"}); err != nil {
 		t.Fatal(err)
 	}
 	_ = waitMessage(t, fake)
@@ -100,7 +102,7 @@ func TestPushPausesOnPermissionError(t *testing.T) {
 	owner := freshMessage(base)
 	owner.MemberRole = "owner"
 	owner.Content = "/启用推送"
-	handler.Dispatch(ctx, owner)
+	dispatch(ctx, env, handler, owner)
 	_ = waitMessage(t, fake)
 
 	sent, _, failed := env.PushDaily(ctx)

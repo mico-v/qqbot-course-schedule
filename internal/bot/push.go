@@ -181,22 +181,23 @@ var errPushNoSchedule = errors.New("没有可推送的课程表")
 
 // PushScope sends the day card to one scope proactively.
 func (e *Env) PushScope(ctx context.Context, scope string, sub PushSubscription) error {
-	msg := &Message{Client: e.Client}
+	in := &Inbound{}
 	if sub.Origin == "group" {
-		msg.Origin = OriginGroup
-		msg.GroupOpenID = sub.OpenID
+		in.Origin = OriginGroup
+		in.GroupOpenID = sub.OpenID
 	} else {
-		msg.Origin = OriginPrivate
-		msg.UserOpenID = sub.OpenID
+		in.Origin = OriginPrivate
+		in.UserOpenID = sub.OpenID
 	}
-	url, ok, err := e.RenderDayCard(ctx, msg, e.now())
+	r := e.newReplier(ctx, in)
+	url, ok, err := e.RenderDayCard(ctx, in, r, e.now())
 	if err != nil {
 		return err
 	}
 	if !ok {
 		return errPushNoSchedule
 	}
-	return msg.PushImage(ctx, url)
+	return r.PushImage(ctx, url)
 }
 
 // pushTimeText renders the cron time for replies ("每天 07:30").

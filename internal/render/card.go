@@ -7,6 +7,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/fogleman/gg"
 	xdraw "golang.org/x/image/draw"
@@ -93,6 +94,10 @@ type DayCardData struct {
 	Legend []LegendItem
 	// DurationLabel prefixes the duration line; empty means no prefix.
 	DurationLabel string
+	// FooterSince is the moment the work that produced this card began. When
+	// set, the render timing placeholder in Footer is replaced with the elapsed
+	// time measured at draw time.
+	FooterSince time.Time
 }
 
 // DayCard renders the daily schedule card.
@@ -260,9 +265,32 @@ func (r *Renderer) DayCard(data DayCardData) image.Image {
 	if len(data.Rows) == 0 && len(data.Folded) == 0 {
 		footerTop = headerHeight + 140
 	}
-	fc.drawTextCentered(dc, 0, cardWidth, footerTop+22-8, data.Footer, 17, "#94a3b8", false)
+	fc.drawTextCentered(dc, 0, cardWidth, footerTop+22-8, resolveFooter(data), 17, "#94a3b8", false)
 
 	return dc.Image()
+}
+
+// footerPlaceholder marks where the render timing belongs in a footer. The
+// value cannot be known while the card is being built, so the renderer swaps it
+// for the elapsed time on the way out.
+const footerPlaceholder = "{render}"
+
+// FooterTimingPlaceholder is the marker a caller embeds in DayCardData.Footer
+// where the render timing should appear. Exported so the bot layer does not
+// need to know the literal.
+const FooterTimingPlaceholder = footerPlaceholder
+
+// resolveFooter substitutes the render timing into a footer that carries the
+// placeholder. A card with no measurable span keeps the text as written.
+func resolveFooter(data DayCardData) string {
+	if !strings.Contains(data.Footer, footerPlaceholder) {
+		return data.Footer
+	}
+	if data.FooterSince.IsZero() {
+		return strings.ReplaceAll(data.Footer, footerPlaceholder, "")
+	}
+	elapsed := time.Since(data.FooterSince).Milliseconds()
+	return strings.ReplaceAll(data.Footer, footerPlaceholder, fmt.Sprintf("渲染用时 %dms", elapsed))
 }
 
 func legendItems(rows []schedule.DayRow) []LegendItem {

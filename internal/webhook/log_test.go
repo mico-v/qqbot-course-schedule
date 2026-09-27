@@ -28,8 +28,8 @@ func TestMessageTypeText(t *testing.T) {
 }
 
 func TestLogInboundMessageDoesNotPanic(t *testing.T) {
-	logInboundMessage(EventGroupMessage, 0, &bot.Message{Origin: bot.OriginGroup})
-	logInboundMessage(EventC2CMessage, 102, &bot.Message{
+	logInboundMessage(EventGroupMessage, 0, &bot.Inbound{Origin: bot.OriginGroup})
+	logInboundMessage(EventC2CMessage, 102, &bot.Inbound{
 		Origin:      bot.OriginPrivate,
 		UserOpenID:  "U1",
 		Username:    "小明",

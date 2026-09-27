@@ -105,7 +105,7 @@ func TestApplySettingArgs(t *testing.T) {
 func TestDispatchRespectsEnabledSwitch(t *testing.T) {
 	env, handler := newSettingsEnv(t)
 	calls := 0
-	handler.Register(&Command{Prefix: "/课表", Handle: func(context.Context, *Message) error {
+	handler.Register(&Command{Prefix: "/课表", Handle: func(context.Context, *Inbound, *Replier) error {
 		calls++
 		return nil
 	}})
@@ -115,7 +115,7 @@ func TestDispatchRespectsEnabledSwitch(t *testing.T) {
 	if err := env.Service.SaveBotSettings(off); err != nil {
 		t.Fatal(err)
 	}
-	handler.Dispatch(context.Background(), &Message{Content: "/课表"})
+	dispatch(context.Background(), nil, handler, &Inbound{Content: "/课表"})
 	if calls != 0 {
 		t.Fatalf("calls = %d, want 0 while disabled", calls)
 	}
@@ -123,7 +123,7 @@ func TestDispatchRespectsEnabledSwitch(t *testing.T) {
 	if err := env.Service.SaveBotSettings(schedule.DefaultSettings()); err != nil {
 		t.Fatal(err)
 	}
-	handler.Dispatch(context.Background(), &Message{Content: "/课表"})
+	dispatch(context.Background(), nil, handler, &Inbound{Content: "/课表"})
 	if calls != 1 {
 		t.Fatalf("calls = %d, want 1 after enabling", calls)
 	}
@@ -132,7 +132,7 @@ func TestDispatchRespectsEnabledSwitch(t *testing.T) {
 func TestDispatchRespectsReplyPolicy(t *testing.T) {
 	env, handler := newSettingsEnv(t)
 	var got []string
-	handler.Register(&Command{Prefix: "/课表", Handle: func(_ context.Context, msg *Message) error {
+	handler.Register(&Command{Prefix: "/课表", Handle: func(_ context.Context, msg *Inbound, _ *Replier) error {
 		got = append(got, msg.Content)
 		return nil
 	}})
@@ -144,9 +144,9 @@ func TestDispatchRespectsReplyPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	handler.Dispatch(context.Background(), &Message{Content: "课表"})
-	handler.Dispatch(context.Background(), &Message{Content: "/课表"})
-	handler.Dispatch(context.Background(), &Message{Content: "<@BOTOPENID> /课表"})
+	dispatch(context.Background(), nil, handler, &Inbound{Content: "课表"})
+	dispatch(context.Background(), nil, handler, &Inbound{Content: "/课表"})
+	dispatch(context.Background(), nil, handler, &Inbound{Content: "<@BOTOPENID> /课表"})
 
 	if len(got) != 1 || got[0] != "/课表" {
 		t.Fatalf("got = %v, want a single mention call with content %q", got, "/课表")
@@ -156,7 +156,7 @@ func TestDispatchRespectsReplyPolicy(t *testing.T) {
 func TestDispatchAdminSettingsBypassesDisabled(t *testing.T) {
 	env, handler := newSettingsEnv(t)
 	called := 0
-	handler.Register(&Command{Prefix: settingsCommandPrefix, Handle: func(context.Context, *Message) error {
+	handler.Register(&Command{Prefix: settingsCommandPrefix, Handle: func(context.Context, *Inbound, *Replier) error {
 		called++
 		return nil
 	}})
@@ -167,11 +167,11 @@ func TestDispatchAdminSettingsBypassesDisabled(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	handler.Dispatch(context.Background(), &Message{Content: "/设置", MemberRole: "member"})
+	dispatch(context.Background(), nil, handler, &Inbound{Content: "/设置", MemberRole: "member"})
 	if called != 0 {
 		t.Fatal("a plain member reached settings while the bot is off")
 	}
-	handler.Dispatch(context.Background(), &Message{Content: "/设置", MemberRole: "admin"})
+	dispatch(context.Background(), nil, handler, &Inbound{Content: "/设置", MemberRole: "admin"})
 	if called != 1 {
 		t.Fatal("an admin must be able to manage settings while the bot is off")
 	}
@@ -186,7 +186,7 @@ func TestSettingsCommandUpdatesSwitches(t *testing.T) {
 	message.MemberRole = "admin"
 	message.Args = "机器人 关"
 	handler := NewDefaultHandler(env)
-	if err := handler.handleSettings(context.Background(), message); err != nil {
+	if err := handler.handleSettings(context.Background(), message, NewReplier(message, env.Client)); err != nil {
 		t.Fatalf("handleSettings: %v", err)
 	}
 	settings, err := env.Service.BotSettings()

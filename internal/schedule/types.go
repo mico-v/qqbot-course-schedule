@@ -88,6 +88,9 @@ type Storage interface {
 	ListScopeSummaries() ([]ScopeSummary, error)
 	SetDayOverride(scopeID, userID, day string, override DayOverride, createdBy, createdAt string) error
 	DeleteDayOverride(scopeID, userID, day string) (bool, error)
+	InsertMessageStats(record MessageStats) error
+	ListMessageStats(since time.Time, scopeID string) ([]MessageStats, error)
+	PruneMessageStats(before time.Time) (int, error)
 	GetKV(scope, namespace, key string, out any) (bool, error)
 	ListKV(scope, namespace string) ([]KVEntry, error)
 	SetKV(scope, namespace, key string, value any) error

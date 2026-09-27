@@ -13,6 +13,7 @@ import (
 
 	"github.com/mico-v/qqbot-course-schedule/internal/bot"
 	"github.com/mico-v/qqbot-course-schedule/internal/qqapi"
+	"github.com/mico-v/qqbot-course-schedule/internal/timing"
 )
 
 const (
@@ -94,6 +95,9 @@ func (d *Dispatcher) process(payload Payload) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), handlerTimeout)
 	defer cancel()
+	// Stamp the acceptance moment once, so every later stage measures from the
+	// same origin without threading a timestamp through every signature.
+	ctx = timing.WithReceived(ctx, time.Now())
 
 	switch payload.T {
 	case EventGroupAtMessage, EventGroupMessage:
@@ -106,20 +110,12 @@ func (d *Dispatcher) process(payload Payload) {
 			return
 		}
 		slog.Debug("群消息原始负载", "d", string(payload.D))
-		message := &bot.Message{
-			Origin:      bot.OriginGroup,
-			GroupOpenID: data.GroupOpenID,
-			UserOpenID:  firstNonEmpty(data.Author.MemberOpenID, data.Author.UnionOpenID, data.Author.ID),
-			MsgID:       data.ID,
-			Content:     data.Content,
-			Username:    data.Author.Username,
-			MemberRole:  data.Author.MemberRole,
-			Attachments: toBotAttachments(data.Attachments),
-			Mentions:    toBotMentions(data.Mentions),
-			Client:      d.client,
-		}
-		logInboundMessage(payload.T, data.MessageType, message)
-		d.handler.Dispatch(ctx, message)
+		in := bot.NewInbound(ctx, bot.OriginGroup, data.GroupOpenID,
+			firstNonEmpty(data.Author.MemberOpenID, data.Author.UnionOpenID, data.Author.ID),
+			data.ID, "", data.Content, data.Author.Username, data.Author.MemberRole,
+			toBotAttachments(data.Attachments), toBotMentions(data.Mentions))
+		logInboundMessage(payload.T, data.MessageType, in)
+		d.handler.Dispatch(ctx, in, bot.NewReplier(in, d.client))
 
 	case EventC2CMessage:
 		data, err := decodeMessage(payload.D)
@@ -130,19 +126,12 @@ func (d *Dispatcher) process(payload Payload) {
 		if data.Author.Bot {
 			return
 		}
-		message := &bot.Message{
-			Origin:      bot.OriginPrivate,
-			UserOpenID:  firstNonEmpty(data.Author.UserOpenID, data.Author.UnionOpenID, data.Author.ID),
-			MsgID:       data.ID,
-			Content:     data.Content,
-			Username:    data.Author.Username,
-			MemberRole:  data.Author.MemberRole,
-			Attachments: toBotAttachments(data.Attachments),
-			Mentions:    toBotMentions(data.Mentions),
-			Client:      d.client,
-		}
-		logInboundMessage(payload.T, data.MessageType, message)
-		d.handler.Dispatch(ctx, message)
+		in := bot.NewInbound(ctx, bot.OriginPrivate, "",
+			firstNonEmpty(data.Author.UserOpenID, data.Author.UnionOpenID, data.Author.ID),
+			data.ID, "", data.Content, data.Author.Username, data.Author.MemberRole,
+			toBotAttachments(data.Attachments), toBotMentions(data.Mentions))
+		logInboundMessage(payload.T, data.MessageType, in)
+		d.handler.Dispatch(ctx, in, bot.NewReplier(in, d.client))
 
 	case EventInteraction:
 		ackCtx, ackCancel := context.WithTimeout(context.Background(), interactionAckTTL)

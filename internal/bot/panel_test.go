@@ -181,7 +181,7 @@ func TestSyncPanelsUpdatesWhenItemsChange(t *testing.T) {
 		Prefix:      "/课表",
 		Description: "新的描述",
 		Ready:       true,
-		Handle:      func(ctx context.Context, msg *Message) error { return nil },
+		Handle:      func(ctx context.Context, msg *Inbound, _ *Replier) error { return nil },
 	})
 
 	created, updated, err := SyncPanels(context.Background(), env, handler)
@@ -246,7 +246,7 @@ func TestPanelItemsIncludeNewReadyCommand(t *testing.T) {
 		Prefix:      "/新指令",
 		Description: "自动加入面板",
 		Ready:       true,
-		Handle:      func(ctx context.Context, msg *Message) error { return nil },
+		Handle:      func(ctx context.Context, msg *Inbound, _ *Replier) error { return nil },
 	})
 
 	items := panelItems(handler)

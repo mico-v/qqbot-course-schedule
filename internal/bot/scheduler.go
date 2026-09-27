@@ -31,6 +31,7 @@ func StartScheduler(env *Env) (*Scheduler, error) {
 		if sent+skipped+failed > 0 {
 			slog.Info("定时课表推送完成", "sent", sent, "skipped", skipped, "failed", failed)
 		}
+		env.pruneStats(env.now())
 	})
 	if err != nil {
 		return nil, err

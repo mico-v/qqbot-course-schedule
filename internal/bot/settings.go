@@ -62,36 +62,36 @@ func (h *Handler) currentSettings() schedule.Settings {
 }
 
 // canManageSettings reports whether the sender may change the switches.
-func canManageSettings(msg *Message) bool {
-	if msg == nil {
+func canManageSettings(in *Inbound) bool {
+	if in == nil {
 		return false
 	}
-	return msg.Origin == OriginPrivate || msg.IsAdmin()
+	return in.Origin == OriginPrivate || in.IsAdmin()
 }
 
-func (h *Handler) handleSettings(ctx context.Context, msg *Message) error {
+func (h *Handler) handleSettings(ctx context.Context, in *Inbound, r *Replier) error {
 	if h.env == nil || h.env.Service == nil {
-		return msg.Reply(ctx, "课表功能未初始化。")
+		return r.Reply(ctx, "课表功能未初始化。")
 	}
-	if !canManageSettings(msg) {
-		return msg.Reply(ctx, "只有群管理员或私聊可以修改机器人设置。")
+	if !canManageSettings(in) {
+		return r.Reply(ctx, "只有群管理员或私聊可以修改机器人设置。")
 	}
 	settings, err := h.env.Service.BotSettings()
 	if err != nil {
-		return msg.Reply(ctx, "读取设置失败："+err.Error())
+		return r.Reply(ctx, "读取设置失败："+err.Error())
 	}
-	args := strings.Fields(msg.Args)
+	args := strings.Fields(in.Args)
 	if len(args) == 0 {
-		return msg.Reply(ctx, settingsText(settings))
+		return r.Reply(ctx, settingsText(settings))
 	}
 	updated, problem := applySettingArgs(settings, args)
 	if problem != "" {
-		return msg.Reply(ctx, problem)
+		return r.Reply(ctx, problem)
 	}
 	if err := h.env.Service.SaveBotSettings(updated); err != nil {
-		return msg.Reply(ctx, "保存设置失败："+err.Error())
+		return r.Reply(ctx, "保存设置失败："+err.Error())
 	}
-	return msg.Reply(ctx, "已更新。\n"+settingsText(updated))
+	return r.Reply(ctx, "已更新。\n"+settingsText(updated))
 }
 
 // applySettingArgs parses one /设置 invocation. It returns a usage/error text

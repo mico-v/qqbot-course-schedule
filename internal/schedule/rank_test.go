@@ -131,6 +131,7 @@ type memoryStorage struct {
 	members   map[string]map[string]*Member
 	overrides map[string][]DayOverrideRow
 	kv        map[string][]byte
+	stats     []MessageStats
 }
 
 func newMemoryStorage() *memoryStorage {
@@ -265,4 +266,37 @@ func TestClippedOccurrencesKeywordFilter(t *testing.T) {
 		t.Fatalf("clipped = %+v", clipped)
 	}
 	_ = time.Now
+}
+
+func (m *memoryStorage) InsertMessageStats(record MessageStats) error {
+	m.stats = append(m.stats, record)
+	return nil
+}
+
+func (m *memoryStorage) ListMessageStats(since time.Time, scopeID string) ([]MessageStats, error) {
+	var result []MessageStats
+	for _, record := range m.stats {
+		if record.ReceivedAt.Before(since) {
+			continue
+		}
+		if scopeID != "" && record.ScopeID != scopeID {
+			continue
+		}
+		result = append(result, record)
+	}
+	return result, nil
+}
+
+func (m *memoryStorage) PruneMessageStats(before time.Time) (int, error) {
+	kept := m.stats[:0]
+	removed := 0
+	for _, record := range m.stats {
+		if record.ReceivedAt.Before(before) {
+			removed++
+			continue
+		}
+		kept = append(kept, record)
+	}
+	m.stats = kept
+	return removed, nil
 }

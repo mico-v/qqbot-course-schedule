@@ -19,8 +19,8 @@ func NewDefaultHandler(env *Env) *Handler {
 	h.Register(&Command{
 		Prefix:      "/ping",
 		Description: "连通性测试",
-		Handle: func(ctx context.Context, msg *Message) error {
-			return msg.Reply(ctx, "pong")
+		Handle: func(ctx context.Context, in *Inbound, r *Replier) error {
+			return r.Reply(ctx, "pong")
 		},
 	})
 	h.Register(&Command{
@@ -35,17 +35,17 @@ func NewDefaultHandler(env *Env) *Handler {
 		Prefix:      "/今日课表",
 		Description: "生成当前会话今日课程表图片",
 		Ready:       true,
-		Handle: func(ctx context.Context, msg *Message) error {
-			return handleDayCard(ctx, h.env, msg, nil)
+		Handle: func(ctx context.Context, in *Inbound, r *Replier) error {
+			return handleDayCard(ctx, h.env, in, r, nil)
 		},
 	})
 	h.Register(&Command{
 		Prefix:      "/明日课表",
 		Description: "生成当前会话明日课程表图片",
 		Ready:       true,
-		Handle: func(ctx context.Context, msg *Message) error {
+		Handle: func(ctx context.Context, in *Inbound, r *Replier) error {
 			tomorrow := h.env.now().AddDate(0, 0, 1)
-			return handleDayCard(ctx, h.env, msg, &tomorrow)
+			return handleDayCard(ctx, h.env, in, r, &tomorrow)
 		},
 	})
 	h.Register(&Command{
@@ -72,8 +72,8 @@ func NewDefaultHandler(env *Env) *Handler {
 		Aliases:     []string{"/放假"},
 		Description: "标记某天为休假",
 		Ready:       true,
-		Handle: func(ctx context.Context, msg *Message) error {
-			return h.handleOverrideSet(ctx, msg, schedule.DayOverrideHoliday)
+		Handle: func(ctx context.Context, in *Inbound, r *Replier) error {
+			return h.handleOverrideSet(ctx, in, r, schedule.DayOverrideHoliday)
 		},
 	})
 	h.Register(&Command{
@@ -81,8 +81,8 @@ func NewDefaultHandler(env *Env) *Handler {
 		Aliases:     []string{"/补课", "/调课"},
 		Description: "把某天的课程换成另一天的课程",
 		Ready:       true,
-		Handle: func(ctx context.Context, msg *Message) error {
-			return h.handleOverrideSet(ctx, msg, schedule.DayOverrideShift)
+		Handle: func(ctx context.Context, in *Inbound, r *Replier) error {
+			return h.handleOverrideSet(ctx, in, r, schedule.DayOverrideShift)
 		},
 	})
 	h.Register(&Command{
@@ -159,7 +159,7 @@ func NewDefaultHandler(env *Env) *Handler {
 	return h
 }
 
-func (h *Handler) handleHelp(ctx context.Context, msg *Message) error {
+func (h *Handler) handleHelp(ctx context.Context, in *Inbound, r *Replier) error {
 	var lines []string
 	lines = append(lines, "可用指令：")
 	for _, cmd := range h.Commands() {
@@ -172,128 +172,128 @@ func (h *Handler) handleHelp(ctx context.Context, msg *Message) error {
 		}
 		lines = append(lines, line)
 	}
-	return msg.Reply(ctx, strings.Join(lines, "\n"))
+	return r.Reply(ctx, strings.Join(lines, "\n"))
 }
 
-func (h *Handler) handleScheduleCommand(ctx context.Context, msg *Message) error {
+func (h *Handler) handleScheduleCommand(ctx context.Context, in *Inbound, r *Replier) error {
 	if h.env == nil {
-		return msg.Reply(ctx, "课表功能未初始化。")
+		return r.Reply(ctx, "课表功能未初始化。")
 	}
-	day, message := schedule.SingleDayQuery(msg.Args, h.env.now())
+	day, message := schedule.SingleDayQuery(in.Args, h.env.now())
 	if message != "" {
-		return msg.Reply(ctx, message)
+		return r.Reply(ctx, message)
 	}
 	if day == nil {
-		return handleDayCard(ctx, h.env, msg, nil)
+		return handleDayCard(ctx, h.env, in, r, nil)
 	}
-	return handleDayCard(ctx, h.env, msg, day)
+	return handleDayCard(ctx, h.env, in, r, day)
 }
 
-func (h *Handler) handleImportCommand(ctx context.Context, msg *Message) error {
+func (h *Handler) handleImportCommand(ctx context.Context, in *Inbound, r *Replier) error {
 	if h.env == nil {
-		return msg.Reply(ctx, "课表功能未初始化。")
+		return r.Reply(ctx, "课表功能未初始化。")
 	}
-	for _, attachment := range msg.Attachments {
+	for _, attachment := range in.Attachments {
 		if isICSFile(attachment) {
-			return h.env.ImportICS(ctx, msg, attachment)
+			return h.env.ImportICS(ctx, in, r, attachment)
 		}
 	}
-	return msg.Reply(ctx, "未检测到 .ics 文件。请发送 /导入课表 并附加 .ics 文件，或直接发送 .ics 文件。")
+	return r.Reply(ctx, "未检测到 .ics 文件。请发送 /导入课表 并附加 .ics 文件，或直接发送 .ics 文件。")
 }
 
-func (h *Handler) handleRankCommand(ctx context.Context, msg *Message) error {
+func (h *Handler) handleRankCommand(ctx context.Context, in *Inbound, r *Replier) error {
 	if h.env == nil {
-		return msg.Reply(ctx, "课表功能未初始化。")
+		return r.Reply(ctx, "课表功能未初始化。")
 	}
-	url, ok, err := h.env.RenderRankCard(ctx, msg, msg.Args)
+	url, ok, err := h.env.RenderRankCard(ctx, in, r, in.Args)
 	if err != nil {
-		return msg.Reply(ctx, err.Error())
+		return r.Reply(ctx, err.Error())
 	}
 	if !ok {
-		return msg.Reply(ctx, "当前会话还没有可统计的课程。")
+		return r.Reply(ctx, "当前会话还没有可统计的课程。")
 	}
-	return h.env.SendCard(ctx, msg, url, cardKeyboardForRank(msg.UserOpenID))
+	return h.env.SendCard(ctx, in, r, url, cardKeyboardForRank(in.UserOpenID))
 }
 
-func (h *Handler) handleOverrideSet(ctx context.Context, msg *Message, kind string) error {
+func (h *Handler) handleOverrideSet(ctx context.Context, in *Inbound, r *Replier, kind string) error {
 	env := h.env
 	if env == nil {
-		return msg.Reply(ctx, "课表功能未初始化。")
+		return r.Reply(ctx, "课表功能未初始化。")
 	}
 	today := env.now()
-	days, rest, err := schedule.SplitDayOverrideArgs(msg.Args, today, schedule.RollForward)
+	days, rest, err := schedule.SplitDayOverrideArgs(in.Args, today, schedule.RollForward)
 	if err != nil {
-		return msg.Reply(ctx, err.Error())
+		return r.Reply(ctx, err.Error())
 	}
 	person := strings.Join(rest, " ")
 	if len(days) == 0 {
 		if kind == schedule.DayOverrideShift {
-			return msg.Reply(ctx, "请提供两个日期：/调休 <被覆盖的日期> <来源日期> [成员]，例如 /调休 2026-10-11 2026-10-08 表示 10 月 11 日按 10 月 8 日的课程上课。")
+			return r.Reply(ctx, "请提供两个日期：/调休 <被覆盖的日期> <来源日期> [成员]，例如 /调休 2026-10-11 2026-10-08 表示 10 月 11 日按 10 月 8 日的课程上课。")
 		}
-		return msg.Reply(ctx, "请提供日期：/休假 <日期> [成员]，例如 /休假 2026-10-01，也可以使用 今天、明天 或 10月1日至10月8日。")
+		return r.Reply(ctx, "请提供日期：/休假 <日期> [成员]，例如 /休假 2026-10-01，也可以使用 今天、明天 或 10月1日至10月8日。")
 	}
 	var sourceDay *time.Time
 	if kind == schedule.DayOverrideShift {
 		if len(days) < 2 {
-			return msg.Reply(ctx, "调休需要来源日期：/调休 <被覆盖的日期> <来源日期> [成员]。")
+			return r.Reply(ctx, "调休需要来源日期：/调休 <被覆盖的日期> <来源日期> [成员]。")
 		}
 		if len(days) > 2 {
-			return msg.Reply(ctx, "调休一次只能指定一个日期和一个来源日期，例如 /调休 2026-10-11 2026-10-08。")
+			return r.Reply(ctx, "调休一次只能指定一个日期和一个来源日期，例如 /调休 2026-10-11 2026-10-08。")
 		}
 		sourceDay = &days[1]
 		days = days[:1]
 	}
-	scope := env.Scope(msg)
+	scope := env.Scope(in)
 	members, err := env.Service.ScopeMembers(scope)
 	if err != nil {
 		return err
 	}
-	targets, errMsg := schedule.ResolveOverrideTargets(members, msg.UserOpenID, msg.Origin == OriginGroup, msg.IsAdmin(), person, toScheduleMentions(msg.Mentions))
+	targets, errMsg := schedule.ResolveOverrideTargets(members, in.UserOpenID, in.Origin == OriginGroup, in.IsAdmin(), person, toScheduleMentions(in.Mentions))
 	if errMsg != "" {
-		return msg.Reply(ctx, errMsg)
+		return r.Reply(ctx, errMsg)
 	}
-	text, err := env.Service.SetDayOverrides(scope, targets, days, kind, sourceDay, msg.UserOpenID, members, today)
+	text, err := env.Service.SetDayOverrides(scope, targets, days, kind, sourceDay, in.UserOpenID, members, today)
 	if err != nil {
-		return msg.Reply(ctx, err.Error())
+		return r.Reply(ctx, err.Error())
 	}
-	return msg.Reply(ctx, text)
+	return r.Reply(ctx, text)
 }
 
-func (h *Handler) handleCancelDayOffCommand(ctx context.Context, msg *Message) error {
+func (h *Handler) handleCancelDayOffCommand(ctx context.Context, in *Inbound, r *Replier) error {
 	env := h.env
 	if env == nil {
-		return msg.Reply(ctx, "课表功能未初始化。")
+		return r.Reply(ctx, "课表功能未初始化。")
 	}
-	days, rest, err := schedule.SplitDayOverrideArgs(msg.Args, env.now(), schedule.RollForward)
+	days, rest, err := schedule.SplitDayOverrideArgs(in.Args, env.now(), schedule.RollForward)
 	if err != nil {
-		return msg.Reply(ctx, err.Error())
+		return r.Reply(ctx, err.Error())
 	}
 	if len(days) == 0 {
-		return msg.Reply(ctx, "请提供日期：/销假 <日期> [成员]，例如 /销假 2026-10-01。")
+		return r.Reply(ctx, "请提供日期：/销假 <日期> [成员]，例如 /销假 2026-10-01。")
 	}
 	person := strings.Join(rest, " ")
-	scope := env.Scope(msg)
+	scope := env.Scope(in)
 	members, err := env.Service.ScopeMembers(scope)
 	if err != nil {
 		return err
 	}
-	targets, errMsg := schedule.ResolveOverrideTargets(members, msg.UserOpenID, msg.Origin == OriginGroup, msg.IsAdmin(), person, toScheduleMentions(msg.Mentions))
+	targets, errMsg := schedule.ResolveOverrideTargets(members, in.UserOpenID, in.Origin == OriginGroup, in.IsAdmin(), person, toScheduleMentions(in.Mentions))
 	if errMsg != "" {
-		return msg.Reply(ctx, errMsg)
+		return r.Reply(ctx, errMsg)
 	}
 	text, err := env.Service.ClearDayOverrides(scope, targets, days, members)
 	if err != nil {
-		return msg.Reply(ctx, err.Error())
+		return r.Reply(ctx, err.Error())
 	}
-	return msg.Reply(ctx, text)
+	return r.Reply(ctx, text)
 }
 
-func (h *Handler) handleDayOffListCommand(ctx context.Context, msg *Message) error {
+func (h *Handler) handleDayOffListCommand(ctx context.Context, in *Inbound, r *Replier) error {
 	env := h.env
 	if env == nil {
-		return msg.Reply(ctx, "课表功能未初始化。")
+		return r.Reply(ctx, "课表功能未初始化。")
 	}
-	scope := env.Scope(msg)
+	scope := env.Scope(in)
 	members, err := env.Service.ScopeMembers(scope)
 	if err != nil {
 		return err
@@ -302,29 +302,29 @@ func (h *Handler) handleDayOffListCommand(ctx context.Context, msg *Message) err
 	if err != nil {
 		return err
 	}
-	return msg.Reply(ctx, text)
+	return r.Reply(ctx, text)
 }
 
-func (h *Handler) handleExportCommand(ctx context.Context, msg *Message) error {
+func (h *Handler) handleExportCommand(ctx context.Context, in *Inbound, r *Replier) error {
 	env := h.env
 	if env == nil {
-		return msg.Reply(ctx, "课表功能未初始化。")
+		return r.Reply(ctx, "课表功能未初始化。")
 	}
-	scope := env.Scope(msg)
+	scope := env.Scope(in)
 	members, err := env.Service.ScopeMembers(scope)
 	if err != nil {
 		return err
 	}
-	targetID, errMsg := schedule.ResolveMemberTarget(members, msg.UserOpenID, msg.Origin == OriginGroup, msg.IsAdmin(), msg.Args, toScheduleMentions(msg.Mentions))
+	targetID, errMsg := schedule.ResolveMemberTarget(members, in.UserOpenID, in.Origin == OriginGroup, in.IsAdmin(), in.Args, toScheduleMentions(in.Mentions))
 	if errMsg != "" {
-		return msg.Reply(ctx, errMsg)
+		return r.Reply(ctx, errMsg)
 	}
 	member, ok := members[targetID]
 	if !ok || member == nil {
-		return msg.Reply(ctx, "没有找到该成员的课程表。")
+		return r.Reply(ctx, "没有找到该成员的课程表。")
 	}
 	if len(member.Events) == 0 {
-		return msg.Reply(ctx, "该成员还没有课程，暂无可导出的课表。")
+		return r.Reply(ctx, "该成员还没有课程，暂无可导出的课表。")
 	}
 	content := strings.TrimSpace(member.ICS)
 	if content == "" {
@@ -332,67 +332,67 @@ func (h *Handler) handleExportCommand(ctx context.Context, msg *Message) error {
 	}
 	url, err := env.SavePublicFile(content, ".ics")
 	if err != nil {
-		return msg.Reply(ctx, "导出失败："+err.Error())
+		return r.Reply(ctx, "导出失败："+err.Error())
 	}
-	return msg.ReplyFile(ctx, url, exportFileName(member.Name))
+	return r.ReplyFile(ctx, url, exportFileName(member.Name))
 }
 
-func (h *Handler) handleEnablePush(ctx context.Context, msg *Message) error {
+func (h *Handler) handleEnablePush(ctx context.Context, in *Inbound, r *Replier) error {
 	if h.env == nil {
-		return msg.Reply(ctx, "课表功能未初始化。")
+		return r.Reply(ctx, "课表功能未初始化。")
 	}
-	if msg.Origin == OriginGroup && !msg.IsAdmin() {
-		return msg.Reply(ctx, "只有群管理员可以开启本群的主动推送。")
+	if in.Origin == OriginGroup && !in.IsAdmin() {
+		return r.Reply(ctx, "只有群管理员可以开启本群的主动推送。")
 	}
 	sub := PushSubscription{
 		Enabled:   true,
 		Origin:    "private",
-		OpenID:    msg.UserOpenID,
-		EnabledBy: msg.UserOpenID,
+		OpenID:    in.UserOpenID,
+		EnabledBy: in.UserOpenID,
 		EnabledAt: schedule.NowISO(),
 	}
-	if msg.Origin == OriginGroup {
+	if in.Origin == OriginGroup {
 		sub.Origin = "group"
-		sub.OpenID = msg.GroupOpenID
+		sub.OpenID = in.GroupOpenID
 	}
-	if err := h.env.SetPushSubscription(h.env.Scope(msg), sub); err != nil {
-		return msg.Reply(ctx, "开启失败："+err.Error())
+	if err := h.env.SetPushSubscription(h.env.Scope(in), sub); err != nil {
+		return r.Reply(ctx, "开启失败："+err.Error())
 	}
 	extra := ""
-	if msg.Origin == OriginGroup {
+	if in.Origin == OriginGroup {
 		extra = "；群聊还需群管理员在机器人资料页打开「消息推送」，否则平台会拒绝"
 	}
-	return msg.Reply(ctx, "已开启每日课表推送（"+pushTimeText(h.env.PushCron)+"）"+extra+"。")
+	return r.Reply(ctx, "已开启每日课表推送（"+pushTimeText(h.env.PushCron)+"）"+extra+"。")
 }
 
-func (h *Handler) handleDisablePush(ctx context.Context, msg *Message) error {
+func (h *Handler) handleDisablePush(ctx context.Context, in *Inbound, r *Replier) error {
 	if h.env == nil {
-		return msg.Reply(ctx, "课表功能未初始化。")
+		return r.Reply(ctx, "课表功能未初始化。")
 	}
-	if msg.Origin == OriginGroup && !msg.IsAdmin() {
-		return msg.Reply(ctx, "只有群管理员可以关闭本群的主动推送。")
+	if in.Origin == OriginGroup && !in.IsAdmin() {
+		return r.Reply(ctx, "只有群管理员可以关闭本群的主动推送。")
 	}
-	if err := h.env.RemovePushSubscription(h.env.Scope(msg)); err != nil {
-		return msg.Reply(ctx, "关闭失败："+err.Error())
+	if err := h.env.RemovePushSubscription(h.env.Scope(in)); err != nil {
+		return r.Reply(ctx, "关闭失败："+err.Error())
 	}
-	return msg.Reply(ctx, "已关闭本会话的每日课表推送。")
+	return r.Reply(ctx, "已关闭本会话的每日课表推送。")
 }
 
-func (h *Handler) handlePushTest(ctx context.Context, msg *Message) error {
+func (h *Handler) handlePushTest(ctx context.Context, in *Inbound, r *Replier) error {
 	if h.env == nil {
-		return msg.Reply(ctx, "课表功能未初始化。")
+		return r.Reply(ctx, "课表功能未初始化。")
 	}
-	if msg.Origin == OriginGroup && !msg.IsAdmin() {
-		return msg.Reply(ctx, "只有群管理员可以测试推送。")
+	if in.Origin == OriginGroup && !in.IsAdmin() {
+		return r.Reply(ctx, "只有群管理员可以测试推送。")
 	}
-	scope := h.env.Scope(msg)
+	scope := h.env.Scope(in)
 	subscriptions, err := h.env.PushSubscriptions()
 	if err != nil {
-		return msg.Reply(ctx, "读取订阅失败："+err.Error())
+		return r.Reply(ctx, "读取订阅失败："+err.Error())
 	}
 	sub, ok := subscriptions[scope]
 	if !ok || !sub.Enabled {
-		return msg.Reply(ctx, "本会话还没有开启推送，请先发送 /启用推送。")
+		return r.Reply(ctx, "本会话还没有开启推送，请先发送 /启用推送。")
 	}
 	switch err := h.env.PushScope(ctx, scope, sub); {
 	case err == nil:
@@ -401,91 +401,91 @@ func (h *Handler) handlePushTest(ctx context.Context, msg *Message) error {
 			sub.PauseReason = ""
 			_ = h.env.SetPushSubscription(scope, sub)
 		}
-		return msg.Reply(ctx, "已推送一次当日课表。")
+		return r.Reply(ctx, "已推送一次当日课表。")
 	case errors.Is(err, errPushNoSchedule):
-		return msg.Reply(ctx, "本会话还没有可推送的课程表。")
+		return r.Reply(ctx, "本会话还没有可推送的课程表。")
 	default:
 		if qqapi.IsActiveMessageDenied(err) {
 			sub.Paused = true
 			sub.PauseReason = qqapi.FriendlyError(err)
 			_ = h.env.SetPushSubscription(scope, sub)
 		}
-		return msg.Reply(ctx, "推送失败："+qqapi.FriendlyError(err))
+		return r.Reply(ctx, "推送失败："+qqapi.FriendlyError(err))
 	}
 }
 
-func (h *Handler) handleBindQQ(ctx context.Context, msg *Message) error {
+func (h *Handler) handleBindQQ(ctx context.Context, in *Inbound, r *Replier) error {
 	if h.env == nil {
-		return msg.Reply(ctx, "课表功能未初始化。")
+		return r.Reply(ctx, "课表功能未初始化。")
 	}
-	scope := h.env.Scope(msg)
+	scope := h.env.Scope(in)
 	members, err := h.env.Service.ScopeMembers(scope)
 	if err != nil {
-		return msg.Reply(ctx, "读取成员失败："+err.Error())
+		return r.Reply(ctx, "读取成员失败："+err.Error())
 	}
-	member, ok := members[msg.UserOpenID]
+	member, ok := members[in.UserOpenID]
 	if !ok || member == nil {
-		return msg.Reply(ctx, "你还没有课表，请先发送 /导入课表 导入，或让管理员在管理台创建。")
+		return r.Reply(ctx, "你还没有课表，请先发送 /导入课表 导入，或让管理员在管理台创建。")
 	}
-	argument := strings.TrimSpace(msg.Args)
+	argument := strings.TrimSpace(in.Args)
 	if argument == "" {
 		current := "未绑定"
 		if member.QQ != "" {
 			current = member.QQ
 		}
-		return msg.Reply(ctx, "你当前绑定的 QQ 号："+current+"。\n绑定：/绑定QQ 123456789（绑定后卡片会显示该 QQ 的头像）。")
+		return r.Reply(ctx, "你当前绑定的 QQ 号："+current+"。\n绑定：/绑定QQ 123456789（绑定后卡片会显示该 QQ 的头像）。")
 	}
-	qq, err := h.env.Service.SetMemberQQ(scope, msg.UserOpenID, argument, msg.UserOpenID)
+	qq, err := h.env.Service.SetMemberQQ(scope, in.UserOpenID, argument, in.UserOpenID)
 	if err != nil {
-		return msg.Reply(ctx, "绑定失败："+err.Error())
+		return r.Reply(ctx, "绑定失败："+err.Error())
 	}
-	return msg.Reply(ctx, "已绑定 QQ "+qq+"，之后生成的课表卡片会使用该 QQ 的头像。")
+	return r.Reply(ctx, "已绑定 QQ "+qq+"，之后生成的课表卡片会使用该 QQ 的头像。")
 }
 
-func (h *Handler) handleUnbindQQ(ctx context.Context, msg *Message) error {
+func (h *Handler) handleUnbindQQ(ctx context.Context, in *Inbound, r *Replier) error {
 	if h.env == nil {
-		return msg.Reply(ctx, "课表功能未初始化。")
+		return r.Reply(ctx, "课表功能未初始化。")
 	}
-	scope := h.env.Scope(msg)
+	scope := h.env.Scope(in)
 	members, err := h.env.Service.ScopeMembers(scope)
 	if err != nil {
-		return msg.Reply(ctx, "读取成员失败："+err.Error())
+		return r.Reply(ctx, "读取成员失败："+err.Error())
 	}
-	if member, ok := members[msg.UserOpenID]; !ok || member == nil {
-		return msg.Reply(ctx, "你还没有课表。")
+	if member, ok := members[in.UserOpenID]; !ok || member == nil {
+		return r.Reply(ctx, "你还没有课表。")
 	} else if member.QQ == "" {
-		return msg.Reply(ctx, "你还没有绑定 QQ 号。")
+		return r.Reply(ctx, "你还没有绑定 QQ 号。")
 	}
-	if _, err := h.env.Service.SetMemberQQ(scope, msg.UserOpenID, "", msg.UserOpenID); err != nil {
-		return msg.Reply(ctx, "解绑失败："+err.Error())
+	if _, err := h.env.Service.SetMemberQQ(scope, in.UserOpenID, "", in.UserOpenID); err != nil {
+		return r.Reply(ctx, "解绑失败："+err.Error())
 	}
-	return msg.Reply(ctx, "已解除 QQ 绑定，卡片将恢复为昵称首字头像。")
+	return r.Reply(ctx, "已解除 QQ 绑定，卡片将恢复为昵称首字头像。")
 }
 
-func (h *Handler) handlePushTime(ctx context.Context, msg *Message) error {
+func (h *Handler) handlePushTime(ctx context.Context, in *Inbound, r *Replier) error {
 	if h.env == nil {
-		return msg.Reply(ctx, "课表功能未初始化。")
+		return r.Reply(ctx, "课表功能未初始化。")
 	}
-	if msg.Origin == OriginGroup && !msg.IsAdmin() {
-		return msg.Reply(ctx, "只有群管理员可以调整推送时间。")
+	if in.Origin == OriginGroup && !in.IsAdmin() {
+		return r.Reply(ctx, "只有群管理员可以调整推送时间。")
 	}
-	scope := h.env.Scope(msg)
+	scope := h.env.Scope(in)
 	subscriptions, err := h.env.PushSubscriptions()
 	if err != nil {
-		return msg.Reply(ctx, "读取订阅失败："+err.Error())
+		return r.Reply(ctx, "读取订阅失败："+err.Error())
 	}
 	sub, ok := subscriptions[scope]
 	if !ok || !sub.Enabled {
-		return msg.Reply(ctx, "本会话还没有开启推送，请先发送 /启用推送。")
+		return r.Reply(ctx, "本会话还没有开启推送，请先发送 /启用推送。")
 	}
 
-	argument := strings.TrimSpace(msg.Args)
+	argument := strings.TrimSpace(in.Args)
 	if argument == "" {
 		current := h.env.PushCronFor(sub)
 		if strings.TrimSpace(sub.Cron) == "" {
-			return msg.Reply(ctx, "本会话的推送时间是 "+pushTimeText(current)+"（默认时间）。\n修改：/推送时间 07:30 或 /推送时间 30 7 * * *。")
+			return r.Reply(ctx, "本会话的推送时间是 "+pushTimeText(current)+"（默认时间）。\n修改：/推送时间 07:30 或 /推送时间 30 7 * * *。")
 		}
-		return msg.Reply(ctx, "本会话的推送时间是 "+pushTimeText(current)+"（自定义）。\n恢复默认：/推送时间 默认。")
+		return r.Reply(ctx, "本会话的推送时间是 "+pushTimeText(current)+"（自定义）。\n恢复默认：/推送时间 默认。")
 	}
 	switch strings.ToLower(argument) {
 	case "默认", "default", "重置":
@@ -493,50 +493,50 @@ func (h *Handler) handlePushTime(ctx context.Context, msg *Message) error {
 	default:
 		spec, parseErr := parsePushTime(argument)
 		if parseErr != nil {
-			return msg.Reply(ctx, parseErr.Error())
+			return r.Reply(ctx, parseErr.Error())
 		}
 		sub.Cron = spec
 	}
 	if err := h.env.SetPushSubscription(scope, sub); err != nil {
-		return msg.Reply(ctx, "保存失败："+err.Error())
+		return r.Reply(ctx, "保存失败："+err.Error())
 	}
 	if strings.TrimSpace(sub.Cron) == "" {
-		return msg.Reply(ctx, "已恢复默认推送时间："+pushTimeText(h.env.PushCron)+"。")
+		return r.Reply(ctx, "已恢复默认推送时间："+pushTimeText(h.env.PushCron)+"。")
 	}
-	return msg.Reply(ctx, "已设置本会话的推送时间为 "+pushTimeText(sub.Cron)+"。")
+	return r.Reply(ctx, "已设置本会话的推送时间为 "+pushTimeText(sub.Cron)+"。")
 }
 
-func (h *Handler) handleSyncPanelCommand(ctx context.Context, msg *Message) error {
+func (h *Handler) handleSyncPanelCommand(ctx context.Context, in *Inbound, r *Replier) error {
 	if h.env == nil {
-		return msg.Reply(ctx, "课表功能未初始化。")
+		return r.Reply(ctx, "课表功能未初始化。")
 	}
-	if !msg.IsAdmin() {
-		return msg.Reply(ctx, "只有群管理员可以同步指令面板。")
+	if !in.IsAdmin() {
+		return r.Reply(ctx, "只有群管理员可以同步指令面板。")
 	}
 	created, updated, err := SyncPanels(ctx, h.env, h)
 	if err != nil {
-		return msg.Reply(ctx, "同步指令面板失败："+err.Error())
+		return r.Reply(ctx, "同步指令面板失败："+err.Error())
 	}
-	return msg.Reply(ctx, fmt.Sprintf("指令面板已同步：新建 %d 个，更新 %d 个。", created, updated))
+	return r.Reply(ctx, fmt.Sprintf("指令面板已同步：新建 %d 个，更新 %d 个。", created, updated))
 }
 
-func handleDayCard(ctx context.Context, env *Env, msg *Message, day *time.Time) error {
+func handleDayCard(ctx context.Context, env *Env, in *Inbound, r *Replier, day *time.Time) error {
 	if env == nil {
-		return msg.Reply(ctx, "课表功能未初始化。")
+		return r.Reply(ctx, "课表功能未初始化。")
 	}
 	target := env.now()
 	if day != nil {
 		target = *day
 	}
-	url, ok, err := env.RenderDayCard(ctx, msg, target)
+	url, ok, err := env.RenderDayCard(ctx, in, r, target)
 	if err != nil {
 		return err
 	}
 	if !ok {
-		return msg.Reply(ctx, "当前会话还没有可展示的课程表。请先发送 /导入课表 并附加 .ics 文件。")
+		return r.Reply(ctx, "当前会话还没有可展示的课程表。请先发送 /导入课表 并附加 .ics 文件。")
 	}
-	keyboard := cardKeyboardForDay(target.Format("2006-01-02"), env.now().Format("2006-01-02"), msg.UserOpenID)
-	return env.SendCard(ctx, msg, url, keyboard)
+	keyboard := cardKeyboardForDay(target.Format("2006-01-02"), env.now().Format("2006-01-02"), in.UserOpenID)
+	return env.SendCard(ctx, in, r, url, keyboard)
 }
 
 func toScheduleMentions(mentions []Mention) []schedule.Mention {

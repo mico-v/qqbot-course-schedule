@@ -9,13 +9,14 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/mico-v/qqbot-course-schedule/internal/schedule"
 
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 2
+const schemaVersion = 3
 
 // Store is the SQLite-backed implementation of schedule.Storage.
 type Store struct {
@@ -116,6 +117,22 @@ func (s *Store) migrate() error {
 			PRIMARY KEY (scope_id, user_id, day)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_schedule_day_overrides_scope ON schedule_day_overrides(scope_id, day)`,
+		`CREATE TABLE IF NOT EXISTS message_stats (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			scope_id TEXT NOT NULL DEFAULT '',
+			origin TEXT NOT NULL DEFAULT '',
+			command TEXT NOT NULL DEFAULT '',
+			user_id TEXT NOT NULL DEFAULT '',
+			stage TEXT NOT NULL DEFAULT '',
+			received_at TEXT NOT NULL DEFAULT '',
+			render_ms INTEGER NOT NULL DEFAULT 0,
+			upload_ms INTEGER NOT NULL DEFAULT 0,
+			send_ms INTEGER NOT NULL DEFAULT 0,
+			server_ms INTEGER NOT NULL DEFAULT 0,
+			ok INTEGER NOT NULL DEFAULT 1,
+			err_code TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_message_stats_received ON message_stats(received_at)`,
 		`CREATE TABLE IF NOT EXISTS kv_data (
 			scope TEXT NOT NULL,
 			namespace TEXT NOT NULL,
@@ -644,4 +661,86 @@ func (s *Store) DeleteKV(scope, namespace, key string) error {
 		return fmt.Errorf("删除 KV 失败: %w", err)
 	}
 	return nil
+}
+
+// InsertMessageStats appends one handling record.
+func (s *Store) InsertMessageStats(record schedule.MessageStats) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec(
+		`INSERT INTO message_stats(
+			scope_id, origin, command, user_id, stage, received_at,
+			render_ms, upload_ms, send_ms, server_ms, ok, err_code)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		record.ScopeID, record.Origin, record.Command, record.UserID, string(record.Stage),
+		record.ReceivedAt.UTC().Format(time.RFC3339Nano),
+		record.RenderMS, record.UploadMS, record.SendMS, record.ServerMS,
+		boolToInt(record.OK), record.ErrCode,
+	)
+	if err != nil {
+		return fmt.Errorf("写入耗时统计失败: %w", err)
+	}
+	return nil
+}
+
+// ListMessageStats returns records received at or after since, newest last.
+// An empty scopeID means every scope.
+func (s *Store) ListMessageStats(since time.Time, scopeID string) ([]schedule.MessageStats, error) {
+	query := `SELECT scope_id, origin, command, user_id, stage, received_at,
+		render_ms, upload_ms, send_ms, server_ms, ok, err_code
+		FROM message_stats WHERE received_at >= ?`
+	args := []any{since.UTC().Format(time.RFC3339Nano)}
+	if scopeID != "" {
+		query += ` AND scope_id = ?`
+		args = append(args, scopeID)
+	}
+	query += ` ORDER BY received_at`
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("读取耗时统计失败: %w", err)
+	}
+	defer rows.Close()
+	var records []schedule.MessageStats
+	for rows.Next() {
+		var record schedule.MessageStats
+		var stage, receivedAt string
+		var ok int
+		if err := rows.Scan(
+			&record.ScopeID, &record.Origin, &record.Command, &record.UserID, &stage, &receivedAt,
+			&record.RenderMS, &record.UploadMS, &record.SendMS, &record.ServerMS, &ok, &record.ErrCode,
+		); err != nil {
+			return nil, fmt.Errorf("读取耗时统计行失败: %w", err)
+		}
+		record.Stage = schedule.StatsStage(stage)
+		record.OK = ok != 0
+		record.ReceivedAt, _ = time.Parse(time.RFC3339Nano, receivedAt)
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
+// PruneMessageStats deletes records received before the cutoff and reports how
+// many rows went away.
+func (s *Store) PruneMessageStats(before time.Time) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	result, err := s.db.Exec(
+		`DELETE FROM message_stats WHERE received_at < ?`,
+		before.UTC().Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return 0, fmt.Errorf("清理耗时统计失败: %w", err)
+	}
+	removed, err := result.RowsAffected()
+	if err != nil {
+		return 0, nil
+	}
+	return int(removed), nil
+}
+
+func boolToInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }

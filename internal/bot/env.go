@@ -38,6 +38,9 @@ type Env struct {
 	lastAvatarTry atomic.Int64
 	avatarTrying  atomic.Bool
 
+	lastStatsPrune atomic.Int64
+	statsPruning   atomic.Bool
+
 	avatarMu    sync.Mutex
 	avatarCache map[string]avatarCacheEntry
 }
@@ -123,12 +126,23 @@ func (e *Env) now() time.Time {
 	return time.Now().In(schedule.LocalTZ)
 }
 
+// newReplier builds a replier for one inbound message with the recorder
+// installed, so every send path reports its timing without the replier needing
+// a back-reference to Env.
+func (e *Env) newReplier(ctx context.Context, in *Inbound) *Replier {
+	r := NewReplier(in, e.Client)
+	return r.WithRecorder(ctx, e.recordStats)
+}
+
 // Scope returns the schedule scope for a message.
-func (e *Env) Scope(msg *Message) string {
-	if msg.Origin == OriginPrivate {
-		return schedule.ScopePrivate(msg.UserOpenID)
+func (e *Env) Scope(in *Inbound) string {
+	if in == nil {
+		return ""
 	}
-	return schedule.ScopeGroup(msg.GroupOpenID)
+	if in.Origin == OriginPrivate {
+		return schedule.ScopePrivate(in.UserOpenID)
+	}
+	return schedule.ScopeGroup(in.GroupOpenID)
 }
 
 // PublicImageURL builds the public URL of a generated card.
@@ -136,12 +150,13 @@ func (e *Env) PublicImageURL(name string) string {
 	return strings.TrimRight(e.PublicBaseURL, "/") + "/images/" + name
 }
 
-// RenderDayCard builds and saves the card for one day.
+// RenderDayCard builds and saves the card for one day, recording how long the
+// render stage took on the replier.
 // ok is false when the scope has no saved schedules.
-func (e *Env) RenderDayCard(ctx context.Context, msg *Message, day time.Time) (string, bool, error) {
-	_ = ctx
+func (e *Env) RenderDayCard(ctx context.Context, in *Inbound, r *Replier, day time.Time) (string, bool, error) {
+	start := time.Now()
 	e.EnsureBotAvatar()
-	card, ok, err := e.Service.BuildDayCard(e.Scope(msg), day, e.now())
+	card, ok, err := e.Service.BuildDayCard(e.Scope(in), day, e.now())
 	if err != nil || !ok {
 		return "", ok, err
 	}
@@ -149,16 +164,20 @@ func (e *Env) RenderDayCard(ctx context.Context, msg *Message, day time.Time) (s
 		Title:         card.Title,
 		Subtitle:      card.Subtitle,
 		FoldedTitle:   card.FoldedTitle,
-		Footer:        card.Footer,
+		Footer:        renderFooterText(card.Footer),
 		Rows:          card.Rows,
 		Folded:        card.Folded,
 		BotAvatar:     e.BotAvatar(),
-		Avatars:       e.MemberAvatars(ctx, e.Scope(msg), rowUserIDs(card.Rows, card.Folded)),
+		Avatars:       e.MemberAvatars(ctx, e.Scope(in), rowUserIDs(card.Rows, card.Folded)),
 		DurationLabel: "本节持续",
+		FooterSince:   renderStart(in, start),
 	})
 	name, err := render.SaveJPEG(image, e.ImagesDir, "schedule_"+card.Selected.Format("20060102"))
 	if err != nil {
 		return "", false, fmt.Errorf("保存课表图片失败: %w", err)
+	}
+	if r != nil {
+		r.markRender(start)
 	}
 	return e.PublicImageURL(name), true, nil
 }
@@ -166,41 +185,50 @@ func (e *Env) RenderDayCard(ctx context.Context, msg *Message, day time.Time) (s
 // SendCard sends a card image. When buttons are enabled it uses a markdown
 // message (the only message type that renders keyboards) and falls back to a
 // media message when the platform rejects the keyboard.
-func (e *Env) SendCard(ctx context.Context, msg *Message, imageURL string, keyboard *qqapi.Keyboard) error {
+func (e *Env) SendCard(ctx context.Context, in *Inbound, r *Replier, imageURL string, keyboard *qqapi.Keyboard) error {
+	start := time.Now()
 	if e.Buttons && keyboard != nil {
 		content := fmt.Sprintf("![课程表 #1240px #850px](%s)", imageURL)
 		var err error
-		if msg.MsgID == "" && msg.EventID != "" {
-			if msg.Origin == OriginGroup {
-				err = e.Client.SendGroupMarkdownEvent(ctx, msg.GroupOpenID, content, keyboard, msg.EventID)
+		if in.MsgID == "" && in.EventID != "" {
+			if in.Origin == OriginGroup {
+				err = e.Client.SendGroupMarkdownEvent(ctx, in.GroupOpenID, content, keyboard, in.EventID)
 			} else {
-				err = e.Client.SendC2CMarkdownEvent(ctx, msg.UserOpenID, content, keyboard, msg.EventID)
+				err = e.Client.SendC2CMarkdownEvent(ctx, in.UserOpenID, content, keyboard, in.EventID)
 			}
 		} else {
-			seq, seqErr := msg.nextSeq()
+			seq, seqErr := r.NextSeq()
 			if seqErr != nil {
 				return seqErr
 			}
-			if msg.Origin == OriginGroup {
-				err = e.Client.SendGroupMarkdown(ctx, msg.GroupOpenID, content, keyboard, msg.MsgID, seq)
+			if in.Origin == OriginGroup {
+				err = e.Client.SendGroupMarkdown(ctx, in.GroupOpenID, content, keyboard, in.MsgID, seq)
 			} else {
-				err = e.Client.SendC2CMarkdown(ctx, msg.UserOpenID, content, keyboard, msg.MsgID, seq)
+				err = e.Client.SendC2CMarkdown(ctx, in.UserOpenID, content, keyboard, in.MsgID, seq)
 			}
 		}
 		if err == nil {
+			r.markSend(start, r.renderDone)
+			e.recordStats(ctx, in, r, schedule.StatsStageCard, nil)
 			return nil
 		}
 		slog.Warn("markdown 卡片发送失败，回退为媒体消息", "err", err)
 	}
-	return msg.ReplyImage(ctx, imageURL)
+	// ReplyImage measures and reports the send stage itself. Do not re-measure
+	// here: a second markSend would rewrite send_ms from a later origin, and the
+	// reply-stage record it already filed would outrank the card record.
+	err := r.ReplyImage(ctx, imageURL)
+	e.recordStats(ctx, in, r, schedule.StatsStageCard, err)
+	return err
 }
 
-// RenderRankCard builds and saves the class-hours leaderboard for one period.
+// RenderRankCard builds and saves the class-hours leaderboard for one period,
+// recording how long the render stage took on the replier.
 // ok is false when the scope has no countable courses.
-func (e *Env) RenderRankCard(ctx context.Context, msg *Message, period string) (string, bool, error) {
-	_ = ctx
+func (e *Env) RenderRankCard(ctx context.Context, in *Inbound, r *Replier, period string) (string, bool, error) {
+	start := time.Now()
 	e.EnsureBotAvatar()
-	rows, label, err := e.Service.RankBoardRows(e.Scope(msg), period, e.now())
+	rows, label, err := e.Service.RankBoardRows(e.Scope(in), period, e.now())
 	if err != nil {
 		return "", false, err
 	}
@@ -247,21 +275,26 @@ func (e *Env) RenderRankCard(ctx context.Context, msg *Message, period string) (
 	if len(rows) > len(shown) {
 		footer += fmt.Sprintf(" · 仅展示前 %d 名", len(shown))
 	}
+	footer = renderFooterText(footer)
 	image := e.Renderer.DayCard(render.DayCardData{
 		Title:    "群友上课时长榜",
 		Subtitle: fmt.Sprintf("%s · 共 %d 位成员 · 合计 %s", label, len(rows), schedule.FormatDurationMinutes(total)),
 		Footer:   footer,
 		Rows:     dayRows,
-		Avatars:  e.MemberAvatars(ctx, e.Scope(msg), rowUserIDs(dayRows)),
+		Avatars:  e.MemberAvatars(ctx, e.Scope(in), rowUserIDs(dayRows)),
 		Legend: []render.LegendItem{
 			{Key: "none", Label: "同一时段冲突的课程只计一次"},
 			{Key: "none", Label: "全天日程不计入时长"},
 		},
-		BotAvatar: e.BotAvatar(),
+		BotAvatar:   e.BotAvatar(),
+		FooterSince: renderStart(in, start),
 	})
 	name, err := render.SaveJPEG(image, e.ImagesDir, "rank_"+label)
 	if err != nil {
 		return "", false, fmt.Errorf("保存榜单图片失败: %w", err)
+	}
+	if r != nil {
+		r.markRender(start)
 	}
 	return e.PublicImageURL(name), true, nil
 }
@@ -272,4 +305,55 @@ func (e *Env) ImagesDirectory() string {
 		return e.ImagesDir
 	}
 	return filepath.Join(e.DataDir, "images")
+}
+
+// renderFooterText appends the render-timing placeholder to a card footer. The
+// renderer substitutes the measured value while drawing, because the duration
+// is not known until the card has been built.
+func renderFooterText(footer string) string {
+	suffix := render.FooterTimingPlaceholder
+	if strings.TrimSpace(footer) == "" {
+		return suffix
+	}
+	return footer + " · " + suffix
+}
+
+// renderStart is the origin the card's render timing is measured from: the
+// moment the message arrived, falling back to the current call's start.
+func renderStart(in *Inbound, fallback time.Time) time.Time {
+	if in != nil {
+		if at := in.ReceivedAt(); !at.IsZero() {
+			return at
+		}
+	}
+	return fallback
+}
+
+// statsPruneInterval is how often expired handling records are swept. The tick
+// itself is every minute, so a hour-sized throttle keeps the sweep cheap.
+const statsPruneInterval = time.Hour
+
+// pruneStats drops handling records past their retention, at most once per
+// statsPruneInterval. Failures are logged and never disturb the push tick.
+func (e *Env) pruneStats(now time.Time) {
+	if e == nil || e.Service == nil {
+		return
+	}
+	last := e.lastStatsPrune.Load()
+	if last != 0 && now.Sub(time.Unix(0, last)) < statsPruneInterval {
+		return
+	}
+	if !e.statsPruning.CompareAndSwap(false, true) {
+		return
+	}
+	defer e.statsPruning.Store(false)
+	e.lastStatsPrune.Store(now.UnixNano())
+	removed, err := e.Service.PruneMessageStats(now)
+	if err != nil {
+		slog.Warn("清理耗时统计失败", "err", err)
+		return
+	}
+	if removed > 0 {
+		slog.Info("已清理过期的处理耗时记录", "removed", removed)
+	}
 }

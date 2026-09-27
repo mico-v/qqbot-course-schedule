@@ -25,7 +25,8 @@ func TestEnableDisablePushAndPushDaily(t *testing.T) {
 	handler := NewDefaultHandler(env)
 	ctx := context.Background()
 
-	if err := env.ImportICS(ctx, freshMessage(base), Attachment{URL: icsServer.URL + "/s.ics", Filename: "s.ics"}); err != nil {
+	freshImport := freshMessage(base)
+	if err := env.ImportICS(ctx, freshImport, NewReplier(freshImport, env.Client), Attachment{URL: icsServer.URL + "/s.ics", Filename: "s.ics"}); err != nil {
 		t.Fatal(err)
 	}
 	_ = waitMessage(t, fake)
@@ -33,7 +34,7 @@ func TestEnableDisablePushAndPushDaily(t *testing.T) {
 	// A normal member cannot enable the group push.
 	member := freshMessage(base)
 	member.Content = "/启用推送"
-	handler.Dispatch(ctx, member)
+	dispatch(ctx, env, handler, member)
 	reply := waitMessage(t, fake)
 	if content, _ := reply["content"].(string); !strings.Contains(content, "只有群管理员") {
 		t.Fatalf("member reply = %q", content)
@@ -43,7 +44,7 @@ func TestEnableDisablePushAndPushDaily(t *testing.T) {
 	owner := freshMessage(base)
 	owner.MemberRole = "owner"
 	owner.Content = "/启用推送"
-	handler.Dispatch(ctx, owner)
+	dispatch(ctx, env, handler, owner)
 	reply = waitMessage(t, fake)
 	if content, _ := reply["content"].(string); !strings.Contains(content, "已开启每日课表推送（每天 07:30）") {
 		t.Fatalf("owner reply = %q", content)
@@ -66,7 +67,7 @@ func TestEnableDisablePushAndPushDaily(t *testing.T) {
 	disable := freshMessage(base)
 	disable.MemberRole = "owner"
 	disable.Content = "/关闭推送"
-	handler.Dispatch(ctx, disable)
+	dispatch(ctx, env, handler, disable)
 	reply = waitMessage(t, fake)
 	if content, _ := reply["content"].(string); !strings.Contains(content, "已关闭") {
 		t.Fatalf("disable reply = %q", content)
@@ -117,7 +118,8 @@ func TestHandleCallbackRendersRequestedDay(t *testing.T) {
 	env, base := newTestEnv(t, fake, apiServer.URL)
 	handler := NewDefaultHandler(env)
 	ctx := context.Background()
-	if err := env.ImportICS(ctx, freshMessage(base), Attachment{URL: icsServer.URL + "/s.ics", Filename: "s.ics"}); err != nil {
+	freshImport := freshMessage(base)
+	if err := env.ImportICS(ctx, freshImport, NewReplier(freshImport, env.Client), Attachment{URL: icsServer.URL + "/s.ics", Filename: "s.ics"}); err != nil {
 		t.Fatal(err)
 	}
 	_ = waitMessage(t, fake)
@@ -162,7 +164,8 @@ func TestPushDuePerScopeCron(t *testing.T) {
 
 	env, base := newTestEnv(t, fake, apiServer.URL)
 	ctx := context.Background()
-	if err := env.ImportICS(ctx, freshMessage(base), Attachment{URL: icsServer.URL + "/s.ics", Filename: "s.ics"}); err != nil {
+	freshImport := freshMessage(base)
+	if err := env.ImportICS(ctx, freshImport, NewReplier(freshImport, env.Client), Attachment{URL: icsServer.URL + "/s.ics", Filename: "s.ics"}); err != nil {
 		t.Fatal(err)
 	}
 	_ = waitMessage(t, fake)
@@ -218,7 +221,8 @@ func TestPushTimeCommand(t *testing.T) {
 	env, base := newTestEnv(t, fake, apiServer.URL)
 	handler := NewDefaultHandler(env)
 	ctx := context.Background()
-	if err := env.ImportICS(ctx, freshMessage(base), Attachment{URL: icsServer.URL + "/s.ics", Filename: "s.ics"}); err != nil {
+	freshImport := freshMessage(base)
+	if err := env.ImportICS(ctx, freshImport, NewReplier(freshImport, env.Client), Attachment{URL: icsServer.URL + "/s.ics", Filename: "s.ics"}); err != nil {
 		t.Fatal(err)
 	}
 	_ = waitMessage(t, fake)
@@ -227,7 +231,7 @@ func TestPushTimeCommand(t *testing.T) {
 	msg := freshMessage(base)
 	msg.MemberRole = "owner"
 	msg.Content = "/推送时间"
-	handler.Dispatch(ctx, msg)
+	dispatch(ctx, env, handler, msg)
 	reply := waitMessage(t, fake)
 	if content, _ := reply["content"].(string); !strings.Contains(content, "请先发送 /启用推送") {
 		t.Fatalf("reply = %q", content)
@@ -236,13 +240,13 @@ func TestPushTimeCommand(t *testing.T) {
 	enable := freshMessage(base)
 	enable.MemberRole = "owner"
 	enable.Content = "/启用推送"
-	handler.Dispatch(ctx, enable)
+	dispatch(ctx, env, handler, enable)
 	_ = waitMessage(t, fake)
 
 	// Normal members cannot change the group time.
 	member := freshMessage(base)
 	member.Content = "/推送时间 08:15"
-	handler.Dispatch(ctx, member)
+	dispatch(ctx, env, handler, member)
 	reply = waitMessage(t, fake)
 	if content, _ := reply["content"].(string); !strings.Contains(content, "只有群管理员") {
 		t.Fatalf("member reply = %q", content)
@@ -251,7 +255,7 @@ func TestPushTimeCommand(t *testing.T) {
 	set := freshMessage(base)
 	set.MemberRole = "owner"
 	set.Content = "/推送时间 08:15"
-	handler.Dispatch(ctx, set)
+	dispatch(ctx, env, handler, set)
 	reply = waitMessage(t, fake)
 	if content, _ := reply["content"].(string); !strings.Contains(content, "每天 08:15") {
 		t.Fatalf("set reply = %q", content)
@@ -267,7 +271,7 @@ func TestPushTimeCommand(t *testing.T) {
 	show := freshMessage(base)
 	show.MemberRole = "owner"
 	show.Content = "/推送时间"
-	handler.Dispatch(ctx, show)
+	dispatch(ctx, env, handler, show)
 	reply = waitMessage(t, fake)
 	if content, _ := reply["content"].(string); !strings.Contains(content, "每天 08:15") || !strings.Contains(content, "自定义") {
 		t.Fatalf("show reply = %q", content)
@@ -276,7 +280,7 @@ func TestPushTimeCommand(t *testing.T) {
 	bad := freshMessage(base)
 	bad.MemberRole = "owner"
 	bad.Content = "/推送时间 25:99"
-	handler.Dispatch(ctx, bad)
+	dispatch(ctx, env, handler, bad)
 	reply = waitMessage(t, fake)
 	if content, _ := reply["content"].(string); !strings.Contains(content, "HH:MM") {
 		t.Fatalf("bad reply = %q", content)
@@ -285,7 +289,7 @@ func TestPushTimeCommand(t *testing.T) {
 	reset := freshMessage(base)
 	reset.MemberRole = "owner"
 	reset.Content = "/推送时间 默认"
-	handler.Dispatch(ctx, reset)
+	dispatch(ctx, env, handler, reset)
 	reply = waitMessage(t, fake)
 	if content, _ := reply["content"].(string); !strings.Contains(content, "每天 07:30") {
 		t.Fatalf("reset reply = %q", content)
@@ -306,7 +310,8 @@ func TestPushTestCommand(t *testing.T) {
 	env, base := newTestEnv(t, fake, apiServer.URL)
 	handler := NewDefaultHandler(env)
 	ctx := context.Background()
-	if err := env.ImportICS(ctx, freshMessage(base), Attachment{URL: icsServer.URL + "/s.ics", Filename: "s.ics"}); err != nil {
+	freshImport := freshMessage(base)
+	if err := env.ImportICS(ctx, freshImport, NewReplier(freshImport, env.Client), Attachment{URL: icsServer.URL + "/s.ics", Filename: "s.ics"}); err != nil {
 		t.Fatal(err)
 	}
 	_ = waitMessage(t, fake)
@@ -315,7 +320,7 @@ func TestPushTestCommand(t *testing.T) {
 	msg := freshMessage(base)
 	msg.MemberRole = "owner"
 	msg.Content = "/推送测试"
-	handler.Dispatch(ctx, msg)
+	dispatch(ctx, env, handler, msg)
 	reply := waitMessage(t, fake)
 	if content, _ := reply["content"].(string); !strings.Contains(content, "请先发送 /启用推送") {
 		t.Fatalf("reply = %q", content)
@@ -325,13 +330,13 @@ func TestPushTestCommand(t *testing.T) {
 	enable := freshMessage(base)
 	enable.MemberRole = "owner"
 	enable.Content = "/启用推送"
-	handler.Dispatch(ctx, enable)
+	dispatch(ctx, env, handler, enable)
 	_ = waitMessage(t, fake)
 
 	test := freshMessage(base)
 	test.MemberRole = "owner"
 	test.Content = "/推送测试"
-	handler.Dispatch(ctx, test)
+	dispatch(ctx, env, handler, test)
 	card := waitMessage(t, fake)
 	if msgType, _ := card["msg_type"].(float64); msgType != 7 {
 		t.Fatalf("push test card = %+v", card)

@@ -26,13 +26,14 @@ func TestBindQQCommand(t *testing.T) {
 	// Without a schedule the command explains what to do.
 	msg := freshMessage(base)
 	msg.Content = "/绑定QQ 123456789"
-	handler.Dispatch(ctx, msg)
+	dispatch(ctx, env, handler, msg)
 	reply := waitMessage(t, fake)
 	if content, _ := reply["content"].(string); !strings.Contains(content, "还没有课表") {
 		t.Fatalf("reply = %q", content)
 	}
 
-	if err := env.ImportICS(ctx, freshMessage(base), Attachment{URL: icsServer.URL + "/s.ics", Filename: "s.ics"}); err != nil {
+	freshImport := freshMessage(base)
+	if err := env.ImportICS(ctx, freshImport, NewReplier(freshImport, env.Client), Attachment{URL: icsServer.URL + "/s.ics", Filename: "s.ics"}); err != nil {
 		t.Fatal(err)
 	}
 	_ = waitMessage(t, fake)
@@ -40,7 +41,7 @@ func TestBindQQCommand(t *testing.T) {
 	// Show, bind, show again.
 	show := freshMessage(base)
 	show.Content = "/绑定QQ"
-	handler.Dispatch(ctx, show)
+	dispatch(ctx, env, handler, show)
 	reply = waitMessage(t, fake)
 	if content, _ := reply["content"].(string); !strings.Contains(content, "未绑定") {
 		t.Fatalf("show reply = %q", content)
@@ -48,7 +49,7 @@ func TestBindQQCommand(t *testing.T) {
 
 	bind := freshMessage(base)
 	bind.Content = "/绑定QQ 123456789"
-	handler.Dispatch(ctx, bind)
+	dispatch(ctx, env, handler, bind)
 	reply = waitMessage(t, fake)
 	if content, _ := reply["content"].(string); !strings.Contains(content, "已绑定 QQ 123456789") {
 		t.Fatalf("bind reply = %q", content)
@@ -60,7 +61,7 @@ func TestBindQQCommand(t *testing.T) {
 
 	invalid := freshMessage(base)
 	invalid.Content = "/绑定QQ 12ab"
-	handler.Dispatch(ctx, invalid)
+	dispatch(ctx, env, handler, invalid)
 	reply = waitMessage(t, fake)
 	if content, _ := reply["content"].(string); !strings.Contains(content, "绑定失败") {
 		t.Fatalf("invalid reply = %q", content)
@@ -68,7 +69,7 @@ func TestBindQQCommand(t *testing.T) {
 
 	unbind := freshMessage(base)
 	unbind.Content = "/解绑QQ"
-	handler.Dispatch(ctx, unbind)
+	dispatch(ctx, env, handler, unbind)
 	reply = waitMessage(t, fake)
 	if content, _ := reply["content"].(string); !strings.Contains(content, "已解除 QQ 绑定") {
 		t.Fatalf("unbind reply = %q", content)

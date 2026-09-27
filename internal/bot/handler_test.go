@@ -11,13 +11,13 @@ func TestDispatchStripsMentionAndRoutes(t *testing.T) {
 	var got string
 	handler.Register(&Command{
 		Prefix: "/ping",
-		Handle: func(_ context.Context, msg *Message) error {
+		Handle: func(_ context.Context, msg *Inbound, _ *Replier) error {
 			got = msg.Content
 			return nil
 		},
 	})
 
-	handler.Dispatch(context.Background(), &Message{Content: "<@!abc123>   /ping 参数一"})
+	dispatch(context.Background(), nil, handler, &Inbound{Content: "<@!abc123>   /ping 参数一"})
 	if got != "/ping 参数一" {
 		t.Fatalf("content = %q, want %q", got, "/ping 参数一")
 	}
@@ -28,12 +28,12 @@ func TestDispatchAcceptsCommandWithoutSlash(t *testing.T) {
 	called := false
 	handler.Register(&Command{
 		Prefix: "/课表",
-		Handle: func(_ context.Context, _ *Message) error {
+		Handle: func(_ context.Context, _ *Inbound, _ *Replier) error {
 			called = true
 			return nil
 		},
 	})
-	handler.Dispatch(context.Background(), &Message{Content: "课表 明天"})
+	dispatch(context.Background(), nil, handler, &Inbound{Content: "课表 明天"})
 	if !called {
 		t.Fatal("slash-less command did not reach the handler")
 	}
@@ -44,13 +44,13 @@ func TestDispatchIgnoresUnknownCommand(t *testing.T) {
 	called := false
 	handler.Register(&Command{
 		Prefix: "/ping",
-		Handle: func(_ context.Context, _ *Message) error {
+		Handle: func(_ context.Context, _ *Inbound, _ *Replier) error {
 			called = true
 			return nil
 		},
 	})
 
-	handler.Dispatch(context.Background(), &Message{Content: "你好啊"})
+	dispatch(context.Background(), nil, handler, &Inbound{Content: "你好啊"})
 	if called {
 		t.Fatal("handler must not run for unknown content")
 	}
@@ -59,16 +59,16 @@ func TestDispatchIgnoresUnknownCommand(t *testing.T) {
 func TestRegisterReplacesDuplicatePrefix(t *testing.T) {
 	handler := NewHandler()
 	var calls []string
-	handler.Register(&Command{Prefix: "/x", Handle: func(_ context.Context, _ *Message) error {
+	handler.Register(&Command{Prefix: "/x", Handle: func(_ context.Context, _ *Inbound, _ *Replier) error {
 		calls = append(calls, "first")
 		return nil
 	}})
-	handler.Register(&Command{Prefix: "/x", Handle: func(_ context.Context, _ *Message) error {
+	handler.Register(&Command{Prefix: "/x", Handle: func(_ context.Context, _ *Inbound, _ *Replier) error {
 		calls = append(calls, "second")
 		return nil
 	}})
 
-	handler.Dispatch(context.Background(), &Message{Content: "/x"})
+	dispatch(context.Background(), nil, handler, &Inbound{Content: "/x"})
 	if len(calls) != 1 || calls[0] != "second" {
 		t.Fatalf("calls = %v, want [second]", calls)
 	}
@@ -76,8 +76,8 @@ func TestRegisterReplacesDuplicatePrefix(t *testing.T) {
 
 func TestCommandsAreSorted(t *testing.T) {
 	handler := NewHandler()
-	handler.Register(&Command{Prefix: "/b", Handle: func(_ context.Context, _ *Message) error { return nil }})
-	handler.Register(&Command{Prefix: "/a", Handle: func(_ context.Context, _ *Message) error { return nil }})
+	handler.Register(&Command{Prefix: "/b", Handle: func(_ context.Context, _ *Inbound, _ *Replier) error { return nil }})
+	handler.Register(&Command{Prefix: "/a", Handle: func(_ context.Context, _ *Inbound, _ *Replier) error { return nil }})
 
 	commands := handler.Commands()
 	if len(commands) != 2 || commands[0].Prefix != "/a" || commands[1].Prefix != "/b" {
@@ -86,9 +86,9 @@ func TestCommandsAreSorted(t *testing.T) {
 }
 
 func TestPassiveReplyLimit(t *testing.T) {
-	msg := &Message{}
+	r := NewReplier(&Inbound{}, nil)
 	for i := 1; i <= maxPassiveReplies; i++ {
-		seq, err := msg.nextSeq()
+		seq, err := r.NextSeq()
 		if err != nil {
 			t.Fatalf("reply %d: %v", i, err)
 		}
@@ -96,7 +96,7 @@ func TestPassiveReplyLimit(t *testing.T) {
 			t.Fatalf("seq = %d, want %d", seq, i)
 		}
 	}
-	if _, err := msg.nextSeq(); !errors.Is(err, ErrPassiveLimit) {
+	if _, err := r.NextSeq(); !errors.Is(err, ErrPassiveLimit) {
 		t.Fatalf("err = %v, want ErrPassiveLimit", err)
 	}
 }
@@ -109,7 +109,7 @@ func TestAdminRoles(t *testing.T) {
 		"":       false,
 	}
 	for role, want := range cases {
-		msg := &Message{MemberRole: role}
+		msg := &Inbound{MemberRole: role}
 		if got := msg.IsAdmin(); got != want {
 			t.Errorf("role %q: IsAdmin() = %v, want %v", role, got, want)
 		}

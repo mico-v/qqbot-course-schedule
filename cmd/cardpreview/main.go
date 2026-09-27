@@ -82,21 +82,25 @@ func main() {
 		}
 	}
 
+	// Mirror Env.RenderDayCard: the timing placeholder is resolved by the
+	// renderer at draw time, so the preview shows the same footer production does.
+	previewSince := time.Now()
 	var image = renderer.DayCard(render.DayCardData{
 		Title:         "课程表 · 2026-09-17 周四",
-		Footer:        schedule.ScheduleFooter(time.Now(), time.Now()),
+		Footer:        schedule.ScheduleFooter(time.Now(), time.Now()) + " · " + render.FooterTimingPlaceholder,
 		FoldedTitle:   "今天已经没有课的群友",
 		Rows:          rows,
 		Folded:        folded,
 		DurationLabel: "本节持续",
 		BotAvatar:     avatar,
 		Avatars:       memberAvatars,
+		FooterSince:   previewSince,
 	})
 	if *rankMode {
 		image = renderer.DayCard(render.DayCardData{
 			Title:    "群友上课时长榜",
 			Subtitle: "2026-09-14..2026-09-20 · 共 4 位成员 · 合计 14小时30分钟",
-			Footer:   "重复课程按 RRULE 展开 · 时间以本地时区为准 · 仅展示前 20 名",
+			Footer:   "重复课程按 RRULE 展开 · 时间以本地时区为准 · 仅展示前 20 名 · " + render.FooterTimingPlaceholder,
 			Rows: []schedule.DayRow{
 				{UserID: "A1", Name: "小明", StatusKey: "rank1", Status: "#1", Course: "6小时30分钟", TimeText: "8 节 · 5 门课", Duration: "已上 3小时 / 共 6小时30分钟", Progress: 1, CountdownLabel: "时长占比", Countdown: "100%", CourseCount: 8},
 				{UserID: "B2", Name: "小红", StatusKey: "rank2", Status: "#2", Course: "5小时", TimeText: "6 节 · 4 门课", Duration: "已上 2小时 / 共 5小时", Progress: 0.77, CountdownLabel: "时长占比", Countdown: "77%", CourseCount: 6},
@@ -107,6 +111,7 @@ func main() {
 				{Key: "none", Label: "同一时段冲突的课程只计一次"},
 				{Key: "none", Label: "全天日程不计入时长"},
 			},
+			FooterSince: previewSince,
 		})
 	}
 
