@@ -1,9 +1,11 @@
-package schedule
+package admin
 
 import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/mico-v/qqbot-course-schedule/internal/schedule"
 )
 
 // Backup/import limits.
@@ -14,21 +16,21 @@ const (
 
 // BackupFile is the "原始备份" export format.
 type BackupFile struct {
-	Version    int              `json:"version"`
-	ScopeID    string           `json:"scope_id"`
-	ExportedAt string           `json:"exported_at"`
-	Members    []BackupMember   `json:"members"`
-	Overrides  []DayOverrideRow `json:"overrides"`
+	Version    int                       `json:"version"`
+	ScopeID    string                    `json:"scope_id"`
+	ExportedAt string                    `json:"exported_at"`
+	Members    []BackupMember            `json:"members"`
+	Overrides  []schedule.DayOverrideRow `json:"overrides"`
 }
 
 // BackupMember is one member inside a backup file.
 type BackupMember struct {
-	UserID string  `json:"user_id"`
-	Name   string  `json:"name"`
-	QQ     string  `json:"qq,omitempty"`
-	Source string  `json:"source"`
-	Events []Event `json:"events"`
-	ICS    string  `json:"ics,omitempty"`
+	UserID string           `json:"user_id"`
+	Name   string           `json:"name"`
+	QQ     string           `json:"qq,omitempty"`
+	Source string           `json:"source"`
+	Events []schedule.Event `json:"events"`
+	ICS    string           `json:"ics,omitempty"`
 }
 
 // ImportResult summarises a bulk import.
@@ -43,18 +45,18 @@ type ImportResult struct {
 
 // ExportBackup snapshots a scope (members + day overrides).
 func (s *Service) ExportBackup(scopeID string) (*BackupFile, error) {
-	members, err := s.store.GetScopeMembers(scopeID)
+	members, err := s.storage.GetScopeMembers(scopeID)
 	if err != nil {
 		return nil, err
 	}
-	overrides, err := s.store.ListDayOverrides(scopeID)
+	overrides, err := s.storage.ListDayOverrides(scopeID)
 	if err != nil {
 		return nil, err
 	}
 	backup := &BackupFile{
 		Version:    1,
 		ScopeID:    scopeID,
-		ExportedAt: NowISO(),
+		ExportedAt: schedule.NowISO(),
 		Overrides:  overrides,
 	}
 	ids := make([]string, 0, len(members))
@@ -94,7 +96,7 @@ func (s *Service) ImportBackup(scopeID string, backup *BackupFile, actor string)
 		if userID == "" {
 			continue
 		}
-		_, found, err := s.store.GetMember(scopeID, userID)
+		_, found, err := s.storage.GetMember(scopeID, userID)
 		if err != nil {
 			return nil, err
 		}
@@ -102,11 +104,11 @@ func (s *Service) ImportBackup(scopeID string, backup *BackupFile, actor string)
 		if name == "" {
 			name = userID
 		}
-		qq, qqErr := NormalizeQQ(entry.QQ)
+		qq, qqErr := schedule.NormalizeQQ(entry.QQ)
 		if qqErr != nil {
 			qq = ""
 		}
-		member := &Member{
+		member := &schedule.Member{
 			UserID:            userID,
 			Name:              name,
 			QQ:                qq,
@@ -114,13 +116,13 @@ func (s *Service) ImportBackup(scopeID string, backup *BackupFile, actor string)
 			ICS:               entry.ICS,
 			Source:            firstNonEmpty(entry.Source, "ics"),
 			EventCount:        len(entry.Events),
-			UpdatedAt:         NowISO(),
-			ScheduleUpdatedAt: NowISO(),
-			LastModifiedAt:    NowISO(),
+			UpdatedAt:         schedule.NowISO(),
+			ScheduleUpdatedAt: schedule.NowISO(),
+			LastModifiedAt:    schedule.NowISO(),
 			LastModifiedBy:    actor,
 		}
-		member.Schedule = FormatICSSchedule(member.Events)
-		if err := s.store.PutMember(scopeID, userID, member, nil); err != nil {
+		member.Schedule = schedule.FormatICSSchedule(member.Events)
+		if err := s.storage.PutMember(scopeID, userID, member, nil); err != nil {
 			return nil, err
 		}
 		result.MemberCount++
@@ -132,7 +134,7 @@ func (s *Service) ImportBackup(scopeID string, backup *BackupFile, actor string)
 		result.EventCount += len(member.Events)
 	}
 
-	if err := s.store.DeleteScopeDayOverrides(scopeID); err != nil {
+	if err := s.storage.DeleteScopeDayOverrides(scopeID); err != nil {
 		return nil, err
 	}
 	for _, override := range backup.Overrides {
@@ -140,9 +142,9 @@ func (s *Service) ImportBackup(scopeID string, backup *BackupFile, actor string)
 			continue
 		}
 		createdBy := firstNonEmpty(override.CreatedBy, actor)
-		createdAt := firstNonEmpty(override.CreatedAt, NowISO())
-		if err := s.store.SetDayOverride(scopeID, override.UserID, override.Day,
-			DayOverride{Kind: override.Kind, SourceDay: override.SourceDay}, createdBy, createdAt); err != nil {
+		createdAt := firstNonEmpty(override.CreatedAt, schedule.NowISO())
+		if err := s.storage.SetDayOverride(scopeID, override.UserID, override.Day,
+			schedule.DayOverride{Kind: override.Kind, SourceDay: override.SourceDay}, createdBy, createdAt); err != nil {
 			return nil, err
 		}
 		result.OverrideCount++

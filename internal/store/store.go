@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mico-v/qqbot-course-schedule/internal/admin"
 	"github.com/mico-v/qqbot-course-schedule/internal/schedule"
 
 	_ "modernc.org/sqlite"
@@ -23,6 +24,11 @@ type Store struct {
 	db *sql.DB
 	mu sync.Mutex
 }
+
+var (
+	_ schedule.Storage = (*Store)(nil)
+	_ admin.Storage    = (*Store)(nil)
+)
 
 // Open opens (and creates) the database at path.
 func Open(path string) (*Store, error) {
@@ -448,7 +454,7 @@ func (s *Store) PutMember(scopeID, userID string, member *schedule.Member, expec
 }
 
 // ListScopeSummaries returns every scope with its member rows.
-func (s *Store) ListScopeSummaries() ([]schedule.ScopeSummary, error) {
+func (s *Store) ListScopeSummaries() ([]admin.ScopeSummary, error) {
 	rows, err := s.db.Query(
 		`SELECT scope_id, user_id, data_json, revision FROM schedule_members ORDER BY scope_id, user_id`,
 	)
@@ -457,7 +463,7 @@ func (s *Store) ListScopeSummaries() ([]schedule.ScopeSummary, error) {
 	}
 	defer rows.Close()
 
-	var summaries []schedule.ScopeSummary
+	var summaries []admin.ScopeSummary
 	currentScope := ""
 	for rows.Next() {
 		var scopeID, userID, dataJSON string
@@ -466,7 +472,7 @@ func (s *Store) ListScopeSummaries() ([]schedule.ScopeSummary, error) {
 			return nil, fmt.Errorf("读取会话行失败: %w", err)
 		}
 		if currentScope != scopeID {
-			summaries = append(summaries, schedule.ScopeSummary{ScopeID: scopeID})
+			summaries = append(summaries, admin.ScopeSummary{ScopeID: scopeID})
 			currentScope = scopeID
 		}
 		var meta memberMeta
@@ -476,7 +482,7 @@ func (s *Store) ListScopeSummaries() ([]schedule.ScopeSummary, error) {
 			name = userID
 		}
 		last := &summaries[len(summaries)-1]
-		last.Members = append(last.Members, schedule.ScopeMemberSummary{
+		last.Members = append(last.Members, admin.ScopeMemberSummary{
 			UserID:     userID,
 			Name:       name,
 			EventCount: meta.EventCount,

@@ -531,8 +531,9 @@ web/    管理台前端
 
 - 5 个 API + 单页应用改造 + Basic Auth + 409 冲突。
 - 已交付：`internal/server/admin.go`（`/admin` 页面与 `/api/*`，Basic Auth，未设密码仅本机可访问）、
-  `internal/schedule/web.go`（会话汇总、成员读取/保存、批量建课表、revision 乐观锁、RAW_ICAL 保留、
-  观察成员记录）、`web/`（改造自插件 Pages，`fetch` 直连 API）。
+  `internal/admin/service.go` 与 `internal/admin/backup.go`（会话汇总、成员读取/保存、批量建课表、
+  管理台标记与备份恢复）、`internal/schedule/seen.go`（观察成员记录）、
+  `web/`（改造自插件 Pages，`fetch` 直连 API）。
 - 降级：官方群成员列表内邀不可用，`/api/members` 只返回与机器人互动过且无课表的成员，并在页面提示。
 - 验收：浏览器可增删改课程并持久化；并发保存出现 409 提示。
 

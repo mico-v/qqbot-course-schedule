@@ -3,7 +3,7 @@
 > 适用对象：本项目全部 Go 代码。
 > 配套文档：[PLAN.md](PLAN.md)（功能规格与决策记录）、[DEV-GUIDE.md](DEV-GUIDE.md)（开发手册）、[CLAUDE.md](CLAUDE.md)（速查约定）。
 > 本手册记录**架构评估结论**与**分阶段重构方案**，每条结论都标明证据（文件:行号），可直接核对。
-> 实施状态（2026-09-27）：阶段一已于 `05004bb` 完成；阶段二已完成，阶段三仍按需排期。
+> 实施状态（2026-09-27）：阶段一已于 `05004bb` 完成；阶段二、阶段三均已完成。
 
 ---
 
@@ -14,7 +14,7 @@
 | # | 设计 | 证据 |
 | --- | --- | --- |
 | G1 | `schedule` 是纯领域内核，对基础设施零依赖 | `go list -deps ./internal/schedule` 无 gin / sqlite / gg / cron；仅 `rrule-go` + `golang.org/x/text` |
-| G2 | 依赖倒置：不是领域依赖存储，而是存储实现 `schedule.Storage` | `internal/store/store.go:158` marshal `schedule.Member`；`internal/schedule/types.go:82` 定义接口 |
+| G2 | 依赖倒置：不是应用层依赖存储，而是存储适配器实现领域/管理端口 | `schedule.Storage` / `admin.Storage` 定义端口，`store.Store` 提供实现并保留编译期断言 |
 | G3 | 会话作用域（`group:`/`private:` + OpenID）三入口共用 | 指令、`/api/*`、批量导入共用同一表与校验 |
 | G4 | 指令集是单一事实来源，面板/菜单/help 全部派生 | `internal/bot/panel.go:116` `panelItems` 从 `handler.Commands()` 生成 |
 
@@ -23,16 +23,18 @@ DEV-GUIDE §3 声明的「禁止反向依赖」**逐条验证全部成立**，�
 ```
 config        → (无内部依赖)
 qqapi         → config
-schedule      → (无内部依赖)      ← 内核
-store         → schedule          ← 适配器（方向被反转）
+schedule      → (无内部依赖)                      ← 纯领域内核
+admin         → schedule                         ← 管理台应用层
+store         → schedule admin                   ← 适配器，实现两个端口
 render        → schedule
 bot           → config qqapi render schedule
 webhook       → bot config qqapi
-server        → schedule store
+server        → admin schedule                   ← HTTP 边界，不接触 store
 ```
 
 实测 `bot` 的非测试代码不 import `store`，只依赖 `schedule.PushStore` / `schedule.PanelStore`
-两个窄接口；`schedule` 不 import `gin/qqapi/store`、`server` 不 import `webhook`。
+两个窄接口；`schedule` 不 import `gin/qqapi/store/admin`，`admin` 不 import
+`gin/sqlite/render/store`，`server` 不 import `webhook/store`。
 **没有任何一个包同时依赖 `gin` 和 `modernc.org/sqlite`** —— HTTP 边界与持久化边界从未相遇。
 
 ---
@@ -75,9 +77,9 @@ func (m *Message) Reply(...) / ReplyImage / ReplyFile / Push / PushImage
 
 ---
 
-### D2 `schedule` 里混进了 Web 应用层 ★★
+### D2 `schedule` 里混进了 Web 应用层 ★★ ✅ 已完成
 
-**现状**：`internal/schedule/web.go` 535 行，10 个 `Service` 方法，全部是**管理台专用**：
+**原现状**：`internal/schedule/web.go` 535 行，10 个 `Service` 方法，全部是**管理台专用**：
 
 ```go
 ScopeSummaries / PageSchedule / SavePageSchedule / CreateMemberSchedules
@@ -98,16 +100,19 @@ DeleteWebDayOverride / PendingMembers
 | `settings.go` | 2 | 全局设置（机器人侧） |
 | `rank.go` | 1 | 领域（榜单） |
 
-**为什么是债务**：
+**为什么曾是债务**：
 
-- **包名与职责不符**：`web.go` 服务的是 `server`（HTTP 管理台），不是领域。它现在住在
+- **包名与职责不符**：`web.go` 服务的是 `server`（HTTP 管理台），不是领域。它当时住在
   `schedule` 里，直接后果是 `internal/server/admin.go:19` 必须同时 import `schedule` 和 `store`
   两个包才能注册路由 —— 一个 Web 层被迫了解持久化类型。
 - **不是命名洁癖问题**：按职责划分，`web.go` 与 `bot` 同级 —— 都是「某个入口的应用层」。
-  现在只有一个入口的应用层被塞进了内核，导致内核的导出面（exported API）被管理台的需求
+  只有一个入口的应用层被塞进了内核，导致内核的导出面（exported API）被管理台的需求
   撑大。`schedule.WebEvent`、`schedule.SavePageResult` 这类名字出现在领域包里，就是信号。
 
-**结论**：低风险、纯归位问题。但**不要为它新建包**（见 §2 的取舍）。
+**处理结果（2026-09-27）**：管理台应用层已迁入 `internal/admin`，`schedule` 只保留
+`RecordSeenMember` 与领域能力；`admin.Service` 组合 `*schedule.Service`，并通过独立
+`admin.Storage` 端口读取管理台数据。`server` 只接收 `*admin.Service`，路由层不再接触
+`store`；`store.Store` 同时实现 `schedule.Storage` 与 `admin.Storage`。
 
 ---
 
@@ -317,7 +322,7 @@ DTO 搬家。
 
 ---
 
-## 5. 阶段三：`web.go` 归位（谨慎，可选）
+## 5. 阶段三：`web.go` 归位 ✅ 已完成
 
 ### 5.1 三种方案与取舍
 
@@ -325,35 +330,37 @@ DTO 搬家。
 | --- | --- | --- |
 | **A. 不动** | 保持现状 | `schedule` 导出面继续被管理台需求撑大 |
 | **B. 移到 `internal/server`** | `web.go` 变 `server/schedule_api.go` | **`server` 会直接 import `store`**，且把领域逻辑（`findOriginalEvent`、ICS 重建）搬到 HTTP 层 —— 违反 G1/G2，**不推荐** |
-| **C. 新建 `internal/admin`** | 新包 `admin.Service`，组合 `schedule.Domain` + `schedule.Storage` | 多一层包，但边界最清晰；`server` 只依赖 `admin` |
+| **C. 新建 `internal/admin`** | 新包 `admin.Service`，组合 `*schedule.Service` + 独立 `admin.Storage` | 多一层包，但边界最清晰；`server` 只依赖 `admin` |
 
-### 5.2 推荐：方案 C，但**必须与阶段一/二解耦，单独排期**
+### 5.2 实施方案 C
 
 `admin.Service` 通过**组合**而非继承获得能力：
 
 ```go
-// internal/admin/service.go
+// internal/admin/service.go（实际实现）
 type Service struct {
-    domain  *schedule.Service   // 复用领域能力（BuildDayCard / SaveICS / SetDayOverrides…）
-    storage schedule.Storage    // 管理台特有的读取（ScopeSummaries / PendingMembers / seen KV）
+    *schedule.Service        // 复用领域能力（ICS / 日卡 / 标记等）
+    storage Storage          // 管理台专用读取、写入与 seen KV
 }
 ```
 
 搬迁清单（`internal/schedule/web.go` → `internal/admin/`）：
 
 - 10 个 `Service` 方法（§D2 表格）
-- 6 个导出类型：`ScopeSummary`、`ScopeMemberSummary`、`WebEvent`、`PageSchedule`、
+- 管理台 DTO：`ScopeSummary`、`ScopeMemberSummary`、`WebEvent`、`PageSchedule`、
   `WebEventInput`、`SavePagePayload`、`SavePageResult`、`NewMember`（按需移，`NewMember`
   被 `server` 用于 `POST /api/schedule/create`）
 - `backup.go`（151 行，管理台的备份/恢复）一并移入
 - **留下不动**：`service.go`（ICS 导入 + 日卡）、`override.go`、`member.go`、`settings.go`、
-  `rank.go`、`daycard.go`、`ics.go`、`occurrence.go`、`dayoff.go`、`timerange.go`、`encoding.go`
+  `rank.go`、`stats.go`、`daycard.go`、`ics.go`、`occurrence.go`、`dayoff.go`、
+  `timerange.go`、`encoding.go`；`RecordSeenMember` 单独留在 `seen.go`
 
 **关键约束**：`admin` 不得 import `gin`（保持与 `schedule` 同样的纯净度），
 路由仍在 `internal/server`，这样边界可用 `go list -deps` 断言。
 
-**为什么不急**：现在**没有实际的改动痛感** —— 管理台需求已经稳定。先做阶段一/二（有明确
-收益），阶段三等到下一次需要动管理台时再顺手做。
+**为什么这样做**：`admin.Storage` 只暴露管理台需要的端口，`schedule.Storage` 不再携带
+管理台专属的 `DeleteScopeDayOverrides` / `ListScopeSummaries`；写路径仍复用
+`schedule.Service` 与 `schedule.SortEvents`，不会把领域逻辑复制到 HTTP 层。
 
 ---
 
@@ -366,6 +373,9 @@ type Service struct {
 set -e
 # schedule 必须是纯领域内核
 ! go list -deps ./internal/schedule | grep -qE 'gin-gonic|modernc.org/sqlite|fogleman/gg|robfig/cron'
+# admin 不得依赖框架、渲染实现或 store 适配器
+! go list -deps ./internal/admin | grep -qE 'gin-gonic|modernc.org/sqlite|fogleman/gg|robfig/cron'
+! go list -deps ./internal/admin | grep -q 'internal/store'
 # 没有包同时依赖 HTTP 框架与 SQLite 驱动
 for p in $(go list ./internal/...); do
   deps=$(go list -deps "$p")
@@ -375,6 +385,8 @@ for p in $(go list ./internal/...); do
 done
 # server 不得依赖 webhook
 ! go list -deps ./internal/server | grep -q 'internal/webhook'
+# server 的管理台路由必须依赖 admin
+go list -deps ./internal/server | grep -q 'internal/admin'
 # bot 的非测试代码不得 import store（测试需要真实 store，见下）
 ! grep -rl 'internal/store' $(ls internal/bot/*.go | grep -v _test.go)
 ```
@@ -383,8 +395,8 @@ done
 （`panel_test.go`、`settings_test.go`、`pipeline_test.go` 用 `store.Open` 起真库），
 但非测试代码零引用 —— 边界看的是后者。
 
-（三条断言**全部通过**，部署脚本与 GitHub Actions CI 共用
-`scripts/check-architecture.sh`。）
+脚本还会拒绝 `schedule` 中的管理台旧方法/DTO、`Message` 旧类型和 `bot` 裸 KV
+访问。部署脚本与 GitHub Actions CI 共用 `scripts/check-architecture.sh`。
 
 ### 6.2 阶段一、二完成后的结构断言（已加入 `scripts/check-architecture.sh`）
 
@@ -393,11 +405,19 @@ done
 ! grep -rn '\.Store\.[A-Za-z]*KV' $(ls internal/bot/*.go | grep -v _test.go)
 ```
 
-### 6.3 Review 时的自查清单
+### 6.3 阶段三后的结构断言
+
+```bash
+! grep -rnE '^func \(s \*Service\) (ScopeSummaries|PageSchedule|SavePageSchedule|CreateMemberSchedules|WebMemberICS|WebDayOverrides|SetWebDayOverride|DeleteWebDayOverride|PendingMembers|ExportBackup|ImportBackup)\b' internal/schedule
+! grep -rnE '^type (ScopeSummary|ScopeMemberSummary|WebEvent|PageSchedule|WebEventInput|SavePagePayload|SavePageResult|NewMember|WebDayOverride|BackupFile|BackupMember|ImportResult)\b' internal/schedule
+```
+
+### 6.4 Review 时的自查清单
 
 - 新增 `Env` 字段前，问：这是**不可变配置**还是**新依赖**？后者才需要接口收窄。
 - 新增指令：只加 `Command{Ready: true}`，**不要**改 `panelOrder`（`panel.go:116` 会自动包含）。
-- 新增持久化：走 `schedule.Service`，带 `expected_revision`，**不要**新增裸 KV 命名空间。
+- 新增领域写入：走 `schedule.Service`，带 `expected_revision`；管理台专属应用操作走
+  `admin.Service`，**不要**把管理台职责塞回 `schedule`，也不要新增裸 KV 命名空间。
 - 新增事件：只改 `webhook/payload.go` + `dispatch.go`（DEV-GUIDE §6.2），
   **不要把官方字段解析漏进 `bot`**。
 - 修改卡片版式：先 `go run ./cmd/cardpreview -o /tmp/card.jpg` 看效果。
@@ -415,7 +435,7 @@ done
   1.5 删 Message
   1.6 加统计字段（Inbound.ReceivedAt）      ← 与「耗时统计」功能合并交付
 阶段二（KV 走服务层）    ✅ 已完成（窄接口 + 集中命名空间 + 部署守卫）
-阶段三（web.go 归位）    ← 可选，等下次需要动管理台时再做
+阶段三（web.go 归位）    ✅ 已完成（internal/admin + 独立 Storage 端口 + 架构守卫）
 ```
 
 **阶段一与「耗时统计」功能的协同**：统计功能需要「收到消息的时间戳」。在 `Message` 未拆分时，
@@ -434,7 +454,7 @@ done
 | 拆分 `bot/commands.go` | 编排层本就是聚合点，拆分只增加跳转成本 |
 | 顺手修 `SendCard` 的 `nextSeq()` 多消耗 | 既有行为，影响面大于收益（R1）；记录在案即可 |
 | 为「更好的分层」在 `bot` 与 `schedule` 之间加一层 | 当前只有 3 层且测试健康；加层是净增复杂度 |
-| 让 `admin`（若建）依赖 `gin` | 必须保持与 `schedule` 同样的纯净度，否则 §6.1 的断言失效 |
+| 让 `admin` 依赖 `gin`、`sqlite`、渲染实现或 `store` | 必须只依赖 `schedule` 与自己的 `Storage` 端口，否则 §6.1 的断言失效 |
 
 ---
 
@@ -449,5 +469,6 @@ done
 类型的结构性成本；阶段二已删除 `Env.Store`，让机器人入口只能通过
 `schedule.PushStore` / `schedule.PanelStore` 访问持久化。
 
-剩余 D2（`web.go` 错位）仍在可维护范围内。它没有实际改动痛感，按 §7 等到下一次需要动
-管理台时再做，避免现在为了分层额外引入 `internal/admin`。
+阶段三完成 D2：管理台读取、写入、备份恢复与 DTO 已归入 `internal/admin`，
+`schedule` 恢复为纯领域内核；`server` 只依赖管理台应用层，`store` 通过端口适配两侧。
+三个阶段的结构性债务均已消除，边界由 `scripts/check-architecture.sh` 持续守卫。

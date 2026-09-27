@@ -9,17 +9,18 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/mico-v/qqbot-course-schedule/internal/admin"
 	"github.com/mico-v/qqbot-course-schedule/internal/schedule"
 )
 
-func listOverrides(t *testing.T, router *gin.Engine, scope string) []schedule.WebDayOverride {
+func listOverrides(t *testing.T, router *gin.Engine, scope string) []admin.WebDayOverride {
 	t.Helper()
 	recorder := adminRequest(router, http.MethodGet, "/api/overrides?scope_id="+scope, nil, true)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("list overrides = %d (%s)", recorder.Code, recorder.Body.String())
 	}
 	var payload struct {
-		Overrides []schedule.WebDayOverride `json:"overrides"`
+		Overrides []admin.WebDayOverride `json:"overrides"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)

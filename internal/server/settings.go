@@ -5,11 +5,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/mico-v/qqbot-course-schedule/internal/admin"
 	"github.com/mico-v/qqbot-course-schedule/internal/schedule"
 )
 
 // registerSettingsRoutes mounts the admin API for the bot switches.
-func registerSettingsRoutes(api *gin.RouterGroup, service *schedule.Service) {
+func registerSettingsRoutes(api *gin.RouterGroup, service *admin.Service) {
 	api.GET("/settings", func(c *gin.Context) {
 		settings, err := service.BotSettings()
 		if err != nil {

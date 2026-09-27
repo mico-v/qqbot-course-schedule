@@ -171,28 +171,8 @@ func (m *memoryStorage) PutMember(scopeID, userID string, member *Member, expect
 	return nil
 }
 
-func (m *memoryStorage) ListScopeSummaries() ([]ScopeSummary, error) {
-	var summaries []ScopeSummary
-	for scopeID, members := range m.members {
-		summary := ScopeSummary{ScopeID: scopeID}
-		for userID, member := range members {
-			summary.Members = append(summary.Members, ScopeMemberSummary{
-				UserID: userID, Name: member.Name, EventCount: len(member.Events), Revision: member.Revision,
-			})
-		}
-		summaries = append(summaries, summary)
-	}
-	sort.Slice(summaries, func(i, j int) bool { return summaries[i].ScopeID < summaries[j].ScopeID })
-	return summaries, nil
-}
-
 func (m *memoryStorage) ListDayOverrides(scopeID string) ([]DayOverrideRow, error) {
 	return append([]DayOverrideRow(nil), m.overrides[scopeID]...), nil
-}
-
-func (m *memoryStorage) DeleteScopeDayOverrides(scopeID string) error {
-	delete(m.overrides, scopeID)
-	return nil
 }
 
 func (m *memoryStorage) SetDayOverride(scopeID, userID, day string, override DayOverride, createdBy, createdAt string) error {

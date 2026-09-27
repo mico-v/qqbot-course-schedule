@@ -254,8 +254,6 @@ func (failingStorage) GetMember(string, string) (*schedule.Member, bool, error) 
 func (failingStorage) GetScopeMembers(string) (map[string]*schedule.Member, error) { return nil, nil }
 func (failingStorage) PutMember(string, string, *schedule.Member, *int64) error    { return nil }
 func (failingStorage) ListDayOverrides(string) ([]schedule.DayOverrideRow, error)  { return nil, nil }
-func (failingStorage) DeleteScopeDayOverrides(string) error                        { return nil }
-func (failingStorage) ListScopeSummaries() ([]schedule.ScopeSummary, error)        { return nil, nil }
 func (failingStorage) SetDayOverride(string, string, string, schedule.DayOverride, string, string) error {
 	return nil
 }

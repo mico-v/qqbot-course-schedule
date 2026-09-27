@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/mico-v/qqbot-course-schedule/internal/admin"
 	"github.com/mico-v/qqbot-course-schedule/internal/schedule"
 	"github.com/mico-v/qqbot-course-schedule/internal/store"
 )
@@ -27,7 +28,7 @@ END:VCALENDAR
 
 const adminPassword = "test-password"
 
-func newAdminRouter(t *testing.T, password string) (*gin.Engine, *schedule.Service) {
+func newAdminRouter(t *testing.T, password string) (*gin.Engine, *admin.Service) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	storeHandle, err := store.Open(filepath.Join(t.TempDir(), "admin.db"))
@@ -35,7 +36,8 @@ func newAdminRouter(t *testing.T, password string) (*gin.Engine, *schedule.Servi
 		t.Fatalf("store.Open: %v", err)
 	}
 	t.Cleanup(func() { storeHandle.Close() })
-	service := schedule.NewService(storeHandle)
+	domainService := schedule.NewService(storeHandle)
+	service := admin.NewService(domainService, storeHandle)
 	router := gin.New()
 	RegisterAdmin(router, service, password)
 	return router, service
@@ -135,7 +137,7 @@ func TestAdminAPIFlow(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("schedule = %d (%s)", recorder.Code, recorder.Body.String())
 	}
-	var page schedule.PageSchedule
+	var page admin.PageSchedule
 	if err := json.Unmarshal(recorder.Body.Bytes(), &page); err != nil {
 		t.Fatalf("decode schedule: %v", err)
 	}
@@ -169,9 +171,9 @@ func TestAdminAPIFlow(t *testing.T) {
 		t.Fatalf("members = %d", recorder.Code)
 	}
 	var membersResponse struct {
-		Members     []schedule.NewMember `json:"members"`
-		MemberCount int                  `json:"member_count"`
-		Note        string               `json:"note"`
+		Members     []admin.NewMember `json:"members"`
+		MemberCount int               `json:"member_count"`
+		Note        string            `json:"note"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &membersResponse); err != nil {
 		t.Fatal(err)
@@ -263,7 +265,7 @@ func TestScopesIncludeSeenOnlyGroup(t *testing.T) {
 		t.Fatalf("members = %d", recorder.Code)
 	}
 	var members struct {
-		Members []schedule.NewMember `json:"members"`
+		Members []admin.NewMember `json:"members"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &members); err != nil {
 		t.Fatal(err)
@@ -279,7 +281,7 @@ func TestSaveScheduleWithQQ(t *testing.T) {
 	seedScope(t, service, scope)
 
 	recorder := adminRequest(router, http.MethodGet, "/api/schedule?scope_id="+scope+"&user_id=U1", nil, true)
-	var page schedule.PageSchedule
+	var page admin.PageSchedule
 	if err := json.Unmarshal(recorder.Body.Bytes(), &page); err != nil {
 		t.Fatal(err)
 	}

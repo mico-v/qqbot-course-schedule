@@ -16,6 +16,17 @@ schedule_deps="$(go list -deps ./internal/schedule)"
 if grep -qE 'gin-gonic|modernc.org/sqlite|fogleman/gg|robfig/cron' <<<"$schedule_deps"; then
 	fail "架构边界违规：schedule 必须保持纯领域内核"
 fi
+if grep -q 'internal/admin' <<<"$schedule_deps"; then
+	fail "架构边界违规：schedule 不得依赖管理台应用层"
+fi
+
+admin_deps="$(go list -deps ./internal/admin)"
+if grep -qE 'gin-gonic|modernc.org/sqlite|fogleman/gg|robfig/cron' <<<"$admin_deps"; then
+	fail "架构边界违规：admin 不得依赖 HTTP、SQLite 或渲染实现"
+fi
+if grep -q 'internal/store' <<<"$admin_deps"; then
+	fail "架构边界违规：admin 只能依赖 Storage 端口，不得依赖 store 适配器"
+fi
 
 for pkg in $(go list ./internal/...); do
 	deps="$(go list -deps "$pkg")"
@@ -28,6 +39,15 @@ server_deps="$(go list -deps ./internal/server)"
 if grep -q 'internal/webhook' <<<"$server_deps"; then
 	fail "架构边界违规：server 不得依赖 webhook"
 fi
+if ! grep -q 'internal/admin' <<<"$server_deps"; then
+	fail "架构边界违规：server 的管理台路由必须依赖 internal/admin"
+fi
+
+stale_admin_methods="$(grep -rnE '^func \(s \*Service\) (ScopeSummaries|PageSchedule|SavePageSchedule|CreateMemberSchedules|WebMemberICS|WebDayOverrides|SetWebDayOverride|DeleteWebDayOverride|PendingMembers|ExportBackup|ImportBackup)\b' --include='*.go' internal/schedule || true)"
+[[ -z "$stale_admin_methods" ]] || fail "重构边界违规：管理台方法仍留在 schedule：\n$stale_admin_methods"
+
+stale_admin_types="$(grep -rnE '^type (ScopeSummary|ScopeMemberSummary|WebEvent|PageSchedule|WebEventInput|SavePagePayload|SavePageResult|NewMember|WebDayOverride|BackupFile|BackupMember|ImportResult)\b' --include='*.go' internal/schedule || true)"
+[[ -z "$stale_admin_types" ]] || fail "重构边界违规：管理台 DTO 仍留在 schedule：\n$stale_admin_types"
 
 bot_imports="$(grep -rl 'internal/store' --include='*.go' --exclude='*_test.go' internal/bot || true)"
 [[ -z "$bot_imports" ]] || fail "架构边界违规：bot 非测试代码不得 import store：\n$bot_imports"

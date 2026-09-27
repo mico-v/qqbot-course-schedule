@@ -18,6 +18,7 @@ import (
 
 	_ "time/tzdata"
 
+	"github.com/mico-v/qqbot-course-schedule/internal/admin"
 	"github.com/mico-v/qqbot-course-schedule/internal/bot"
 	"github.com/mico-v/qqbot-course-schedule/internal/config"
 	"github.com/mico-v/qqbot-course-schedule/internal/qqapi"
@@ -66,11 +67,12 @@ func run() error {
 	}
 
 	client := qqapi.New(cfg)
+	domainService := schedule.NewService(storeHandle)
 	env := &bot.Env{
 		Client:        client,
 		PushStore:     storeHandle,
 		PanelStore:    storeHandle,
-		Service:       schedule.NewService(storeHandle),
+		Service:       domainService,
 		Renderer:      renderer,
 		DataDir:       cfg.DataDir,
 		ImagesDir:     filepath.Join(cfg.DataDir, "images"),
@@ -95,7 +97,7 @@ func run() error {
 	router.POST("/webhook", verify, dispatcher.Handle)
 	server.RegisterImages(router, env.ImagesDir)
 	server.RegisterFiles(router, env.FilesDir)
-	server.RegisterAdmin(router, env.Service, cfg.AdminPassword)
+	server.RegisterAdmin(router, admin.NewService(domainService, storeHandle), cfg.AdminPassword)
 
 	server := &http.Server{
 		Addr:              cfg.ListenAddr(),

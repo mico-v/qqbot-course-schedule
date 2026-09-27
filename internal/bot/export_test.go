@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/mico-v/qqbot-course-schedule/internal/schedule"
 )
 
 func TestExportCommand(t *testing.T) {
@@ -58,7 +56,7 @@ func TestExportCommand(t *testing.T) {
 	}
 
 	// An empty member has nothing to export.
-	if _, err := env.Service.CreateMemberSchedules(env.Scope(base), []schedule.NewMember{{UserID: "U2", Name: "小红"}}, "test"); err != nil {
+	if err := env.Service.EnsureMember(env.Scope(base), "U2", "小红"); err != nil {
 		t.Fatal(err)
 	}
 	empty := freshMessage(base)

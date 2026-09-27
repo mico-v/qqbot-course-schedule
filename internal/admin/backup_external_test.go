@@ -1,4 +1,4 @@
-package schedule_test
+package admin_test
 
 import (
 	"strings"

@@ -1,11 +1,40 @@
-package schedule
+package admin
 
 import (
 	"fmt"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/mico-v/qqbot-course-schedule/internal/schedule"
 )
+
+// Storage is the persistence port used by the admin application layer.
+type Storage interface {
+	GetMember(scopeID, userID string) (*schedule.Member, bool, error)
+	GetScopeMembers(scopeID string) (map[string]*schedule.Member, error)
+	PutMember(scopeID, userID string, member *schedule.Member, expectedRevision *int64) error
+	ListDayOverrides(scopeID string) ([]schedule.DayOverrideRow, error)
+	DeleteScopeDayOverrides(scopeID string) error
+	ListScopeSummaries() ([]ScopeSummary, error)
+	SetDayOverride(scopeID, userID, day string, override schedule.DayOverride, createdBy, createdAt string) error
+	DeleteDayOverride(scopeID, userID, day string) (bool, error)
+	GetKV(scope, namespace, key string, out any) (bool, error)
+	ListKV(scope, namespace string) ([]schedule.KVEntry, error)
+	SetKV(scope, namespace, key string, value any) error
+}
+
+// Service is the admin application layer. It composes the schedule service for
+// domain operations and uses its own storage port for admin-only queries.
+type Service struct {
+	*schedule.Service
+	storage Storage
+}
+
+// NewService wires the admin layer to the schedule service and admin storage.
+func NewService(domain *schedule.Service, storage Storage) *Service {
+	return &Service{Service: domain, storage: storage}
+}
 
 // ScopeMemberSummary is one member row in the admin scope list.
 type ScopeMemberSummary struct {
@@ -24,7 +53,7 @@ type ScopeSummary struct {
 // ScopeSummaries lists every scope that has saved schedules, plus scopes whose
 // members only interacted with the bot (so their first schedule can be created).
 func (s *Service) ScopeSummaries() ([]ScopeSummary, error) {
-	summaries, err := s.store.ListScopeSummaries()
+	summaries, err := s.storage.ListScopeSummaries()
 	if err != nil {
 		return nil, err
 	}
@@ -32,7 +61,7 @@ func (s *Service) ScopeSummaries() ([]ScopeSummary, error) {
 	for _, summary := range summaries {
 		known[summary.ScopeID] = true
 	}
-	entries, err := s.store.ListKV(KVScopeGlobal, KVNamespaceSeen)
+	entries, err := s.storage.ListKV(schedule.KVScopeGlobal, schedule.KVNamespaceSeen)
 	if err != nil {
 		return nil, err
 	}
@@ -40,7 +69,7 @@ func (s *Service) ScopeSummaries() ([]ScopeSummary, error) {
 		if known[entry.Key] {
 			continue
 		}
-		if kind, _ := ParseScope(entry.Key); kind != "group" && kind != "private" {
+		if kind, _ := schedule.ParseScope(entry.Key); kind != "group" && kind != "private" {
 			continue
 		}
 		summaries = append(summaries, ScopeSummary{ScopeID: entry.Key})
@@ -78,7 +107,7 @@ func (s *Service) PageSchedule(scopeID, userID string) (*PageSchedule, bool, err
 	if scopeID == "" || userID == "" {
 		return nil, false, fmt.Errorf("scope_id 和 user_id 不能为空。")
 	}
-	member, found, err := s.store.GetMember(scopeID, userID)
+	member, found, err := s.storage.GetMember(scopeID, userID)
 	if err != nil || !found || member == nil {
 		return nil, false, err
 	}
@@ -106,11 +135,11 @@ func (s *Service) PageSchedule(scopeID, userID string) (*PageSchedule, bool, err
 }
 
 func webDateTimeValue(value, tzid string) string {
-	parsed, ok := ParseICSTime(value, tzid)
+	parsed, ok := schedule.ParseICSTime(value, tzid)
 	if !ok {
 		return ""
 	}
-	return parsed.In(LocalTZ).Format("2006-01-02T15:04")
+	return parsed.In(schedule.LocalTZ).Format("2006-01-02T15:04")
 }
 
 // WebEventInput is one event submitted by the admin page.
@@ -152,7 +181,7 @@ func (s *Service) SavePageSchedule(payload SavePagePayload, actor string) (*Save
 	if scopeID == "" || userID == "" {
 		return nil, fmt.Errorf("scope_id 和 user_id 不能为空。")
 	}
-	kind, _ := ParseScope(scopeID)
+	kind, _ := schedule.ParseScope(scopeID)
 	if kind != "group" && kind != "private" {
 		return nil, fmt.Errorf("无效的 scope_id。")
 	}
@@ -160,11 +189,11 @@ func (s *Service) SavePageSchedule(payload SavePagePayload, actor string) (*Save
 		return nil, fmt.Errorf("缺少有效的课程表 revision，请刷新后重试。")
 	}
 	expected := *payload.Revision
-	if len(payload.Events) > MaxEventsPerFile {
-		return nil, fmt.Errorf("单个成员最多保存 %d 节课程。", MaxEventsPerFile)
+	if len(payload.Events) > schedule.MaxEventsPerFile {
+		return nil, fmt.Errorf("单个成员最多保存 %d 节课程。", schedule.MaxEventsPerFile)
 	}
 
-	current, found, err := s.store.GetMember(scopeID, userID)
+	current, found, err := s.storage.GetMember(scopeID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -172,24 +201,24 @@ func (s *Service) SavePageSchedule(payload SavePagePayload, actor string) (*Save
 		return nil, fmt.Errorf("找不到指定群组中的成员课程表。")
 	}
 
-	events := make([]Event, 0, len(payload.Events))
+	events := make([]schedule.Event, 0, len(payload.Events))
 	for index, input := range payload.Events {
 		course := strings.TrimSpace(input.Course)
 		if course == "" {
 			return nil, fmt.Errorf("第 %d 节课程缺少课程名称。", index+1)
 		}
-		if len([]rune(course)) > MaxCourseNameLength {
-			return nil, fmt.Errorf("第 %d 节课程名称不能超过 %d 个字符。", index+1, MaxCourseNameLength)
+		if len([]rune(course)) > schedule.MaxCourseNameLength {
+			return nil, fmt.Errorf("第 %d 节课程名称不能超过 %d 个字符。", index+1, schedule.MaxCourseNameLength)
 		}
 		location := strings.TrimSpace(input.Location)
 		description := strings.TrimSpace(input.Description)
 		rrule := strings.TrimSpace(input.RRule)
-		if len([]rune(location)) > MaxCourseNameLength ||
-			len([]rune(description)) > MaxDescriptionLength ||
-			len([]rune(rrule)) > MaxRRuleLength {
+		if len([]rune(location)) > schedule.MaxCourseNameLength ||
+			len([]rune(description)) > schedule.MaxDescriptionLength ||
+			len([]rune(rrule)) > schedule.MaxRRuleLength {
 			return nil, fmt.Errorf("第 %d 节课程的文本字段过长。", index+1)
 		}
-		event, err := MakeEvent(course, strings.TrimSpace(input.Start), strings.TrimSpace(input.End), location, description, rrule, strings.TrimSpace(input.UID))
+		event, err := schedule.MakeEvent(course, strings.TrimSpace(input.Start), strings.TrimSpace(input.End), location, description, rrule, strings.TrimSpace(input.UID))
 		if err != nil {
 			return nil, fmt.Errorf("第 %d 节课程：%v", index+1, err)
 		}
@@ -200,37 +229,37 @@ func (s *Service) SavePageSchedule(payload SavePagePayload, actor string) (*Save
 		}
 		events = append(events, event)
 	}
-	sortEvents(events)
+	schedule.SortEvents(events)
 
-	now := NowISO()
+	now := schedule.NowISO()
 	updated := *current
 	if payload.Name != nil {
 		name := strings.TrimSpace(*payload.Name)
 		if name == "" {
 			return nil, fmt.Errorf("成员名称不能为空。")
 		}
-		if len([]rune(name)) > MaxMemberNameLength {
-			return nil, fmt.Errorf("成员名称不能超过 %d 个字符。", MaxMemberNameLength)
+		if len([]rune(name)) > schedule.MaxMemberNameLength {
+			return nil, fmt.Errorf("成员名称不能超过 %d 个字符。", schedule.MaxMemberNameLength)
 		}
 		updated.Name = name
 	}
 	if payload.QQ != nil {
-		qq, qqErr := NormalizeQQ(*payload.QQ)
+		qq, qqErr := schedule.NormalizeQQ(*payload.QQ)
 		if qqErr != nil {
 			return nil, qqErr
 		}
 		updated.QQ = qq
 	}
 	updated.Events = events
-	updated.ICS = SerializeScheduleICS(events, current.ICS, updated.Name)
-	updated.Schedule = FormatICSSchedule(events)
+	updated.ICS = schedule.SerializeScheduleICS(events, current.ICS, updated.Name)
+	updated.Schedule = schedule.FormatICSSchedule(events)
 	updated.Source = "ics"
 	updated.EventCount = len(events)
 	updated.UpdatedAt = now
 	updated.ScheduleUpdatedAt = now
 	updated.LastModifiedAt = now
 	updated.LastModifiedBy = actor
-	if err := s.store.PutMember(scopeID, userID, &updated, &expected); err != nil {
+	if err := s.storage.PutMember(scopeID, userID, &updated, &expected); err != nil {
 		return nil, err
 	}
 	return &SavePageResult{
@@ -242,7 +271,7 @@ func (s *Service) SavePageSchedule(payload SavePagePayload, actor string) (*Save
 	}, nil
 }
 
-func findOriginalEvent(events []Event, input WebEventInput) Event {
+func findOriginalEvent(events []schedule.Event, input WebEventInput) schedule.Event {
 	if uid := strings.TrimSpace(input.UID); uid != "" {
 		for _, event := range events {
 			if event["UID"] == uid {
@@ -265,15 +294,15 @@ type NewMember struct {
 // CreateMemberSchedules creates empty schedules, skipping existing members.
 func (s *Service) CreateMemberSchedules(scopeID string, inputs []NewMember, actor string) ([]NewMember, error) {
 	scopeID = strings.TrimSpace(scopeID)
-	kind, _ := ParseScope(scopeID)
+	kind, _ := schedule.ParseScope(scopeID)
 	if kind != "group" && kind != "private" {
 		return nil, fmt.Errorf("无效的 scope_id。")
 	}
 	if len(inputs) == 0 {
 		return nil, fmt.Errorf("members 不能为空。")
 	}
-	if len(inputs) > MaxMembersPerCreate {
-		return nil, fmt.Errorf("一次最多创建 %d 位成员。", MaxMembersPerCreate)
+	if len(inputs) > schedule.MaxMembersPerCreate {
+		return nil, fmt.Errorf("一次最多创建 %d 位成员。", schedule.MaxMembersPerCreate)
 	}
 	var created []NewMember
 	for _, input := range inputs {
@@ -285,19 +314,19 @@ func (s *Service) CreateMemberSchedules(scopeID string, inputs []NewMember, acto
 		if name == "" {
 			name = userID
 		}
-		if len([]rune(name)) > MaxMemberNameLength {
-			return nil, fmt.Errorf("成员名称不能超过 %d 个字符。", MaxMemberNameLength)
+		if len([]rune(name)) > schedule.MaxMemberNameLength {
+			return nil, fmt.Errorf("成员名称不能超过 %d 个字符。", schedule.MaxMemberNameLength)
 		}
-		member := &Member{
+		member := &schedule.Member{
 			UserID:         userID,
 			Name:           name,
 			Source:         "manual",
-			UpdatedAt:      NowISO(),
+			UpdatedAt:      schedule.NowISO(),
 			LastModifiedBy: actor,
 		}
 		zero := int64(0)
-		if err := s.store.PutMember(scopeID, userID, member, &zero); err != nil {
-			if err == ErrConflict {
+		if err := s.storage.PutMember(scopeID, userID, member, &zero); err != nil {
+			if err == schedule.ErrConflict {
 				continue
 			}
 			return nil, err
@@ -310,41 +339,6 @@ func (s *Service) CreateMemberSchedules(scopeID string, inputs []NewMember, acto
 	return created, nil
 }
 
-const seenMemberLimit = 500
-
-// RecordSeenMember remembers a member who interacted with the bot, so the admin
-// page can offer empty schedules for people without one.
-func (s *Service) RecordSeenMember(scopeID, userID, name string) error {
-	userID = strings.TrimSpace(userID)
-	if userID == "" {
-		return nil
-	}
-	var seen map[string]string
-	if _, err := s.store.GetKV(KVScopeGlobal, KVNamespaceSeen, scopeID, &seen); err != nil {
-		return err
-	}
-	if seen == nil {
-		seen = make(map[string]string)
-	}
-	name = strings.TrimSpace(name)
-	if name == "" {
-		name = userID
-	}
-	if existing, ok := seen[userID]; ok && existing == name {
-		return nil
-	}
-	if len(seen) >= seenMemberLimit {
-		if _, exists := seen[userID]; !exists {
-			for key := range seen {
-				delete(seen, key)
-				break
-			}
-		}
-	}
-	seen[userID] = name
-	return s.store.SetKV(KVScopeGlobal, KVNamespaceSeen, scopeID, seen)
-}
-
 // WebMemberICS returns one member's ICS content for a direct download.
 // content is empty when the member has no events yet.
 func (s *Service) WebMemberICS(scopeID, userID string) (name, content string, found bool, err error) {
@@ -353,7 +347,7 @@ func (s *Service) WebMemberICS(scopeID, userID string) (name, content string, fo
 	if scopeID == "" || userID == "" {
 		return "", "", false, fmt.Errorf("scope_id 和 user_id 不能为空。")
 	}
-	member, found, err := s.store.GetMember(scopeID, userID)
+	member, found, err := s.storage.GetMember(scopeID, userID)
 	if err != nil || !found || member == nil {
 		return "", "", false, err
 	}
@@ -363,7 +357,7 @@ func (s *Service) WebMemberICS(scopeID, userID string) (name, content string, fo
 	}
 	content = strings.TrimSpace(member.ICS)
 	if content == "" {
-		content = SerializeScheduleICS(member.Events, "", member.Name)
+		content = schedule.SerializeScheduleICS(member.Events, "", member.Name)
 	}
 	return name, content, true, nil
 }
@@ -385,11 +379,11 @@ func (s *Service) WebDayOverrides(scopeID string) ([]WebDayOverride, error) {
 	if scopeID == "" {
 		return nil, fmt.Errorf("scope_id 不能为空。")
 	}
-	rows, err := s.store.ListDayOverrides(scopeID)
+	rows, err := s.storage.ListDayOverrides(scopeID)
 	if err != nil {
 		return nil, err
 	}
-	members, err := s.store.GetScopeMembers(scopeID)
+	members, err := s.storage.GetScopeMembers(scopeID)
 	if err != nil {
 		return nil, err
 	}
@@ -408,8 +402,8 @@ func (s *Service) WebDayOverrides(scopeID string) ([]WebDayOverride, error) {
 	return result, nil
 }
 
-func overrideDisplayName(members map[string]*Member, userID string) string {
-	if userID == DayOverrideAll {
+func overrideDisplayName(members map[string]*schedule.Member, userID string) string {
+	if userID == schedule.DayOverrideAll {
 		return "全体成员"
 	}
 	if member, ok := members[userID]; ok && member != nil && strings.TrimSpace(member.Name) != "" {
@@ -429,11 +423,11 @@ func (s *Service) SetWebDayOverride(scopeID, userID, day, kind, sourceDay, actor
 	if err != nil {
 		return err
 	}
-	if kind != DayOverrideHoliday && kind != DayOverrideShift {
+	if kind != schedule.DayOverrideHoliday && kind != schedule.DayOverrideShift {
 		return fmt.Errorf("标记类型只能是休假或调休。")
 	}
-	if userID != DayOverrideAll {
-		members, err := s.store.GetScopeMembers(scopeID)
+	if userID != schedule.DayOverrideAll {
+		members, err := s.storage.GetScopeMembers(scopeID)
 		if err != nil {
 			return err
 		}
@@ -442,7 +436,7 @@ func (s *Service) SetWebDayOverride(scopeID, userID, day, kind, sourceDay, actor
 		}
 	}
 	var source *time.Time
-	if kind == DayOverrideShift {
+	if kind == schedule.DayOverrideShift {
 		parsed, err := parseWebDay(sourceDay, "调休来源日期")
 		if err != nil {
 			return err
@@ -450,14 +444,14 @@ func (s *Service) SetWebDayOverride(scopeID, userID, day, kind, sourceDay, actor
 		if sameDay(parsed, target) {
 			return fmt.Errorf("调休的来源日期不能和调休日期相同。")
 		}
-		if absInt(int(parsed.Sub(target).Hours()/24)) > MaxDayOverrideSpanDays {
-			return fmt.Errorf("调休的来源日期与目标日期相差不能超过 %d 天。", MaxDayOverrideSpanDays)
+		if absInt(int(parsed.Sub(target).Hours()/24)) > schedule.MaxDayOverrideSpanDays {
+			return fmt.Errorf("调休的来源日期与目标日期相差不能超过 %d 天。", schedule.MaxDayOverrideSpanDays)
 		}
 		source = &parsed
 	}
 
 	dayText := target.Format("2006-01-02")
-	rows, err := s.store.ListDayOverrides(scopeID)
+	rows, err := s.storage.ListDayOverrides(scopeID)
 	if err != nil {
 		return err
 	}
@@ -468,14 +462,14 @@ func (s *Service) SetWebDayOverride(scopeID, userID, day, kind, sourceDay, actor
 			break
 		}
 	}
-	if !found && len(rows) >= MaxDayOverridesPerScope {
-		return fmt.Errorf("本会话的休假/调休标记已达上限 %d 条，请先取消一些标记。", MaxDayOverridesPerScope)
+	if !found && len(rows) >= schedule.MaxDayOverridesPerScope {
+		return fmt.Errorf("本会话的休假/调休标记已达上限 %d 条，请先取消一些标记。", schedule.MaxDayOverridesPerScope)
 	}
-	override := DayOverride{Kind: kind}
+	override := schedule.DayOverride{Kind: kind}
 	if source != nil {
 		override.SourceDay = source.Format("2006-01-02")
 	}
-	return s.store.SetDayOverride(scopeID, userID, dayText, override, firstNonEmpty(actor, "webui"), NowISO())
+	return s.storage.SetDayOverride(scopeID, userID, dayText, override, firstNonEmpty(actor, "webui"), schedule.NowISO())
 }
 
 // DeleteWebDayOverride removes one marker from the admin page.
@@ -489,7 +483,7 @@ func (s *Service) DeleteWebDayOverride(scopeID, userID, day string) (bool, error
 	if err != nil {
 		return false, err
 	}
-	return s.store.DeleteDayOverride(scopeID, userID, target.Format("2006-01-02"))
+	return s.storage.DeleteDayOverride(scopeID, userID, target.Format("2006-01-02"))
 }
 
 func parseWebDay(value, label string) (time.Time, error) {
@@ -497,7 +491,7 @@ func parseWebDay(value, label string) (time.Time, error) {
 	if value == "" {
 		return time.Time{}, fmt.Errorf("请提供%s。", label)
 	}
-	parsed, err := time.ParseInLocation("2006-01-02", value, LocalTZ)
+	parsed, err := time.ParseInLocation("2006-01-02", value, schedule.LocalTZ)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("%s格式应为 YYYY-MM-DD。", label)
 	}
@@ -507,10 +501,10 @@ func parseWebDay(value, label string) (time.Time, error) {
 // PendingMembers returns observed members who do not have a schedule yet.
 func (s *Service) PendingMembers(scopeID string) ([]NewMember, error) {
 	var seen map[string]string
-	if _, err := s.store.GetKV(KVScopeGlobal, KVNamespaceSeen, scopeID, &seen); err != nil {
+	if _, err := s.storage.GetKV(schedule.KVScopeGlobal, schedule.KVNamespaceSeen, scopeID, &seen); err != nil {
 		return nil, err
 	}
-	members, err := s.store.GetScopeMembers(scopeID)
+	members, err := s.storage.GetScopeMembers(scopeID)
 	if err != nil {
 		return nil, err
 	}
@@ -529,4 +523,26 @@ func (s *Service) PendingMembers(scopeID string) ([]NewMember, error) {
 		return pending[i].UserID < pending[j].UserID
 	})
 	return pending, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func sameDay(left, right time.Time) bool {
+	left = left.In(schedule.LocalTZ)
+	right = right.In(schedule.LocalTZ)
+	return left.Year() == right.Year() && left.YearDay() == right.YearDay()
+}
+
+func absInt(value int) int {
+	if value < 0 {
+		return -value
+	}
+	return value
 }

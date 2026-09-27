@@ -10,20 +10,21 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/mico-v/qqbot-course-schedule/internal/admin"
 	"github.com/mico-v/qqbot-course-schedule/internal/schedule"
 	"github.com/mico-v/qqbot-course-schedule/web"
 )
 
 // RegisterAdmin mounts the schedule manager page and its JSON API under /admin
 // and /api. When password is empty only loopback clients may access them.
-func RegisterAdmin(router *gin.Engine, service *schedule.Service, password string) {
+func RegisterAdmin(router *gin.Engine, service *admin.Service, password string) {
 	auth := adminAuth(password)
 
-	admin := router.Group("/admin", auth)
-	admin.GET("", serveAsset("index.html", "text/html; charset=utf-8"))
-	admin.GET("/", serveAsset("index.html", "text/html; charset=utf-8"))
-	admin.GET("/app.js", serveAsset("app.js", "application/javascript; charset=utf-8"))
-	admin.GET("/style.css", serveAsset("style.css", "text/css; charset=utf-8"))
+	adminGroup := router.Group("/admin", auth)
+	adminGroup.GET("", serveAsset("index.html", "text/html; charset=utf-8"))
+	adminGroup.GET("/", serveAsset("index.html", "text/html; charset=utf-8"))
+	adminGroup.GET("/app.js", serveAsset("app.js", "application/javascript; charset=utf-8"))
+	adminGroup.GET("/style.css", serveAsset("style.css", "text/css; charset=utf-8"))
 
 	api := router.Group("/api", auth)
 	registerTransferRoutes(api, service)
@@ -83,7 +84,7 @@ func RegisterAdmin(router *gin.Engine, service *schedule.Service, password strin
 	})
 
 	api.POST("/schedule/save", func(c *gin.Context) {
-		var payload schedule.SavePagePayload
+		var payload admin.SavePagePayload
 		if err := c.ShouldBindJSON(&payload); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请求体必须是 JSON 对象。"})
 			return
@@ -125,8 +126,8 @@ func RegisterAdmin(router *gin.Engine, service *schedule.Service, password strin
 
 	api.POST("/schedule/create", func(c *gin.Context) {
 		var payload struct {
-			ScopeID string               `json:"scope_id"`
-			Members []schedule.NewMember `json:"members"`
+			ScopeID string            `json:"scope_id"`
+			Members []admin.NewMember `json:"members"`
 		}
 		if err := c.ShouldBindJSON(&payload); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请求体必须是 JSON 对象。"})

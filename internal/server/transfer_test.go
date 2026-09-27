@@ -14,15 +14,16 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/mico-v/qqbot-course-schedule/internal/admin"
 	"github.com/mico-v/qqbot-course-schedule/internal/schedule"
 )
 
-func seedScope(t *testing.T, service *schedule.Service, scope string) {
+func seedScope(t *testing.T, service *admin.Service, scope string) {
 	t.Helper()
 	if _, err := service.SaveICS(scope, "U1", "小明", adminTestICS, "schedule.ics", "U1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.CreateMemberSchedules(scope, []schedule.NewMember{{UserID: "U2", Name: "小红"}}, "webui"); err != nil {
+	if _, err := service.CreateMemberSchedules(scope, []admin.NewMember{{UserID: "U2", Name: "小红"}}, "webui"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -91,7 +92,7 @@ func TestExportImportArchiveAndBackup(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("import zip = %d (%s)", recorder.Code, recorder.Body.String())
 	}
-	var result schedule.ImportResult
+	var result admin.ImportResult
 	if err := json.Unmarshal(recorder.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +110,7 @@ func TestExportImportArchiveAndBackup(t *testing.T) {
 		t.Fatalf("export backup = %d", recorder.Code)
 	}
 	backupBytes := recorder.Body.Bytes()
-	var backup schedule.BackupFile
+	var backup admin.BackupFile
 	if err := json.Unmarshal(backupBytes, &backup); err != nil || backup.Version != 1 || len(backup.Members) != 2 {
 		t.Fatalf("backup = %+v err=%v", backup, err)
 	}

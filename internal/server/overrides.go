@@ -6,11 +6,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/mico-v/qqbot-course-schedule/internal/schedule"
+	"github.com/mico-v/qqbot-course-schedule/internal/admin"
 )
 
 // registerOverrideRoutes mounts the admin API for holiday/shift markers.
-func registerOverrideRoutes(api *gin.RouterGroup, service *schedule.Service) {
+func registerOverrideRoutes(api *gin.RouterGroup, service *admin.Service) {
 	api.GET("/overrides", func(c *gin.Context) {
 		scopeID := strings.TrimSpace(c.Query("scope_id"))
 		if scopeID == "" {

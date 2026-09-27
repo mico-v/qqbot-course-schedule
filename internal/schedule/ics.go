@@ -297,7 +297,7 @@ func ParseICSEvents(content string) ([]Event, error) {
 	if len(events) > MaxEventsPerFile {
 		return nil, fmt.Errorf("VEVENT 数量超过上限 %d", MaxEventsPerFile)
 	}
-	sortEvents(events)
+	SortEvents(events)
 	return events, nil
 }
 
@@ -345,7 +345,8 @@ func componentToEvent(component icsComponent) Event {
 	return event
 }
 
-func sortEvents(events []Event) {
+// SortEvents orders events by start time and end time.
+func SortEvents(events []Event) {
 	for i := 1; i < len(events); i++ {
 		for j := i; j > 0; j-- {
 			left, right := events[j-1], events[j]

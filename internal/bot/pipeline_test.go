@@ -371,17 +371,18 @@ func TestDayOffAndRankPipeline(t *testing.T) {
 }
 
 func TestPlainMessageRecordsSeenMember(t *testing.T) {
-	env, base := newTestEnv(t, newFakeQQ(), "http://127.0.0.1:1")
+	env, base, storeHandle := newTestEnvWithStore(t, newFakeQQ(), "http://127.0.0.1:1")
 	handler := NewDefaultHandler(env)
 	msg := freshMessage(base)
 	msg.Content = "大家早上好"
 	dispatch(context.Background(), env, handler, msg)
 
-	pending, err := env.Service.PendingMembers(env.Scope(base))
+	var seen map[string]string
+	found, err := storeHandle.GetKV(schedule.KVScopeGlobal, schedule.KVNamespaceSeen, env.Scope(base), &seen)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pending) != 1 || pending[0].UserID != "U1" || pending[0].Name != "小明" {
-		t.Fatalf("pending = %+v", pending)
+	if !found || len(seen) != 1 || seen["U1"] != "小明" {
+		t.Fatalf("seen members = %+v, found=%v", seen, found)
 	}
 }

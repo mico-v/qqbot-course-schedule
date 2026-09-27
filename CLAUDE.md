@@ -43,21 +43,28 @@ go run ./cmd/cardpreview -o /tmp/card.jpg     # 改卡片版式时先看预览�
 ```
 webhook → bot → schedule
               ↘ qqapi
+store  → schedule/admin
+admin  → schedule
 render  只依赖 schedule 的数据结构
-server  依赖 store/schedule/render，不依赖 webhook
-schedule 包内不得 import gin / qqapi / store（只认 types.go 里的 Storage 接口）
+server  依赖 admin/schedule，不依赖 webhook/store
+schedule 包内不得 import gin / qqapi / store / admin（只认 types.go 里的 Storage 接口）
+admin 包内不得 import gin / sqlite / render / store（只认自己的 Storage 端口）
 ```
 
-`main` 只做装配：`config → store → render → qqapi → bot.Env → webhook.Dispatcher → gin 路由 → scheduler`（见 `cmd/bot/main.go`）。
+`main` 只做装配：`config → store → schedule.Service → admin.Service → render → qqapi → bot.Env → webhook.Dispatcher → gin 路由 → scheduler`（见 `cmd/bot/main.go`）。
 `bot.Env` 不持有通用 `schedule.Storage`：推送订阅与面板状态分别只依赖 `schedule.PushStore` /
 `schedule.PanelStore`，非测试代码不得 import `store`。
 
 ## 关键约定
 
-**所有课表写路径都经过 `schedule.Service`**（`internal/schedule/service.go`、`web.go`）。它负责排序、ICS 重建、派生字段、`course_id` 重排。机器人指令、WebUI `/api/*`、批量导入导出共用同一层，不要绕过它直接写 store。推送订阅/面板状态属于独立的 KV 配置，只能走 `schedule.PushStore` / `schedule.PanelStore`。
+**所有课表写路径都经过服务层**：领域操作使用 `schedule.Service`，管理台应用操作使用
+`internal/admin.Service`（它组合 `*schedule.Service`，并通过 `admin.Storage` 读取管理台数据）。
+排序、ICS 重建、派生字段与 `course_id` 重排仍由 `schedule` 负责。机器人指令、WebUI `/api/*`、
+批量导入导出不得绕过服务层直接写 `store`。推送订阅/面板状态属于独立的 KV 配置，只能走
+`schedule.PushStore` / `schedule.PanelStore`。
 
 **乐观锁**：`Storage.PutMember(scopeID, userID, member, expectedRevision)`，`expectedRevision=nil` 表示新建。
-`store.ErrConflict` → WebUI 返回 409（提示刷新，**不自动重试覆盖**）；机器人侧回中文提示。
+`schedule.ErrConflict` → WebUI 返回 409（提示刷新，**不自动重试覆盖**）；机器人侧回中文提示。
 裸写 SQL（不带 revision）是禁止的。
 
 **指令注册**（`internal/bot/commands.go` 的 `NewDefaultHandler`）：一个 `Command{Prefix, Aliases, Description, Ready, Handle}`。
@@ -92,7 +99,9 @@ schedule 包内不得 import gin / qqapi / store（只认 types.go 里的 Storag
 **不做彩色 emoji**（按字素簇拆分，缺字形回退单色 emoji 或占位）；
 头像必须先按 cover 缩放再裁圆；JPEG quality 80 写 `data/images`，24h TTL 清理，单卡目标 <300ms。
 
-**Web 管理台**（`web/`，`go:embed`，`internal/server/`）：`/admin` + `/api/*`，`admin_password` 为空时仅回环可访问，设置后为 Basic Auth（用户名 `admin`）。
+**Web 管理台**（`web/`，`go:embed`，`internal/admin/` + `internal/server/`）：`/admin` + `/api/*`，
+`admin_password` 为空时仅回环可访问，设置后为 Basic Auth（用户名 `admin`）。HTTP 路由只依赖
+`*admin.Service`，不接触 `store`。
 前端不用 `window.AstrBotPluginPage`，统一 `fetch('/api/...')`，错误统一 `{error: "..."}`。
 服务端必须重新校验所有输入，前端校验只是体验。公网只放行 `/webhook`、`/healthz`、`/images/*`、`/files/*`。
 

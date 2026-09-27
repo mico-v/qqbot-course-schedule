@@ -15,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/mico-v/qqbot-course-schedule/internal/admin"
 	"github.com/mico-v/qqbot-course-schedule/internal/schedule"
 )
 
@@ -32,7 +33,7 @@ type archiveManifest struct {
 	Members []archiveManifestEntry `json:"members"`
 }
 
-func registerTransferRoutes(api *gin.RouterGroup, service *schedule.Service) {
+func registerTransferRoutes(api *gin.RouterGroup, service *admin.Service) {
 	api.GET("/export", func(c *gin.Context) {
 		scopeID := strings.TrimSpace(c.Query("scope_id"))
 		if scopeID == "" {
@@ -107,17 +108,17 @@ func registerTransferRoutes(api *gin.RouterGroup, service *schedule.Service) {
 			return
 		}
 		defer file.Close()
-		data, err := io.ReadAll(io.LimitReader(file, schedule.MaxBackupBytes+1))
+		data, err := io.ReadAll(io.LimitReader(file, admin.MaxBackupBytes+1))
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "读取上传文件失败。"})
 			return
 		}
-		if int64(len(data)) > schedule.MaxBackupBytes {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("文件超过 %d MiB。", schedule.MaxBackupBytes>>20)})
+		if int64(len(data)) > admin.MaxBackupBytes {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("文件超过 %d MiB。", admin.MaxBackupBytes>>20)})
 			return
 		}
 
-		var result *schedule.ImportResult
+		var result *admin.ImportResult
 		switch strings.ToLower(filepath.Ext(fileHeader.Filename)) {
 		case ".zip":
 			result, err = importICSArchive(service, scopeID, data)
@@ -189,7 +190,7 @@ func buildICSArchive(scopeID string, members map[string]*schedule.Member) ([]byt
 	return buffer.Bytes(), nil
 }
 
-func importICSArchive(service *schedule.Service, scopeID string, data []byte) (*schedule.ImportResult, error) {
+func importICSArchive(service *admin.Service, scopeID string, data []byte) (*admin.ImportResult, error) {
 	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return nil, fmt.Errorf("不是有效的 zip 文件。")
@@ -212,14 +213,14 @@ func importICSArchive(service *schedule.Service, scopeID string, data []byte) (*
 		}
 	}
 
-	result := &schedule.ImportResult{}
+	result := &admin.ImportResult{}
 	entries := 0
 	for _, file := range reader.File {
 		if file.FileInfo().IsDir() {
 			continue
 		}
 		entries++
-		if entries > schedule.MaxBackupMembers+10 {
+		if entries > admin.MaxBackupMembers+10 {
 			break
 		}
 		base := filepath.Base(file.Name)
@@ -265,7 +266,7 @@ func importICSArchive(service *schedule.Service, scopeID string, data []byte) (*
 	return result, nil
 }
 
-func importSingleICS(service *schedule.Service, scopeID, userID, filename string, data []byte) (*schedule.ImportResult, error) {
+func importSingleICS(service *admin.Service, scopeID, userID, filename string, data []byte) (*admin.ImportResult, error) {
 	target := strings.TrimSpace(userID)
 	if target == "" {
 		if matched := archiveICSNameRe.FindStringSubmatch(filepath.Base(filename)); matched != nil {
@@ -279,7 +280,7 @@ func importSingleICS(service *schedule.Service, scopeID, userID, filename string
 	if err != nil {
 		return nil, err
 	}
-	result := &schedule.ImportResult{MemberCount: 1, EventCount: saved.EventCount}
+	result := &admin.ImportResult{MemberCount: 1, EventCount: saved.EventCount}
 	if saved.Created {
 		result.CreatedCount = 1
 	} else {
@@ -288,8 +289,8 @@ func importSingleICS(service *schedule.Service, scopeID, userID, filename string
 	return result, nil
 }
 
-func importBackupFile(service *schedule.Service, scopeID string, data []byte) (*schedule.ImportResult, error) {
-	var backup schedule.BackupFile
+func importBackupFile(service *admin.Service, scopeID string, data []byte) (*admin.ImportResult, error) {
+	var backup admin.BackupFile
 	if err := json.Unmarshal(data, &backup); err != nil {
 		return nil, fmt.Errorf("不是有效的备份文件。")
 	}

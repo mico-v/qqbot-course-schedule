@@ -58,7 +58,7 @@ go run ./cmd/bot
 qqbot-course-schedule/
 ├── README.md / PLAN.md / DEV-GUIDE.md / CONNECT.md / COVERAGE-AstrBot.md
 ├── cmd/
-│   ├── bot/main.go              # 装配：config → store → qqapi → bot → server → scheduler
+│   ├── bot/main.go              # 装配：config → store → schedule/admin → qqapi → bot/server → scheduler
 │   └── cardpreview/main.go      # 样例卡片预览（-rank 预览榜单）
 ├── internal/
 │   ├── config/                  # config.json 加载、默认值、校验
@@ -91,6 +91,9 @@ qqbot-course-schedule/
 │   ├── store/                   # SQLite：三表 + KV + revision 乐观锁
 │   │   ├── store.go             #   课表、标记、统计与通用 KV
 │   │   └── kv_state.go          #   推送订阅/面板状态的窄接口适配
+│   ├── admin/                   # 管理台应用层（无 Gin / SQLite / 渲染依赖）
+│   │   ├── service.go           #   会话汇总、成员读写、批量建表、标记管理
+│   │   └── backup.go            #   管理台原始备份/恢复与限额
 │   ├── schedule/                # 课表领域（纯逻辑，无框架依赖）
 │   │   ├── types.go             #   Event/Member/DayOverride/Storage 接口
 │   │   ├── ics.go               #   VEVENT 解析/序列化、RAW_ICAL、嵌套组件
@@ -104,7 +107,7 @@ qqbot-course-schedule/
 │   │   ├── kv_namespaces.go     #   四个 KV 命名空间集中定义
 │   │   ├── pushstore.go         #   推送订阅 DTO 与存储接口
 │   │   ├── panelstore.go        #   面板状态 DTO 与存储接口
-│   │   ├── web.go               #   管理台服务层（汇总/读写/建表/观察成员）
+│   │   ├── seen.go              #   观察成员记录（管理台候选来源）
 │   │   └── service.go           #   ICS 导入与日卡数据
 │   ├── render/
 │   │   ├── font.go              #   内嵌字体、字素簇、单色 emoji 回退、富文本测量
@@ -137,13 +140,18 @@ qqbot-course-schedule/
 ```
 webhook → bot → schedule
               ↘ qqapi
+store   → schedule/admin
+admin   → schedule
 render 只依赖 schedule 的数据结构
-server 依赖 store/schedule/render，不依赖 webhook
-schedule 包内不得 import gin/qqapi/store
+server 依赖 admin/schedule，不依赖 webhook/store
+schedule 包内不得 import gin/qqapi/store/admin
+admin 包内不得 import gin/sqlite/render/store
 ```
 
 `bot` 的非测试代码不得 import `store`；`Env` 只暴露 `schedule.PushStore` /
 `schedule.PanelStore` 两个窄接口。KV 命名空间集中定义在 `schedule/kv_namespaces.go`。
+`store.Store` 是适配器，同时实现 `schedule.Storage` 与 `admin.Storage`；HTTP 路由只拿到
+`*admin.Service`，不得直接访问 SQLite。边界由 `scripts/check-architecture.sh` 强制检查。
 
 ---
 
@@ -263,19 +271,21 @@ func handleSchedule(ctx context.Context, in *Inbound, r *Replier) error {
 ### 6.3 存储使用
 
 ```go
-// 读取
-member, found, err := store.GetMember(ctx, scopeID, userID)
-// 写入（乐观锁）
-err = store.PutMember(ctx, scopeID, userID, updated, store.ExpectRevision(member.Revision))
-if errors.Is(err, store.ErrConflict) {
-    return ctx.Text("课表已更新，请刷新后重试。").Send()
-}
+// 管理台读取
+page, found, err := adminService.PageSchedule(scopeID, userID)
+
+// 管理台写入：回传页面读到的 revision，由 admin.Service 调用领域服务
+_, err = adminService.SavePageSchedule(admin.SavePagePayload{
+    ScopeID: scopeID, UserID: userID, Revision: &page.Revision,
+    Events: events,
+}, "webui")
 ```
 
 规则：
 
-- 所有写操作走带 `expected_revision` 的接口；禁止裸写。
-- 事件变更必须走服务层 `schedule.Service`（负责排序、ICS 重建、派生字段）。
+- HTTP 边界只调用 `admin.Service`；不得直接调用 `store` 或拼接 SQL。
+- 事件变更复用 `schedule.Service` / `schedule.SortEvents`，由服务层负责排序、ICS 重建与派生字段。
+- 成员课表写操作必须带 `expected_revision`；冲突在管理台转为 409，在聊天侧转为中文提示，禁止裸写。
 - 一次业务操作 = 一个事务；不得跨事务拼接。
 - 迁移用 `metadata.schema_version` + 顺序脚本，禁止直接改线上表结构。
 
@@ -335,7 +345,7 @@ msg.Keyboard(kb)
 - 前端不使用 `window.AstrBotPluginPage`，统一 `fetch('/api/...')`，错误统一 `{error: "..."}`。
 - 保存流程：读取时拿 `revision` → 提交时回传 → 409 时提示刷新，**不要自动重试覆盖**。
 - 所有输入在服务端重新校验（长度、时间、RRULE），前端校验只是体验。
-- 观察成员：`Handler.Dispatch` 对**每条收到的消息**调用 `Service.RecordSeenMember`
+- 观察成员：`Handler.Dispatch` 对**每条收到的消息**调用 `schedule.Service.RecordSeenMember`
   （指令、附件、全量模式下的普通发言都算）；官方群成员列表内邀不可用，这是降级方案。
 - 会话列表除"已有课表"的群外，还包含"只有发言记录、还没有课表"的群（`ScopeSummaries`
   合并 `seen` KV），并返回 `pending_count`，管理台显示"待添加 N 位成员"引导建表。
@@ -345,7 +355,7 @@ msg.Keyboard(kb)
   - `GET /api/overrides?scope_id=` 列出标记（带成员显示名，`*` 显示为"全体成员"）
   - `POST /api/overrides/set`（`scope_id`/`user_id`/`day`/`kind`/`source_day`）与
     `POST /api/overrides/delete`（`scope_id`/`user_id`/`day`）
-  - 服务端复用 `SetWebDayOverride`/`DeleteWebDayOverride`，与机器人指令共享同一张表与校验
+  - 服务端复用 `admin.Service.SetWebDayOverride`/`DeleteWebDayOverride`，与机器人指令共享同一张表与校验
     （类型、来源日期、上限），`created_by` 记为 `webui`
 - 批量导入/导出（`internal/server/transfer.go`）：
   - `GET /api/export?scope_id=&format=ics|backup`：ICS 压缩包（每成员 `schedule_<OpenID>.ics`
