@@ -46,6 +46,14 @@ type Env struct {
 	avatarCache map[string]avatarCacheEntry
 }
 
+// RenderedCard is a card image ready to send, including the dimensions the
+// platform must use when embedding it in a Markdown message.
+type RenderedCard struct {
+	URL    string
+	Width  int
+	Height int
+}
+
 const (
 	botAvatarFetchTimeout  = 15 * time.Second
 	botAvatarRetryInterval = 5 * time.Minute
@@ -154,12 +162,12 @@ func (e *Env) PublicImageURL(name string) string {
 // RenderDayCard builds and saves the card for one day, recording how long the
 // render stage took on the replier.
 // ok is false when the scope has no saved schedules.
-func (e *Env) RenderDayCard(ctx context.Context, in *Inbound, r *Replier, day time.Time) (string, bool, error) {
+func (e *Env) RenderDayCard(ctx context.Context, in *Inbound, r *Replier, day time.Time) (RenderedCard, bool, error) {
 	start := time.Now()
 	e.EnsureBotAvatar()
 	card, ok, err := e.Service.BuildDayCard(e.Scope(in), day, e.now())
 	if err != nil || !ok {
-		return "", ok, err
+		return RenderedCard{}, ok, err
 	}
 	image := e.Renderer.DayCard(render.DayCardData{
 		Title:         card.Title,
@@ -175,21 +183,26 @@ func (e *Env) RenderDayCard(ctx context.Context, in *Inbound, r *Replier, day ti
 	})
 	name, err := render.SaveJPEG(image, e.ImagesDir, "schedule_"+card.Selected.Format("20060102"))
 	if err != nil {
-		return "", false, fmt.Errorf("保存课表图片失败: %w", err)
+		return RenderedCard{}, false, fmt.Errorf("保存课表图片失败: %w", err)
 	}
 	if r != nil {
 		r.markRender(start)
 	}
-	return e.PublicImageURL(name), true, nil
+	bounds := image.Bounds()
+	return RenderedCard{
+		URL:    e.PublicImageURL(name),
+		Width:  bounds.Dx(),
+		Height: bounds.Dy(),
+	}, true, nil
 }
 
 // SendCard sends a card image. When buttons are enabled it uses a markdown
 // message (the only message type that renders keyboards) and falls back to a
 // media message when the platform rejects the keyboard.
-func (e *Env) SendCard(ctx context.Context, in *Inbound, r *Replier, imageURL string, keyboard *qqapi.Keyboard) error {
+func (e *Env) SendCard(ctx context.Context, in *Inbound, r *Replier, card RenderedCard, keyboard *qqapi.Keyboard) error {
 	start := time.Now()
 	if e.Buttons && keyboard != nil {
-		content := fmt.Sprintf("![课程表 #1240px #850px](%s)", imageURL)
+		content := fmt.Sprintf("![课程表 #%dpx #%dpx](%s)", card.Width, card.Height, card.URL)
 		var err error
 		if in.MsgID == "" && in.EventID != "" {
 			if in.Origin == OriginGroup {
@@ -218,7 +231,7 @@ func (e *Env) SendCard(ctx context.Context, in *Inbound, r *Replier, imageURL st
 	// ReplyImage measures and reports the send stage itself. Do not re-measure
 	// here: a second markSend would rewrite send_ms from a later origin, and the
 	// reply-stage record it already filed would outrank the card record.
-	err := r.ReplyImage(ctx, imageURL)
+	err := r.ReplyImage(ctx, card.URL)
 	e.recordStats(ctx, in, r, schedule.StatsStageCard, err)
 	return err
 }
@@ -226,15 +239,15 @@ func (e *Env) SendCard(ctx context.Context, in *Inbound, r *Replier, imageURL st
 // RenderRankCard builds and saves the class-hours leaderboard for one period,
 // recording how long the render stage took on the replier.
 // ok is false when the scope has no countable courses.
-func (e *Env) RenderRankCard(ctx context.Context, in *Inbound, r *Replier, period string) (string, bool, error) {
+func (e *Env) RenderRankCard(ctx context.Context, in *Inbound, r *Replier, period string) (RenderedCard, bool, error) {
 	start := time.Now()
 	e.EnsureBotAvatar()
 	rows, label, err := e.Service.RankBoardRows(e.Scope(in), period, e.now())
 	if err != nil {
-		return "", false, err
+		return RenderedCard{}, false, err
 	}
 	if len(rows) == 0 {
-		return "", false, nil
+		return RenderedCard{}, false, nil
 	}
 	shown := rows
 	if len(shown) > schedule.DefaultRankTopN {
@@ -292,12 +305,17 @@ func (e *Env) RenderRankCard(ctx context.Context, in *Inbound, r *Replier, perio
 	})
 	name, err := render.SaveJPEG(image, e.ImagesDir, "rank_"+label)
 	if err != nil {
-		return "", false, fmt.Errorf("保存榜单图片失败: %w", err)
+		return RenderedCard{}, false, fmt.Errorf("保存榜单图片失败: %w", err)
 	}
 	if r != nil {
 		r.markRender(start)
 	}
-	return e.PublicImageURL(name), true, nil
+	bounds := image.Bounds()
+	return RenderedCard{
+		URL:    e.PublicImageURL(name),
+		Width:  bounds.Dx(),
+		Height: bounds.Dy(),
+	}, true, nil
 }
 
 // ImagesDirectory returns the absolute images directory (for tests/tools).

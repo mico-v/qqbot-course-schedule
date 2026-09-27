@@ -162,14 +162,14 @@ func (e *Env) PushScope(ctx context.Context, scope string, sub PushSubscription)
 		in.UserOpenID = sub.OpenID
 	}
 	r := e.newReplier(ctx, in)
-	url, ok, err := e.RenderDayCard(ctx, in, r, e.now())
+	card, ok, err := e.RenderDayCard(ctx, in, r, e.now())
 	if err != nil {
 		return err
 	}
 	if !ok {
 		return errPushNoSchedule
 	}
-	return r.PushImage(ctx, url)
+	return r.PushImage(ctx, card.URL)
 }
 
 // pushTimeText renders the cron time for replies ("每天 07:30").

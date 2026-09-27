@@ -31,6 +31,166 @@ const scopeList = $("#scopeList");
 const courseList = $("#courseList");
 const courseTemplate = $("#courseTemplate");
 
+const THEME_STORAGE_KEY = "qqbot-admin-theme";
+const THEME_MODES = ["auto", "light", "dark"];
+const THEME_LABELS = {
+  auto: "自动",
+  light: "浅色",
+  dark: "深色",
+};
+const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
+const dialogState = {
+  active: null,
+  previousFocus: null,
+};
+
+function readThemeMode() {
+  const documentMode = document.documentElement.dataset.themeMode;
+  if (THEME_MODES.includes(documentMode)) return documentMode;
+  try {
+    const saved = window.localStorage.getItem(THEME_STORAGE_KEY);
+    if (THEME_MODES.includes(saved)) return saved;
+  } catch {
+    /* Storage can be unavailable in privacy-restricted contexts. */
+  }
+  return "auto";
+}
+
+let themeMode = readThemeMode();
+
+function effectiveTheme() {
+  return themeMode === "auto" ? (systemTheme.matches ? "dark" : "light") : themeMode;
+}
+
+function applyTheme({ persist = false } = {}) {
+  const root = document.documentElement;
+  if (themeMode === "auto") delete root.dataset.theme;
+  else root.dataset.theme = themeMode;
+  root.dataset.themeMode = themeMode;
+
+  const button = $("#themeButton");
+  if (button) {
+    const label = THEME_LABELS[themeMode];
+    button.textContent = `主题：${label}`;
+    button.title = `当前主题：${label}，点击切换`;
+    button.setAttribute("aria-label", `当前主题：${label}，点击切换`);
+  }
+
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = effectiveTheme() === "dark" ? "#101722" : "#f3f6fb";
+
+  if (persist) {
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
+    } catch {
+      /* Keep the current session usable even if persistence fails. */
+    }
+  }
+}
+
+function cycleTheme() {
+  const index = THEME_MODES.indexOf(themeMode);
+  themeMode = THEME_MODES[(index + 1) % THEME_MODES.length];
+  applyTheme({ persist: true });
+}
+
+function setupTheme() {
+  applyTheme();
+  $("#themeButton")?.addEventListener("click", cycleTheme);
+  const onSystemThemeChange = () => {
+    if (themeMode === "auto") applyTheme();
+  };
+  if (typeof systemTheme.addEventListener === "function") {
+    systemTheme.addEventListener("change", onSystemThemeChange);
+  } else {
+    systemTheme.addListener(onSystemThemeChange);
+  }
+}
+
+const FOCUSABLE_SELECTOR = [
+  "a[href]",
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  '[tabindex]:not([tabindex="-1"])',
+].join(",");
+
+function activeDialog() {
+  return [...document.querySelectorAll(".dialog-overlay")].find(
+    (dialog) => !dialog.classList.contains("hidden"),
+  );
+}
+
+function focusableElements(dialog) {
+  return [...dialog.querySelectorAll(FOCUSABLE_SELECTOR)].filter(
+    (element) => element.getClientRects().length > 0,
+  );
+}
+
+function setPageInert(inert) {
+  const main = $("#mainContent");
+  const skipLink = $(".skip-link");
+  if (main) main.inert = inert;
+  if (skipLink) skipLink.inert = inert;
+  document.body.classList.toggle("dialog-open", inert);
+}
+
+function openDialog(dialog, initialFocusSelector) {
+  dialogState.previousFocus =
+    document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  dialogState.active = dialog;
+  setPageInert(true);
+  dialog.classList.remove("hidden");
+  window.requestAnimationFrame(() => {
+    const initial = initialFocusSelector ? dialog.querySelector(initialFocusSelector) : null;
+    (initial || focusableElements(dialog)[0] || dialog).focus();
+  });
+}
+
+function closeDialog(dialog) {
+  dialog.classList.add("hidden");
+  if (dialogState.active !== dialog) return;
+  const previousFocus = dialogState.previousFocus;
+  dialogState.active = null;
+  dialogState.previousFocus = null;
+  setPageInert(false);
+  if (previousFocus && document.contains(previousFocus) && previousFocus.getClientRects().length) {
+    previousFocus.focus();
+  }
+}
+
+function handleDialogKeyboard(event) {
+  const dialog = activeDialog();
+  if (!dialog) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeDialog(dialog);
+    return;
+  }
+  if (event.key !== "Tab") return;
+
+  const focusable = focusableElements(dialog);
+  if (!focusable.length) {
+    event.preventDefault();
+    dialog.focus();
+    return;
+  }
+
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (!dialog.contains(document.activeElement)) {
+    event.preventDefault();
+    first.focus();
+  } else if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
 async function api(path, options = {}) {
   const response = await fetch(path, {
     headers: { "Content-Type": "application/json" },
@@ -65,6 +225,7 @@ function apiPost(path, body) {
 function showNotice(message, type = "") {
   notice.textContent = message || "";
   notice.className = `notice${message ? " show" : ""}${type ? ` ${type}` : ""}`;
+  notice.setAttribute("aria-live", type === "error" ? "assertive" : "polite");
 }
 
 function setDirty(value) {
@@ -80,9 +241,11 @@ function setBusy(button, busy) {
   if (!button) return;
   button.disabled = busy;
   if (busy) {
+    button.setAttribute("aria-busy", "true");
     button.dataset.oldText = button.textContent;
     button.textContent = "处理中…";
   } else {
+    button.removeAttribute("aria-busy");
     button.textContent = button.dataset.oldText || button.textContent;
   }
 }
@@ -107,9 +270,10 @@ function scopeMatches(scope, query) {
 function makeMemberButton(scope, member) {
   const button = document.createElement("button");
   button.type = "button";
-  button.className = `member-item${
-    state.selectedScopeId === scope.scope_id && state.selectedUserId === member.user_id ? " active" : ""
-  }`;
+  const active =
+    state.selectedScopeId === scope.scope_id && state.selectedUserId === member.user_id;
+  button.className = `member-item${active ? " active" : ""}`;
+  if (active) button.setAttribute("aria-current", "true");
   button.addEventListener("click", () => selectMember(scope.scope_id, member.user_id));
 
   const title = document.createElement("div");
@@ -126,17 +290,32 @@ function renderScopes() {
   const query = $("#scopeSearch").value.trim();
   const visible = state.scopes.filter((scope) => scopeMatches(scope, query));
   scopeList.textContent = "";
-  $("#scopeCount").textContent = String(state.scopes.length);
+  const scopeCount = $("#scopeCount");
+  scopeCount.textContent = String(query ? visible.length : state.scopes.length);
+  scopeCount.title = query
+    ? `搜索结果 ${visible.length} 个，共 ${state.scopes.length} 个会话`
+    : `共 ${state.scopes.length} 个会话`;
+
+  if (!visible.length) {
+    const empty = document.createElement("p");
+    empty.className = "scope-empty";
+    empty.textContent = query ? "没有符合搜索条件的会话。" : "暂无可管理的会话。";
+    scopeList.append(empty);
+    return;
+  }
 
   for (const scope of visible) {
     const wrapper = document.createElement("div");
     wrapper.className = "scope-item";
+    const active = state.selectedScopeId === scope.scope_id;
+    wrapper.classList.toggle("active", active);
 
     const header = document.createElement("div");
     header.className = "scope-heading";
     const scopeButton = document.createElement("button");
     scopeButton.type = "button";
     scopeButton.className = "scope-button";
+    if (active) scopeButton.setAttribute("aria-current", "true");
     scopeButton.innerHTML = `<span class="scope-label"></span><span class="scope-meta"></span>`;
     scopeButton.querySelector(".scope-label").textContent = scope.label;
     const pendingCount = scope.pending_count || 0;
@@ -162,6 +341,8 @@ function renderScopes() {
       addButton.type = "button";
       addButton.className = "scope-add";
       addButton.title = "添加成员课表";
+      addButton.setAttribute("aria-label", `向${scope.label}添加成员课表`);
+      addButton.setAttribute("aria-haspopup", "dialog");
       addButton.textContent = "＋";
       addButton.addEventListener("click", (event) => {
         event.stopPropagation();
@@ -174,6 +355,7 @@ function renderScopes() {
     transferButton.className = "scope-add";
     transferButton.title = `导入 / 导出「${scope.label}」`;
     transferButton.setAttribute("aria-label", `导入或导出${scope.label}`);
+    transferButton.setAttribute("aria-haspopup", "dialog");
     transferButton.textContent = "⇅";
     transferButton.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -359,19 +541,34 @@ function visiblePicks() {
   });
 }
 
+function updateSelectedMemberCount() {
+  const count = $("#addMemberCount");
+  const value = addMembers.selected.size;
+  count.textContent = String(value);
+  count.setAttribute("aria-label", `已选成员 ${value} 人`);
+}
+
 function makePickRow(member) {
   const row = document.createElement("label");
-  row.className = "member-pick";
   const box = document.createElement("input");
   box.type = "checkbox";
   box.checked = addMembers.selected.has(member.user_id);
+  row.className = `pick-row${box.checked ? " checked" : ""}`;
   box.addEventListener("change", () => {
     if (box.checked) addMembers.selected.add(member.user_id);
     else addMembers.selected.delete(member.user_id);
-    $("#addMemberCount").textContent = String(addMembers.selected.size);
+    row.classList.toggle("checked", box.checked);
+    updateSelectedMemberCount();
   });
   const text = document.createElement("span");
-  text.textContent = member.name ? `${member.name}（${member.user_id}）` : member.user_id;
+  text.className = "pick-text";
+  const name = document.createElement("span");
+  name.className = "pick-name";
+  name.textContent = member.name || "未命名成员";
+  const meta = document.createElement("span");
+  meta.className = "pick-meta";
+  meta.textContent = member.user_id;
+  text.append(name, meta);
   row.append(box, text);
   return row;
 }
@@ -383,7 +580,7 @@ function renderPicker() {
   for (const member of visible) {
     list.append(makePickRow(member));
   }
-  $("#addMemberCount").textContent = String(addMembers.selected.size);
+  updateSelectedMemberCount();
   const empty = $("#addMemberEmpty");
   if (!addMembers.loading && visible.length === 0) {
     empty.textContent = addMembers.members.length
@@ -403,12 +600,12 @@ function openAddMembers(scope) {
   addMembers.filter = "";
   $("#addMemberSearch").value = "";
   $("#addMemberMeta").textContent = scope.label;
-  $("#addMemberDialog").classList.remove("hidden");
+  openDialog($("#addMemberDialog"), "#addMemberSearch");
   loadAddMembers();
 }
 
 function closeAddMembers() {
-  $("#addMemberDialog").classList.add("hidden");
+  closeDialog($("#addMemberDialog"));
 }
 
 async function loadAddMembers() {
@@ -582,12 +779,12 @@ function openTransfer(scope) {
   transfer.memberCount = scope.member_count || 0;
   transfer.file = null;
   $("#transferFile").value = "";
-  $("#transferDialog").classList.remove("hidden");
   renderTransfer();
+  openDialog($("#transferDialog"), "#transferClose");
 }
 
 function closeTransfer() {
-  $("#transferDialog").classList.add("hidden");
+  closeDialog($("#transferDialog"));
   transfer.scopeId = "";
   transfer.label = "";
   transfer.memberCount = 0;
@@ -856,12 +1053,12 @@ async function loadSettings() {
 
 function openSettings() {
   $("#settingsHint").textContent = "";
-  settingsDialog().classList.remove("hidden");
+  openDialog(settingsDialog(), "#settingsEnabled");
   loadSettings();
 }
 
 function closeSettings() {
-  settingsDialog().classList.add("hidden");
+  closeDialog(settingsDialog());
 }
 
 async function saveSettings() {
@@ -884,6 +1081,8 @@ async function saveSettings() {
 }
 
 function start() {
+  setupTheme();
+  document.addEventListener("keydown", handleDialogKeyboard);
   $("#refreshButton").addEventListener("click", refresh);
   $("#settingsButton").addEventListener("click", openSettings);
   $("#settingsClose").addEventListener("click", closeSettings);

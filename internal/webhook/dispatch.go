@@ -143,7 +143,7 @@ func (d *Dispatcher) process(payload Payload) {
 			return
 		}
 		slog.Info("互动事件已应答", "button", data.Data.Resolved.ButtonID, "data", data.Data.Resolved.ButtonData)
-		callbackCtx, callbackCancel := context.WithTimeout(context.Background(), handlerTimeout)
+		callbackCtx, callbackCancel := context.WithTimeout(ctx, handlerTimeout)
 		defer callbackCancel()
 		d.handler.HandleCallback(callbackCtx, &bot.Callback{
 			Data:        data.Data.Resolved.ButtonData,

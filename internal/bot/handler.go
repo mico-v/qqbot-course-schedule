@@ -191,7 +191,7 @@ func (h *Handler) HandleCallback(ctx context.Context, cb *Callback) {
 	if h.env == nil || cb == nil || cb.Data == "" {
 		return
 	}
-	in := &Inbound{EventID: cb.EventID, UserOpenID: cb.UserOpenID, GroupOpenID: cb.GroupOpenID}
+	in := (&Inbound{EventID: cb.EventID, UserOpenID: cb.UserOpenID, GroupOpenID: cb.GroupOpenID}).WithReceived(ctx)
 	if cb.GroupOpenID != "" {
 		in.Origin = OriginGroup
 	} else {
@@ -208,13 +208,13 @@ func (h *Handler) HandleCallback(ctx context.Context, cb *Callback) {
 		if err != nil {
 			return
 		}
-		url, found, err := h.env.RenderDayCard(ctx, in, r, day)
+		card, found, err := h.env.RenderDayCard(ctx, in, r, day)
 		if err != nil || !found {
 			_ = r.Reply(ctx, "当前会话还没有可展示的课程表。")
 			return
 		}
 		keyboard := cardKeyboardForDay(day.Format("2006-01-02"), h.env.now().Format("2006-01-02"), cb.UserOpenID)
-		if err := h.env.SendCard(ctx, in, r, url, keyboard); err != nil {
+		if err := h.env.SendCard(ctx, in, r, card, keyboard); err != nil {
 			slog.Error("按钮卡片发送失败", "err", err)
 		}
 	case "rank":
@@ -222,12 +222,12 @@ func (h *Handler) HandleCallback(ctx context.Context, cb *Callback) {
 		if period == "" {
 			return
 		}
-		url, found, err := h.env.RenderRankCard(ctx, in, r, period)
+		card, found, err := h.env.RenderRankCard(ctx, in, r, period)
 		if err != nil || !found {
 			_ = r.Reply(ctx, "当前会话还没有可统计的课程。")
 			return
 		}
-		if err := h.env.SendCard(ctx, in, r, url, cardKeyboardForRank(cb.UserOpenID)); err != nil {
+		if err := h.env.SendCard(ctx, in, r, card, cardKeyboardForRank(cb.UserOpenID)); err != nil {
 			slog.Error("按钮榜单发送失败", "err", err)
 		}
 	}

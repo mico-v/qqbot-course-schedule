@@ -3,11 +3,26 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f3f6fb" />
     <title>课表管理</title>
+    <script>
+      (() => {
+        try {
+          const saved = localStorage.getItem("qqbot-admin-theme");
+          const mode = saved === "light" || saved === "dark" ? saved : "auto";
+          if (mode !== "auto") document.documentElement.dataset.theme = mode;
+          document.documentElement.dataset.themeMode = mode;
+        } catch {
+          /* Storage can be unavailable in privacy-restricted contexts. */
+        }
+      })();
+    </script>
     <link rel="stylesheet" href="/admin/style.css" />
   </head>
   <body>
-    <main class="app-shell">
+    <a class="skip-link" href="#mainContent">跳到主要内容</a>
+    <main id="mainContent" class="app-shell" tabindex="-1">
       <header class="hero">
         <div>
           <p class="eyebrow">COURSE SCHEDULE</p>
@@ -15,23 +30,39 @@
           <p class="hero-copy">按群组和成员手动维护课程，保存后会同步更新图片课表、查询结果和本地 ICS。</p>
         </div>
         <div class="hero-actions">
-          <button id="settingsButton" class="button button-ghost" type="button">设置</button>
+          <button
+            id="themeButton"
+            class="button button-ghost"
+            type="button"
+            aria-label="切换界面主题"
+          >
+            主题：自动
+          </button>
+          <button
+            id="settingsButton"
+            class="button button-ghost"
+            type="button"
+            aria-haspopup="dialog"
+          >
+            设置
+          </button>
           <button id="refreshButton" class="button button-ghost" type="button">刷新数据</button>
         </div>
       </header>
 
-      <section id="notice" class="notice" role="status" aria-live="polite"></section>
+      <section id="notice" class="notice" role="status" aria-live="polite" aria-atomic="true"></section>
 
       <section class="workspace">
         <aside class="sidebar panel">
           <div class="panel-heading">
             <div>
               <p class="section-kicker">SCOPE</p>
-          <h2>会话</h2>
+              <h2>会话</h2>
             </div>
             <span id="scopeCount" class="count-pill">0</span>
           </div>
           <label class="search-box">
+            <span class="sr-only">搜索会话或成员</span>
             <span aria-hidden="true">⌕</span>
             <input id="scopeSearch" type="search" placeholder="搜索会话或成员" autocomplete="off" />
           </label>
@@ -40,7 +71,7 @@
 
         <section class="content panel">
           <div id="emptyState" class="empty-state">
-            <div class="empty-icon">✦</div>
+            <div class="empty-icon" aria-hidden="true">✦</div>
             <h2>选择一个成员开始编辑</h2>
             <p>从左侧选择群组和成员，就可以添加、修改或删除课程。</p>
           </div>
@@ -77,7 +108,13 @@
                 <p class="muted">时间按本地时区保存；重复课程可填写 iCalendar RRULE。导入 .ics 会覆盖该成员现有课程。</p>
               </div>
               <div class="course-toolbar-actions">
-                <input id="memberImportFile" type="file" accept=".ics,text/calendar" class="hidden" />
+                <input
+                  id="memberImportFile"
+                  type="file"
+                  accept=".ics,text/calendar"
+                  class="hidden"
+                  aria-label="选择要导入的课表文件"
+                />
                 <button id="memberImportButton" class="button button-ghost" type="button">导入 .ics</button>
                 <button id="memberExportButton" class="button button-ghost" type="button">导出 .ics</button>
                 <button id="addCourseButton" class="button button-secondary" type="button">＋ 添加课程</button>
@@ -135,6 +172,7 @@
       role="dialog"
       aria-modal="true"
       aria-labelledby="addMemberTitle"
+      aria-describedby="addMemberMeta addMemberHint"
     >
       <div class="dialog-card">
         <header class="dialog-head">
@@ -147,6 +185,7 @@
         </header>
 
         <label class="search-box dialog-search">
+          <span class="sr-only">搜索昵称或 OpenID</span>
           <span aria-hidden="true">⌕</span>
           <input id="addMemberSearch" type="search" placeholder="搜索昵称或 OpenID" autocomplete="off" />
         </label>
@@ -154,7 +193,15 @@
         <div class="dialog-toolbar">
           <button id="addMemberSelectAll" class="button button-ghost" type="button">全选可见</button>
           <button id="addMemberReload" class="button button-ghost" type="button">重新获取</button>
-          <span id="addMemberCount" class="count-pill" title="已选成员">0</span>
+          <span
+            id="addMemberCount"
+            class="count-pill"
+            title="已选成员"
+            aria-label="已选成员 0 人"
+            aria-live="polite"
+          >
+            0
+          </span>
         </div>
 
         <div id="addMemberList" class="member-picker"></div>
@@ -176,6 +223,7 @@
       role="dialog"
       aria-modal="true"
       aria-labelledby="transferTitle"
+      aria-describedby="transferMeta transferHint"
     >
       <div class="dialog-card transfer-card">
         <header class="dialog-head">
@@ -237,6 +285,7 @@
       role="dialog"
       aria-modal="true"
       aria-labelledby="settingsTitle"
+      aria-describedby="settingsHint"
     >
       <div class="dialog-card settings-card">
         <header class="dialog-head">

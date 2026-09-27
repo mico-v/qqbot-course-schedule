@@ -205,14 +205,14 @@ func (h *Handler) handleRankCommand(ctx context.Context, in *Inbound, r *Replier
 	if h.env == nil {
 		return r.Reply(ctx, "课表功能未初始化。")
 	}
-	url, ok, err := h.env.RenderRankCard(ctx, in, r, in.Args)
+	card, ok, err := h.env.RenderRankCard(ctx, in, r, in.Args)
 	if err != nil {
 		return r.Reply(ctx, err.Error())
 	}
 	if !ok {
 		return r.Reply(ctx, "当前会话还没有可统计的课程。")
 	}
-	return h.env.SendCard(ctx, in, r, url, cardKeyboardForRank(in.UserOpenID))
+	return h.env.SendCard(ctx, in, r, card, cardKeyboardForRank(in.UserOpenID))
 }
 
 func (h *Handler) handleOverrideSet(ctx context.Context, in *Inbound, r *Replier, kind string) error {
@@ -528,7 +528,7 @@ func handleDayCard(ctx context.Context, env *Env, in *Inbound, r *Replier, day *
 	if day != nil {
 		target = *day
 	}
-	url, ok, err := env.RenderDayCard(ctx, in, r, target)
+	card, ok, err := env.RenderDayCard(ctx, in, r, target)
 	if err != nil {
 		return err
 	}
@@ -536,7 +536,7 @@ func handleDayCard(ctx context.Context, env *Env, in *Inbound, r *Replier, day *
 		return r.Reply(ctx, "当前会话还没有可展示的课程表。请先发送 /导入课表 并附加 .ics 文件。")
 	}
 	keyboard := cardKeyboardForDay(target.Format("2006-01-02"), env.now().Format("2006-01-02"), in.UserOpenID)
-	return env.SendCard(ctx, in, r, url, keyboard)
+	return env.SendCard(ctx, in, r, card, keyboard)
 }
 
 func toScheduleMentions(mentions []Mention) []schedule.Mention {

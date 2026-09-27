@@ -234,6 +234,32 @@ func TestDayCardWithoutScheduleRepliesText(t *testing.T) {
 	}
 }
 
+func TestMarkdownCardUsesRenderedDimensions(t *testing.T) {
+	fake := newFakeQQ()
+	apiServer := httptest.NewServer(fake.handler())
+	t.Cleanup(apiServer.Close)
+
+	env, message := newTestEnv(t, fake, apiServer.URL)
+	env.Buttons = true
+	ctx := context.Background()
+	card := RenderedCard{
+		URL:    "https://cards.example.com/images/schedule_20260917_test.jpg",
+		Width:  1240,
+		Height: 928,
+	}
+
+	if err := env.SendCard(ctx, message, env.newReplier(ctx, message), card, &qqapi.Keyboard{}); err != nil {
+		t.Fatalf("SendCard: %v", err)
+	}
+	reply := waitMessage(t, fake)
+	markdown, _ := reply["markdown"].(map[string]any)
+	content, _ := markdown["content"].(string)
+	want := "![课程表 #1240px #928px](" + card.URL + ")"
+	if content != want {
+		t.Fatalf("markdown content = %q, want %q", content, want)
+	}
+}
+
 func TestScheduleCommandParsesDate(t *testing.T) {
 	fake := newFakeQQ()
 	apiServer := httptest.NewServer(fake.handler())
