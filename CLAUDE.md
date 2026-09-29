@@ -83,7 +83,7 @@ admin 包内不得 import gin / sqlite / render / store（只认自己的 Storag
 **日期解析只有两个入口**：`schedule/dayoff.go`（天/范围，含相对词）与 `schedule/timerange.go`（区间表达式）。新需求必须扩展这两个，**不要新写解析器**。
 
 **KV 命名空间**（表 `kv_data`，`store.GetKV/SetKV/ListKV/DeleteKV`，`global` scope 下）：
-`settings/bot`（总开关+回复策略）、`seen/<scopeID>`（观察成员）、`panel/<scope>`
+`settings/bot`（总开关+回复策略+发送格式）、`seen/<scopeID>`（观察成员）、`panel/<scope>`
 （面板 ID 与 items hash）。新增命名空间时集中定义常量。
 
 **SQLite**：`modernc.org/sqlite` 纯 Go，必须保持 `MaxOpenConns(1)`（多连接写会 `database is locked`）；事务短小；`PutMember` 用 `begin immediate` + 删旧事件 + 批量插入。迁移走 `metadata.schema_version` + `store.migrate()` 顺序幂等语句，禁止直接改线上表结构；**不做** Python 数据自动迁移（OpenID 无法对应 QQ 号，用户重新导入 ICS）。

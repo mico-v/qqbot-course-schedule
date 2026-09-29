@@ -1675,6 +1675,7 @@ async function loadSettings() {
     $("#settingsReplyPlain").checked = settings.reply_plain !== false;
     $("#settingsReplySlash").checked = settings.reply_slash !== false;
     $("#settingsReplyMention").checked = settings.reply_mention !== false;
+    $("#settingsSendFormat").value = settings.send_format === "markdown" ? "markdown" : "image";
   } catch (error) {
     showNotice(error.message, "error");
   }
@@ -1699,6 +1700,7 @@ async function saveSettings() {
       reply_plain: $("#settingsReplyPlain").checked,
       reply_slash: $("#settingsReplySlash").checked,
       reply_mention: $("#settingsReplyMention").checked,
+      send_format: $("#settingsSendFormat").value,
     });
     $("#settingsHint").textContent = "已保存，立即生效。";
     showNotice("机器人设置已保存。", "success");

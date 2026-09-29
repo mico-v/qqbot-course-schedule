@@ -49,16 +49,23 @@ func allowsReply(settings schedule.Settings, mode replyMode) bool {
 
 // currentSettings loads the switches, falling back to defaults on any error so
 // a storage hiccup never silences the bot unexpectedly.
-func (h *Handler) currentSettings() schedule.Settings {
-	if h == nil || h.env == nil || h.env.Service == nil {
+func (e *Env) currentSettings() schedule.Settings {
+	if e == nil || e.Service == nil {
 		return schedule.DefaultSettings()
 	}
-	settings, err := h.env.Service.BotSettings()
+	settings, err := e.Service.BotSettings()
 	if err != nil {
 		slog.Warn("读取机器人设置失败，使用默认值", "err", err)
 		return schedule.DefaultSettings()
 	}
 	return settings
+}
+
+func (h *Handler) currentSettings() schedule.Settings {
+	if h == nil {
+		return schedule.DefaultSettings()
+	}
+	return h.env.currentSettings()
 }
 
 // canManageSettings reports whether the sender may change the switches.
@@ -97,8 +104,8 @@ func (h *Handler) handleSettings(ctx context.Context, in *Inbound, r *Replier) e
 // applySettingArgs parses one /设置 invocation. It returns a usage/error text
 // (empty on success) alongside the updated settings.
 func applySettingArgs(settings schedule.Settings, args []string) (schedule.Settings, string) {
-	usage := fmt.Sprintf("用法：\n%s\n%s 机器人 开|关\n%s 回复 无斜杠|斜杠|@|全部 开|关",
-		settingsCommandPrefix, settingsCommandPrefix, settingsCommandPrefix)
+	usage := fmt.Sprintf("用法：\n%s\n%s 机器人 开|关\n%s 回复 无斜杠|斜杠|@|全部 开|关\n%s 格式 图片|markdown",
+		settingsCommandPrefix, settingsCommandPrefix, settingsCommandPrefix, settingsCommandPrefix)
 
 	switch args[0] {
 	case "机器人", "bot":
@@ -132,6 +139,19 @@ func applySettingArgs(settings schedule.Settings, args []string) (schedule.Setti
 			return settings, "未知的回复类型：" + args[1] + "（可选 无斜杠 / 斜杠 / @ / 全部）"
 		}
 		return settings, ""
+	case "格式", "format":
+		if len(args) != 2 {
+			return settings, usage
+		}
+		switch strings.ToLower(args[1]) {
+		case "图片", "image", "img":
+			settings.SendFormat = schedule.SendFormatImage
+		case "markdown", "md", "列表":
+			settings.SendFormat = schedule.SendFormatMarkdown
+		default:
+			return settings, "未知的发送格式：" + args[1] + "（可选 图片 / markdown）"
+		}
+		return settings, ""
 	}
 	if len(args) == 1 {
 		if value, ok := parseOnOff(args[0]); ok {
@@ -159,10 +179,15 @@ func settingsText(settings schedule.Settings) string {
 		}
 		return "关"
 	}
+	sendFormat := "图片"
+	if settings.SendFormat == schedule.SendFormatMarkdown {
+		sendFormat = "markdown"
+	}
 	return fmt.Sprintf(
-		"机器人：%s\n回复策略：无斜杠 %s · 斜杠 %s · @机器人 %s\n\n修改：\n%s 机器人 开|关\n%s 回复 无斜杠|斜杠|@|全部 开|关",
+		"机器人：%s\n回复策略：无斜杠 %s · 斜杠 %s · @机器人 %s\n发送格式：%s\n\n修改：\n%s 机器人 开|关\n%s 回复 无斜杠|斜杠|@|全部 开|关\n%s 格式 图片|markdown",
 		onOff(settings.Enabled),
 		onOff(settings.ReplyPlain), onOff(settings.ReplySlash), onOff(settings.ReplyMention),
-		settingsCommandPrefix, settingsCommandPrefix,
+		sendFormat,
+		settingsCommandPrefix, settingsCommandPrefix, settingsCommandPrefix,
 	)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mico-v/qqbot-course-schedule/internal/schedule"
@@ -94,8 +95,21 @@ func TestApplySettingArgs(t *testing.T) {
 		t.Fatalf("回复 全部 关 => %+v problem=%q", updated, problem)
 	}
 
+	updated, problem = applySettingArgs(base, []string{"格式", "markdown"})
+	if problem != "" || updated.SendFormat != schedule.SendFormatMarkdown {
+		t.Fatalf("格式 markdown => %+v problem=%q", updated, problem)
+	}
+
+	updated, problem = applySettingArgs(base, []string{"格式", "图片"})
+	if problem != "" || updated.SendFormat != schedule.SendFormatImage {
+		t.Fatalf("格式 图片 => %+v problem=%q", updated, problem)
+	}
+
 	if _, problem = applySettingArgs(base, []string{"回复", "斜杠"}); problem == "" {
 		t.Error("missing value should return usage")
+	}
+	if _, problem = applySettingArgs(base, []string{"格式", "乱写"}); problem == "" {
+		t.Error("unknown send format should return an error")
 	}
 	if _, problem = applySettingArgs(base, []string{"乱写"}); problem == "" {
 		t.Error("unknown token should return usage")
@@ -195,5 +209,37 @@ func TestSettingsCommandUpdatesSwitches(t *testing.T) {
 	}
 	if settings.Enabled {
 		t.Fatalf("settings = %+v, want enabled=false", settings)
+	}
+}
+
+func TestSettingsTextShowsSendFormat(t *testing.T) {
+	if text := settingsText(schedule.DefaultSettings()); !strings.Contains(text, "发送格式：图片") {
+		t.Fatalf("default text = %q", text)
+	}
+	settings := schedule.DefaultSettings()
+	settings.SendFormat = schedule.SendFormatMarkdown
+	if text := settingsText(settings); !strings.Contains(text, "发送格式：markdown") {
+		t.Fatalf("markdown text = %q", text)
+	}
+}
+
+func TestSettingsCommandSetsSendFormat(t *testing.T) {
+	fake := newFakeQQ()
+	apiServer := httptest.NewServer(fake.handler())
+	t.Cleanup(apiServer.Close)
+
+	env, message := newTestEnv(t, fake, apiServer.URL)
+	message.MemberRole = "admin"
+	message.Args = "格式 markdown"
+	handler := NewDefaultHandler(env)
+	if err := handler.handleSettings(context.Background(), message, NewReplier(message, env.Client)); err != nil {
+		t.Fatalf("handleSettings: %v", err)
+	}
+	settings, err := env.Service.BotSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.SendFormat != schedule.SendFormatMarkdown {
+		t.Fatalf("settings = %+v, want send_format=markdown", settings)
 	}
 }

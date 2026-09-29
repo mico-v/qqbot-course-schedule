@@ -1,6 +1,7 @@
 package schedule
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -115,5 +116,47 @@ func TestFormatDurationAndRemaining(t *testing.T) {
 	}
 	if got := FormatRemaining(2*time.Hour + 15*time.Minute); got != "2小时15分钟" {
 		t.Errorf("2h15m = %q", got)
+	}
+}
+
+func TestMarkdownDayList(t *testing.T) {
+	day := "2026-09-17"
+	now := mustTime(t, "2006-01-02 15:04", day+" 09:30")
+	located := eventOn(t, day, "08:00", "09:40", "高等数学")
+	located["LOCATION"] = "教一101"
+	members := map[string]*Member{
+		"a": memberWithEvents(t, "a", "小明",
+			eventOn(t, day, "10:00", "11:40", "大学英语"),
+			located),
+		"b": memberWithEvents(t, "b", "小红"),
+		"c": {
+			UserID:       "c",
+			Name:         "小刚",
+			Events:       []Event{eventOn(t, day, "14:00", "16:00", "实验")},
+			DayOverrides: map[string]DayOverride{day: {Kind: DayOverrideHoliday}},
+		},
+	}
+
+	got := MarkdownDayList(members, mustTime(t, "2006-01-02", day), now)
+	for _, want := range []string{
+		"**课程表 · 2026-09-17 周四**",
+		"**小明**",
+		"- 08:00 - 09:40 高等数学 @ 教一101",
+		"- 10:00 - 11:40 大学英语",
+		"无课：小红、小刚（休假）",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("markdown missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "实验") {
+		t.Errorf("holiday courses must not be listed:\n%s", got)
+	}
+
+	// A different day carries the summary line.
+	members["a"].Events = append(members["a"].Events, eventOn(t, "2026-09-18", "08:00", "09:40", "线性代数"))
+	other := MarkdownDayList(members, mustTime(t, "2006-01-02", "2026-09-18"), now)
+	if !strings.Contains(other, "共 3 位成员 · 1 人有课") {
+		t.Errorf("other day summary missing:\n%s", other)
 	}
 }

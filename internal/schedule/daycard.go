@@ -197,6 +197,77 @@ func SplitFoldedRows(rows []DayRow) (shown, folded []DayRow) {
 	return shown, folded
 }
 
+// MarkdownDayList renders the selected day as a markdown list: one block per
+// member with every course of the day, plus a folded line for members without
+// courses. Members are ordered by name, matching DailyMemberRows.
+func MarkdownDayList(members map[string]*Member, selected, now time.Time) string {
+	current := now.In(LocalTZ)
+	today := beginningOfDay(current)
+	selected = beginningOfDay(selected)
+	startBound := selected
+	endBound := selected.Add(24 * time.Hour)
+
+	ids := make([]string, 0, len(members))
+	for userID := range members {
+		ids = append(ids, userID)
+	}
+	sort.Strings(ids)
+
+	memberCount := 0
+	var blocks []string
+	var folded []string
+	for _, userID := range ids {
+		member := members[userID]
+		if member == nil {
+			continue
+		}
+		memberCount++
+		name := displayName(member.Name, userID)
+		override := member.DayOverrides[selected.Format("2006-01-02")]
+		if override.Kind == DayOverrideHoliday {
+			folded = append(folded, name+"（休假）")
+			continue
+		}
+		occurrences := ExpandMemberOccurrences(member, startBound, endBound)
+		if len(occurrences) == 0 {
+			folded = append(folded, name)
+			continue
+		}
+		sort.SliceStable(occurrences, func(i, j int) bool { return occurrences[i].Start.Before(occurrences[j].Start) })
+
+		header := "**" + name + "**"
+		if override.Kind == DayOverrideShift && override.SourceDay != "" {
+			if source, err := time.ParseInLocation("2006-01-02", override.SourceDay, LocalTZ); err == nil {
+				header += "（调休 · 按 " + source.Format("01-02") + " 的课表）"
+			}
+		}
+		lines := []string{header}
+		for index := range occurrences {
+			occurrence := &occurrences[index]
+			item := "- " + occurrence.Start.Format("15:04") + " - " + occurrence.End.Format("15:04") + " " +
+				firstNonEmpty(occurrence.Event["SUMMARY"], "未命名课程")
+			if location := strings.TrimSpace(occurrence.Event["LOCATION"]); location != "" {
+				item += " @ " + location
+			}
+			lines = append(lines, item)
+		}
+		blocks = append(blocks, strings.Join(lines, "\n"))
+	}
+
+	weekdayNames := []string{"一", "二", "三", "四", "五", "六", "日"}
+	title := "课程表 · " + selected.Format("2006-01-02") + " 周" + weekdayNames[(int(selected.Weekday())+6)%7]
+	parts := []string{"**" + title + "**"}
+	if !selected.Equal(today) {
+		parts = append(parts, fmt.Sprintf("%s · 共 %d 位成员 · %d 人有课",
+			RelativeDayText(selected, today), memberCount, len(blocks)))
+	}
+	parts = append(parts, blocks...)
+	if len(folded) > 0 {
+		parts = append(parts, "无课："+strings.Join(folded, "、"))
+	}
+	return strings.Join(parts, "\n\n")
+}
+
 // MergeIntervals merges overlapping or touching spans.
 func MergeIntervals(intervals [][2]time.Time) [][2]time.Time {
 	if len(intervals) == 0 {

@@ -231,6 +231,45 @@ func (r *Replier) Reply(ctx context.Context, text string) error {
 	return err
 }
 
+// ReplyMarkdown sends a passive markdown reply and consumes one of the five
+// reply slots. A failed attempt is not recorded, so a caller that falls back
+// to plain text files the final stage instead.
+func (r *Replier) ReplyMarkdown(ctx context.Context, content string) error {
+	seq, err := r.NextSeq()
+	if err != nil {
+		return err
+	}
+	in := r.Inbound
+	start := time.Now()
+	switch in.Origin {
+	case OriginGroup:
+		if in.GroupOpenID == "" {
+			return errors.New("群消息缺少 group_openid")
+		}
+		if in.MsgID == "" && in.EventID != "" {
+			err = r.Client.SendGroupMarkdownEvent(ctx, in.GroupOpenID, content, nil, in.EventID)
+			break
+		}
+		err = r.Client.SendGroupMarkdown(ctx, in.GroupOpenID, content, nil, in.MsgID, seq)
+	case OriginPrivate:
+		if in.UserOpenID == "" {
+			return errors.New("单聊消息缺少 user_openid")
+		}
+		if in.MsgID == "" && in.EventID != "" {
+			err = r.Client.SendC2CMarkdownEvent(ctx, in.UserOpenID, content, nil, in.EventID)
+			break
+		}
+		err = r.Client.SendC2CMarkdown(ctx, in.UserOpenID, content, nil, in.MsgID, seq)
+	default:
+		return fmt.Errorf("未知消息来源 %q", in.Origin)
+	}
+	r.markSend(start, time.Time{})
+	if err == nil {
+		r.afterSend(ctx, schedule.StatsStageReply, nil)
+	}
+	return err
+}
+
 // ReplyImage sends a passive image message from a public URL.
 func (r *Replier) ReplyImage(ctx context.Context, imageURL string) error {
 	seq, err := r.NextSeq()

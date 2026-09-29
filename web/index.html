@@ -369,6 +369,18 @@
           </label>
         </section>
 
+        <section class="settings-group">
+          <h3>发送格式</h3>
+          <p class="muted">课表默认发送图片；切换为 markdown 后发送文字列表，平台拒绝 markdown 时自动回退为纯文本。</p>
+          <label class="field">
+            <span>课表发送格式</span>
+            <select id="settingsSendFormat">
+              <option value="image">图片</option>
+              <option value="markdown">Markdown 列表</option>
+            </select>
+          </label>
+        </section>
+
         <footer class="dialog-foot">
           <p id="settingsHint" class="muted"></p>
           <div class="dialog-actions">

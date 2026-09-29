@@ -37,7 +37,9 @@ type fakeQQ struct {
 	messages    []map[string]any
 	msgCh       chan map[string]any
 	failUploads bool
-	avatarURL   string
+	// failMarkdown rejects msg_type=2 so the plain-text fallback can be tested.
+	failMarkdown bool
+	avatarURL    string
 }
 
 func newFakeQQ() *fakeQQ {
@@ -74,7 +76,15 @@ func (f *fakeQQ) handler() http.Handler {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		f.mu.Lock()
 		f.messages = append(f.messages, body)
+		failMarkdown := f.failMarkdown
 		f.mu.Unlock()
+		if failMarkdown {
+			if msgType, _ := body["msg_type"].(float64); msgType == 2 {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]any{"code": 40034024, "message": "markdown 消息不可用"})
+				return
+			}
+		}
 		f.msgCh <- body
 		_ = json.NewEncoder(w).Encode(map[string]string{"id": "sent-1"})
 	})

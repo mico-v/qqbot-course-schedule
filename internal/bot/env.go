@@ -233,6 +233,27 @@ func (e *Env) SendCard(ctx context.Context, in *Inbound, r *Replier, card Render
 	return err
 }
 
+// RenderDayMarkdown builds the day schedule as a markdown list. ok is false
+// when the scope has no saved schedules at all.
+func (e *Env) RenderDayMarkdown(in *Inbound, day time.Time) (string, bool, error) {
+	text, ok, err := e.Service.BuildDayMarkdown(e.Scope(in), day, e.now())
+	if err != nil || !ok {
+		return "", ok, err
+	}
+	return text, true, nil
+}
+
+// SendDayMarkdown sends the markdown list and falls back to plain text when
+// the platform rejects markdown messages.
+func (e *Env) SendDayMarkdown(ctx context.Context, in *Inbound, r *Replier, markdown string) error {
+	err := r.ReplyMarkdown(ctx, markdown)
+	if err == nil {
+		return nil
+	}
+	slog.Warn("markdown 课表发送失败，回退为文本", "err", err)
+	return r.Reply(ctx, strings.ReplaceAll(markdown, "**", ""))
+}
+
 // RenderRankCard builds and saves the class-hours leaderboard for one period,
 // recording how long the render stage took on the replier.
 // ok is false when the scope has no countable courses.

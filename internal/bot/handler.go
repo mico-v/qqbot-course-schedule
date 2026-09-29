@@ -211,6 +211,17 @@ func (h *Handler) HandleCallback(ctx context.Context, cb *Callback) {
 		if err != nil {
 			return
 		}
+		if h.currentSettings().SendFormat == schedule.SendFormatMarkdown {
+			text, found, err := h.env.RenderDayMarkdown(in, day)
+			if err != nil || !found {
+				_ = r.Reply(ctx, "当前会话还没有可展示的课程表。")
+				return
+			}
+			if err := h.env.SendDayMarkdown(ctx, in, r, text); err != nil {
+				slog.Error("按钮课表发送失败", "err", err)
+			}
+			return
+		}
 		card, found, err := h.env.RenderDayCard(ctx, in, r, day)
 		if err != nil || !found {
 			_ = r.Reply(ctx, "当前会话还没有可展示的课程表。")

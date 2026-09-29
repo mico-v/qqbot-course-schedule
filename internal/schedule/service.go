@@ -172,6 +172,20 @@ func (s *Service) BuildDayCard(scopeID string, selected, now time.Time) (*DayCar
 	}, true, nil
 }
 
+// BuildDayMarkdown renders the same day view as BuildDayCard as a markdown
+// list of every member's courses. ok is false when the scope has no saved
+// schedules at all.
+func (s *Service) BuildDayMarkdown(scopeID string, selected, now time.Time) (string, bool, error) {
+	members, err := s.store.GetScopeMembers(scopeID)
+	if err != nil {
+		return "", false, err
+	}
+	if len(members) == 0 {
+		return "", false, nil
+	}
+	return MarkdownDayList(members, selected, now), true, nil
+}
+
 // ScopeMembers returns every member of a scope with overrides attached.
 func (s *Service) ScopeMembers(scopeID string) (map[string]*Member, error) {
 	return s.store.GetScopeMembers(scopeID)

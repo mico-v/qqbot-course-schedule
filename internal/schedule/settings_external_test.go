@@ -22,7 +22,10 @@ func TestBotSettingsDefaultsWhenUnset(t *testing.T) {
 
 func TestBotSettingsRoundTrip(t *testing.T) {
 	service, _ := newService(t)
-	want := schedule.Settings{Enabled: false, ReplyPlain: true, ReplySlash: false, ReplyMention: true}
+	want := schedule.Settings{
+		Enabled: false, ReplyPlain: true, ReplySlash: false, ReplyMention: true,
+		SendFormat: schedule.SendFormatMarkdown,
+	}
 	if err := service.SaveBotSettings(want); err != nil {
 		t.Fatalf("SaveBotSettings: %v", err)
 	}
@@ -50,5 +53,8 @@ func TestBotSettingsMissingFieldKeepsDefault(t *testing.T) {
 	}
 	if !got.ReplyPlain || !got.ReplySlash || !got.ReplyMention {
 		t.Fatalf("absent reply flags must stay on: %+v", got)
+	}
+	if got.SendFormat != schedule.SendFormatImage {
+		t.Fatalf("absent send format must default to image: %+v", got)
 	}
 }

@@ -381,6 +381,16 @@ func handleDayCard(ctx context.Context, env *Env, in *Inbound, r *Replier, day *
 	if day != nil {
 		target = *day
 	}
+	if env.currentSettings().SendFormat == schedule.SendFormatMarkdown {
+		text, ok, err := env.RenderDayMarkdown(in, target)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return r.Reply(ctx, "当前会话还没有可展示的课程表。请先发送 /导入课表 并附加 .ics 文件。")
+		}
+		return env.SendDayMarkdown(ctx, in, r, text)
+	}
 	card, ok, err := env.RenderDayCard(ctx, in, r, target)
 	if err != nil {
 		return err
