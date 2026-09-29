@@ -20,7 +20,6 @@ const (
 	DefaultDatabase      = "data/course_schedule.sqlite3"
 	DefaultDataDir       = "data"
 	DefaultLogLevel      = "info"
-	DefaultPushCron      = "30 7 * * *"
 )
 
 // AllowedWebhookPorts lists the callback ports accepted by the QQ open platform.
@@ -39,7 +38,6 @@ type Config struct {
 	DataDir       string `json:"data_dir"`
 	AdminPassword string `json:"admin_password"`
 	LogLevel      string `json:"log_level"`
-	PushCron      string `json:"push_cron"`
 	Buttons       bool   `json:"buttons"`
 }
 
@@ -80,9 +78,6 @@ func (cfg *Config) applyDefaults() {
 	}
 	if cfg.LogLevel == "" {
 		cfg.LogLevel = DefaultLogLevel
-	}
-	if cfg.PushCron == "" {
-		cfg.PushCron = DefaultPushCron
 	}
 }
 

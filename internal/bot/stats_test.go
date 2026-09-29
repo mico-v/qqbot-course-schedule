@@ -253,7 +253,7 @@ func TestStatsLogModeReading(t *testing.T) {
 }
 
 // TestRecordStatsNeverPanicsWithoutService guards the nil-receiver paths that
-// proactive pushes and tests rely on.
+// tests rely on.
 func TestRecordStatsNeverPanicsWithoutService(t *testing.T) {
 	var env *Env
 	env.recordStats(context.Background(), &Inbound{}, NewReplier(&Inbound{}, nil), schedule.StatsStageCard, nil)

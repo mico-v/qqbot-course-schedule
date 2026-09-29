@@ -104,8 +104,8 @@
 
             <div class="course-toolbar">
               <div>
-                <h3>课程列表</h3>
-                <p class="muted">时间按本地时区保存；重复课程可填写 iCalendar RRULE。导入 .ics 会覆盖该成员现有课程。</p>
+                <h3>课程日历</h3>
+                <p class="muted">点击课程可编辑；点击空白时段可快速新增。导入 .ics 会覆盖该成员现有课程。</p>
               </div>
               <div class="course-toolbar-actions">
                 <input
@@ -121,8 +121,43 @@
               </div>
             </div>
 
-            <div id="courseList" class="course-list"></div>
-            <div id="noCourses" class="no-courses hidden">暂无课程，点击“添加课程”创建第一节课。</div>
+            <div class="calendar-shell">
+              <div class="calendar-toolbar">
+                <div class="calendar-nav" aria-label="切换周">
+                  <button
+                    id="calendarPrev"
+                    class="calendar-nav-button"
+                    type="button"
+                    aria-label="查看上一周"
+                    title="上一周"
+                  >
+                    ←
+                  </button>
+                  <button id="calendarToday" class="button button-ghost" type="button">本周</button>
+                  <button
+                    id="calendarNext"
+                    class="calendar-nav-button"
+                    type="button"
+                    aria-label="查看下一周"
+                    title="下一周"
+                  >
+                    →
+                  </button>
+                </div>
+                <p id="calendarRange" class="calendar-range" aria-live="polite"></p>
+                <span id="calendarCount" class="count-pill calendar-count">0 节</span>
+              </div>
+              <div
+                id="calendarScroll"
+                class="calendar-scroll"
+                tabindex="0"
+                role="region"
+                aria-label="一周课程日历"
+              >
+                <div id="weekCalendar" class="week-calendar"></div>
+              </div>
+              <div id="noCourses" class="no-courses hidden">本周暂无课程，点击“添加课程”创建第一节课。</div>
+            </div>
 
             <div class="override-section">
               <div class="course-toolbar">
@@ -343,40 +378,92 @@
       </div>
     </div>
 
-    <template id="courseTemplate">
-      <article class="course-card">
-        <div class="course-card-head">
-          <div class="course-index"></div>
-          <button class="remove-course" type="button" title="删除课程">删除</button>
-        </div>
-        <div class="course-grid">
-          <label class="field course-name-field">
+    <div
+      id="courseDialog"
+      class="dialog-overlay hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="courseDialogTitle"
+      aria-describedby="courseDialogHint"
+    >
+      <form id="courseForm" class="dialog-card course-dialog-card">
+        <header class="dialog-head">
+          <div>
+            <p class="section-kicker">COURSE</p>
+            <h2 id="courseDialogTitle">添加课程</h2>
+            <p id="courseDialogHint" class="muted">设置首次上课日期、时间和重复规则。</p>
+          </div>
+          <button id="courseClose" class="dialog-close" type="button" aria-label="关闭">×</button>
+        </header>
+
+        <div class="course-form-grid">
+          <label class="field field-wide">
             <span>课程名称 <b>*</b></span>
-            <input data-field="course" type="text" maxlength="200" placeholder="例如：高等数学" />
+            <input id="courseName" type="text" maxlength="200" placeholder="例如：高等数学" required />
           </label>
           <label class="field">
-            <span>上课时间 <b>*</b></span>
-            <input data-field="start" type="datetime-local" />
+            <span>首次上课日期 <b>*</b></span>
+            <input id="courseDate" type="date" required />
           </label>
           <label class="field">
-            <span>下课时间 <b>*</b></span>
-            <input data-field="end" type="datetime-local" />
+            <span>开始时间 <b>*</b></span>
+            <input id="courseStartTime" type="time" required />
+          </label>
+          <label class="field">
+            <span>结束时间 <b>*</b></span>
+            <input id="courseEndTime" type="time" required />
           </label>
           <label class="field">
             <span>地点</span>
-            <input data-field="location" type="text" maxlength="200" placeholder="例如：A101" />
+            <input id="courseLocation" type="text" maxlength="200" placeholder="例如：A101" />
           </label>
-          <label class="field field-wide">
-            <span>重复规则 <small>可选</small></span>
-            <input data-field="rrule" type="text" maxlength="500" placeholder="例如：FREQ=WEEKLY;BYDAY=MO" />
+          <label class="field">
+            <span>重复</span>
+            <select id="courseRepeat">
+              <option value="none">不重复</option>
+              <option value="daily">每天</option>
+              <option value="weekly">每周</option>
+              <option value="monthly">每月</option>
+              <option value="yearly">每年</option>
+              <option value="custom">自定义规则</option>
+            </select>
+          </label>
+          <fieldset id="courseWeekdaysField" class="weekday-field field-wide hidden">
+            <legend>每周重复日</legend>
+            <div class="weekday-options">
+              <label><input type="checkbox" name="courseWeekday" value="MO" /><span>一</span></label>
+              <label><input type="checkbox" name="courseWeekday" value="TU" /><span>二</span></label>
+              <label><input type="checkbox" name="courseWeekday" value="WE" /><span>三</span></label>
+              <label><input type="checkbox" name="courseWeekday" value="TH" /><span>四</span></label>
+              <label><input type="checkbox" name="courseWeekday" value="FR" /><span>五</span></label>
+              <label><input type="checkbox" name="courseWeekday" value="SA" /><span>六</span></label>
+              <label><input type="checkbox" name="courseWeekday" value="SU" /><span>日</span></label>
+            </div>
+          </fieldset>
+          <label id="courseCustomRuleField" class="field field-wide hidden">
+            <span>iCalendar 重复规则 <b>*</b></span>
+            <input
+              id="courseCustomRule"
+              type="text"
+              maxlength="500"
+              placeholder="例如：FREQ=WEEKLY;BYDAY=MO;UNTIL=20270110T000000Z"
+            />
           </label>
           <label class="field field-wide">
             <span>备注</span>
-            <textarea data-field="description" rows="2" maxlength="2000" placeholder="教师、班级或其他备注"></textarea>
+            <textarea id="courseDescription" rows="3" maxlength="2000" placeholder="教师、班级或其他备注"></textarea>
           </label>
         </div>
-      </article>
-    </template>
+
+        <footer class="dialog-foot course-dialog-foot">
+          <button id="courseDelete" class="button button-danger hidden" type="button">删除课程</button>
+          <div class="dialog-actions">
+            <button id="courseCancel" class="button button-ghost" type="button">取消</button>
+            <button id="courseSave" class="button button-primary" type="submit">保存课程</button>
+          </div>
+        </footer>
+      </form>
+    </div>
 
     <script type="module" src="/admin/app.js"></script>
   </body>

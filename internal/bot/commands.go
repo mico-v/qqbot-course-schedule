@@ -2,12 +2,10 @@ package bot
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 
-	"github.com/mico-v/qqbot-course-schedule/internal/qqapi"
 	"github.com/mico-v/qqbot-course-schedule/internal/schedule"
 )
 
@@ -106,18 +104,6 @@ func NewDefaultHandler(env *Env) *Handler {
 		Handle:      h.handleExportCommand,
 	})
 	h.Register(&Command{
-		Prefix:      "/启用推送",
-		Description: "允许机器人向本会话主动推送",
-		Ready:       true,
-		Handle:      h.handleEnablePush,
-	})
-	h.Register(&Command{
-		Prefix:      "/关闭推送",
-		Description: "关闭机器人对本会话的主动推送",
-		Ready:       true,
-		Handle:      h.handleDisablePush,
-	})
-	h.Register(&Command{
 		Prefix:      "/绑定QQ",
 		Description: "绑定你的 QQ 号以显示真实头像",
 		Aliases:     []string{"/绑定qq"},
@@ -132,23 +118,11 @@ func NewDefaultHandler(env *Env) *Handler {
 		Handle:      h.handleUnbindQQ,
 	})
 	h.Register(&Command{
-		Prefix:      "/推送时间",
-		Description: "查看或设置本会话的推送时间（管理员）",
-		Aliases:     []string{"/推送时刻"},
-		Ready:       true,
-		Handle:      h.handlePushTime,
-	})
-	h.Register(&Command{
 		Prefix:      "/设置",
 		Description: "查看或修改机器人设置（管理员）",
 		Aliases:     []string{"/配置", "/settings"},
 		Ready:       true,
 		Handle:      h.handleSettings,
-	})
-	h.Register(&Command{
-		Prefix:      "/推送测试",
-		Description: "立即推送一次当日课表（管理员）",
-		Handle:      h.handlePushTest,
 	})
 	h.Register(&Command{
 		Prefix:      "/同步面板",
@@ -337,83 +311,6 @@ func (h *Handler) handleExportCommand(ctx context.Context, in *Inbound, r *Repli
 	return r.ReplyFile(ctx, url, exportFileName(member.Name))
 }
 
-func (h *Handler) handleEnablePush(ctx context.Context, in *Inbound, r *Replier) error {
-	if h.env == nil {
-		return r.Reply(ctx, "课表功能未初始化。")
-	}
-	if in.Origin == OriginGroup && !in.IsAdmin() {
-		return r.Reply(ctx, "只有群管理员可以开启本群的主动推送。")
-	}
-	sub := PushSubscription{
-		Enabled:   true,
-		Origin:    "private",
-		OpenID:    in.UserOpenID,
-		EnabledBy: in.UserOpenID,
-		EnabledAt: schedule.NowISO(),
-	}
-	if in.Origin == OriginGroup {
-		sub.Origin = "group"
-		sub.OpenID = in.GroupOpenID
-	}
-	if err := h.env.SetPushSubscription(h.env.Scope(in), sub); err != nil {
-		return r.Reply(ctx, "开启失败："+err.Error())
-	}
-	extra := ""
-	if in.Origin == OriginGroup {
-		extra = "；群聊还需群管理员在机器人资料页打开「消息推送」，否则平台会拒绝"
-	}
-	return r.Reply(ctx, "已开启每日课表推送（"+pushTimeText(h.env.PushCron)+"）"+extra+"。")
-}
-
-func (h *Handler) handleDisablePush(ctx context.Context, in *Inbound, r *Replier) error {
-	if h.env == nil {
-		return r.Reply(ctx, "课表功能未初始化。")
-	}
-	if in.Origin == OriginGroup && !in.IsAdmin() {
-		return r.Reply(ctx, "只有群管理员可以关闭本群的主动推送。")
-	}
-	if err := h.env.RemovePushSubscription(h.env.Scope(in)); err != nil {
-		return r.Reply(ctx, "关闭失败："+err.Error())
-	}
-	return r.Reply(ctx, "已关闭本会话的每日课表推送。")
-}
-
-func (h *Handler) handlePushTest(ctx context.Context, in *Inbound, r *Replier) error {
-	if h.env == nil {
-		return r.Reply(ctx, "课表功能未初始化。")
-	}
-	if in.Origin == OriginGroup && !in.IsAdmin() {
-		return r.Reply(ctx, "只有群管理员可以测试推送。")
-	}
-	scope := h.env.Scope(in)
-	subscriptions, err := h.env.PushSubscriptions()
-	if err != nil {
-		return r.Reply(ctx, "读取订阅失败："+err.Error())
-	}
-	sub, ok := subscriptions[scope]
-	if !ok || !sub.Enabled {
-		return r.Reply(ctx, "本会话还没有开启推送，请先发送 /启用推送。")
-	}
-	switch err := h.env.PushScope(ctx, scope, sub); {
-	case err == nil:
-		if sub.Paused {
-			sub.Paused = false
-			sub.PauseReason = ""
-			_ = h.env.SetPushSubscription(scope, sub)
-		}
-		return r.Reply(ctx, "已推送一次当日课表。")
-	case errors.Is(err, errPushNoSchedule):
-		return r.Reply(ctx, "本会话还没有可推送的课程表。")
-	default:
-		if qqapi.IsActiveMessageDenied(err) {
-			sub.Paused = true
-			sub.PauseReason = qqapi.FriendlyError(err)
-			_ = h.env.SetPushSubscription(scope, sub)
-		}
-		return r.Reply(ctx, "推送失败："+qqapi.FriendlyError(err))
-	}
-}
-
 func (h *Handler) handleBindQQ(ctx context.Context, in *Inbound, r *Replier) error {
 	if h.env == nil {
 		return r.Reply(ctx, "课表功能未初始化。")
@@ -460,50 +357,6 @@ func (h *Handler) handleUnbindQQ(ctx context.Context, in *Inbound, r *Replier) e
 		return r.Reply(ctx, "解绑失败："+err.Error())
 	}
 	return r.Reply(ctx, "已解除 QQ 绑定，卡片将恢复为昵称首字头像。")
-}
-
-func (h *Handler) handlePushTime(ctx context.Context, in *Inbound, r *Replier) error {
-	if h.env == nil {
-		return r.Reply(ctx, "课表功能未初始化。")
-	}
-	if in.Origin == OriginGroup && !in.IsAdmin() {
-		return r.Reply(ctx, "只有群管理员可以调整推送时间。")
-	}
-	scope := h.env.Scope(in)
-	subscriptions, err := h.env.PushSubscriptions()
-	if err != nil {
-		return r.Reply(ctx, "读取订阅失败："+err.Error())
-	}
-	sub, ok := subscriptions[scope]
-	if !ok || !sub.Enabled {
-		return r.Reply(ctx, "本会话还没有开启推送，请先发送 /启用推送。")
-	}
-
-	argument := strings.TrimSpace(in.Args)
-	if argument == "" {
-		current := h.env.PushCronFor(sub)
-		if strings.TrimSpace(sub.Cron) == "" {
-			return r.Reply(ctx, "本会话的推送时间是 "+pushTimeText(current)+"（默认时间）。\n修改：/推送时间 07:30 或 /推送时间 30 7 * * *。")
-		}
-		return r.Reply(ctx, "本会话的推送时间是 "+pushTimeText(current)+"（自定义）。\n恢复默认：/推送时间 默认。")
-	}
-	switch strings.ToLower(argument) {
-	case "默认", "default", "重置":
-		sub.Cron = ""
-	default:
-		spec, parseErr := parsePushTime(argument)
-		if parseErr != nil {
-			return r.Reply(ctx, parseErr.Error())
-		}
-		sub.Cron = spec
-	}
-	if err := h.env.SetPushSubscription(scope, sub); err != nil {
-		return r.Reply(ctx, "保存失败："+err.Error())
-	}
-	if strings.TrimSpace(sub.Cron) == "" {
-		return r.Reply(ctx, "已恢复默认推送时间："+pushTimeText(h.env.PushCron)+"。")
-	}
-	return r.Reply(ctx, "已设置本会话的推送时间为 "+pushTimeText(sub.Cron)+"。")
 }
 
 func (h *Handler) handleSyncPanelCommand(ctx context.Context, in *Inbound, r *Replier) error {

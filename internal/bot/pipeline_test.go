@@ -122,14 +122,12 @@ func newTestEnvWithStore(t *testing.T, fake *fakeQQ, apiURL string) (*Env, *Inbo
 	fixedNow := time.Date(2026, 9, 17, 9, 30, 0, 0, schedule.LocalTZ)
 	env := &Env{
 		Client:        client,
-		PushStore:     storeHandle,
 		PanelStore:    storeHandle,
 		Service:       schedule.NewService(storeHandle),
 		Renderer:      renderer,
 		DataDir:       cfg.DataDir,
 		ImagesDir:     filepath.Join(cfg.DataDir, "images"),
 		PublicBaseURL: "https://cards.example.com",
-		PushCron:      "30 7 * * *",
 		Now:           func() time.Time { return fixedNow },
 	}
 	message := &Inbound{

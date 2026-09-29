@@ -8,8 +8,6 @@ const (
 	EventGroupMessage   = "GROUP_MESSAGE_CREATE"
 	EventC2CMessage     = "C2C_MESSAGE_CREATE"
 	EventInteraction    = "INTERACTION_CREATE"
-	EventGroupMsgRecv   = "GROUP_MSG_RECEIVE"
-	EventC2CMsgRecv     = "C2C_MSG_RECEIVE"
 )
 
 // Payload is the common webhook envelope.
@@ -57,14 +55,6 @@ type Attachment struct {
 	Filename    string `json:"filename"`
 	ContentType string `json:"content_type"`
 	Size        int64  `json:"size"`
-}
-
-// BroadcastData is the d field of GROUP_MSG_RECEIVE / C2C_MSG_RECEIVE.
-type BroadcastData struct {
-	GroupOpenID    string `json:"group_openid"`
-	OpenID         string `json:"openid"`
-	OPMemberOpenID string `json:"op_member_openid"`
-	Timestamp      int64  `json:"timestamp"`
 }
 
 // InteractionData is the d field of INTERACTION_CREATE.

@@ -8,6 +8,7 @@ const state = {
   schedule: null,
   overrides: [],
   dirty: false,
+  calendarWeekStart: null,
 };
 
 const addMembers = {
@@ -28,8 +29,25 @@ const transfer = {
 
 const notice = $("#notice");
 const scopeList = $("#scopeList");
-const courseList = $("#courseList");
-const courseTemplate = $("#courseTemplate");
+const weekCalendar = $("#weekCalendar");
+const calendarScroll = $("#calendarScroll");
+
+const WEEKDAY_CODES = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
+const WEEKDAY_LABELS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+const CALENDAR_HOUR_HEIGHT = 54;
+const CALENDAR_EVENT_COLORS = [
+  "#4268df",
+  "#0f8b8d",
+  "#b45309",
+  "#be123c",
+  "#7c3aed",
+  "#0369a1",
+  "#4d7c0f",
+  "#c2410c",
+];
+const courseEditor = {
+  index: -1,
+};
 
 const THEME_STORAGE_KEY = "qqbot-admin-theme";
 const THEME_MODES = ["auto", "light", "dark"];
@@ -386,61 +404,671 @@ function renderEditor() {
   $("#memberName").value = schedule.name || "";
   $("#memberQQ").value = schedule.qq || "";
   updateAvatarPreview();
-
-  courseList.textContent = "";
-  for (const event of schedule.events) {
-    addCourseCard(event);
-  }
-  $("#noCourses").classList.toggle("hidden", schedule.events.length > 0);
+  state.calendarWeekStart = initialWeekStart(schedule.events || []);
+  renderCalendar();
   setDirty(false);
 }
 
-function addCourseCard(event = {}) {
-  const fragment = courseTemplate.content.cloneNode(true);
-  const card = fragment.querySelector(".course-card");
-  const fields = {
-    course: event.course || "",
-    start: event.start || "",
-    end: event.end || "",
-    location: event.location || "",
-    rrule: event.rrule || "",
-    description: event.description || "",
-  };
-  for (const [name, value] of Object.entries(fields)) {
-    const input = card.querySelector(`[data-field="${name}"]`);
-    input.value = value;
-    input.addEventListener("input", () => setDirty(true));
-    input.addEventListener("change", () => setDirty(true));
-  }
-  card.querySelector(".remove-course").addEventListener("click", () => {
-    card.remove();
-    updateCourseIndexes();
-    setDirty(true);
-  });
-  courseList.append(fragment);
-  updateCourseIndexes();
-  $("#noCourses").classList.add("hidden");
+function padNumber(value) {
+  return String(value).padStart(2, "0");
 }
 
-function updateCourseIndexes() {
-  [...courseList.querySelectorAll(".course-card")].forEach((card, index) => {
-    card.querySelector(".course-index").textContent = `第 ${index + 1} 节`;
+function formatDateValue(date) {
+  return `${date.getFullYear()}-${padNumber(date.getMonth() + 1)}-${padNumber(date.getDate())}`;
+}
+
+function formatTimeValue(date) {
+  return `${padNumber(date.getHours())}:${padNumber(date.getMinutes())}`;
+}
+
+function formatClockTime(date) {
+  return formatTimeValue(date);
+}
+
+function formatDateTimeValue(date) {
+  return `${formatDateValue(date)}T${formatTimeValue(date)}`;
+}
+
+function parseLocalDateTime(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(value || ""));
+  if (!match) return null;
+  const date = new Date(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]),
+    Number(match[4]),
+    Number(match[5]),
+  );
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function startOfDay(date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function startOfWeek(date) {
+  const day = startOfDay(date);
+  const offset = (day.getDay() + 6) % 7;
+  day.setDate(day.getDate() - offset);
+  return day;
+}
+
+function addDays(date, days) {
+  const result = startOfDay(date);
+  result.setDate(result.getDate() + days);
+  return result;
+}
+
+function calendarDayDiff(left, right) {
+  const leftUTC = Date.UTC(left.getFullYear(), left.getMonth(), left.getDate());
+  const rightUTC = Date.UTC(right.getFullYear(), right.getMonth(), right.getDate());
+  return Math.round((rightUTC - leftUTC) / 86400000);
+}
+
+function sameCalendarDay(left, right) {
+  return calendarDayDiff(left, right) === 0;
+}
+
+function weekdayCode(date) {
+  return WEEKDAY_CODES[(date.getDay() + 6) % 7];
+}
+
+function parseRRule(value) {
+  const fields = {};
+  for (const part of String(value || "").split(";")) {
+    const [key, fieldValue] = part.split("=", 2);
+    if (key && fieldValue) fields[key.trim().toUpperCase()] = fieldValue.trim().toUpperCase();
+  }
+  return fields;
+}
+
+function parseRRuleUntil(value) {
+  const raw = String(value || "").trim();
+  let match = /^(\d{4})(\d{2})(\d{2})$/.exec(raw);
+  if (match) {
+    return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 23, 59, 59, 999);
+  }
+  match = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(raw);
+  if (match) {
+    return new Date(
+      Date.UTC(
+        Number(match[1]),
+        Number(match[2]) - 1,
+        Number(match[3]),
+        Number(match[4]),
+        Number(match[5]),
+        Number(match[6]),
+      ),
+    );
+  }
+  match = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})$/.exec(raw);
+  if (match) {
+    return new Date(
+      Number(match[1]),
+      Number(match[2]) - 1,
+      Number(match[3]),
+      Number(match[4]),
+      Number(match[5]),
+      Number(match[6]),
+    );
+  }
+  return null;
+}
+
+function rruleMatchesDate(rule, eventStart, candidate) {
+  const frequency = rule.FREQ;
+  if (!frequency) return sameCalendarDay(eventStart, candidate);
+  const interval = Math.max(1, Number.parseInt(rule.INTERVAL || "1", 10) || 1);
+  const dayDiff = calendarDayDiff(eventStart, candidate);
+  if (dayDiff < 0) return false;
+
+  if (frequency === "DAILY") return dayDiff % interval === 0;
+  if (frequency === "WEEKLY") {
+    const byDay = String(rule.BYDAY || weekdayCode(eventStart))
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (!byDay.includes(weekdayCode(candidate))) return false;
+    const weekDiff =
+      calendarDayDiff(startOfWeek(eventStart), startOfWeek(candidate)) / 7;
+    return weekDiff >= 0 && weekDiff % interval === 0;
+  }
+  if (frequency === "MONTHLY") {
+    const monthDiff =
+      (candidate.getFullYear() - eventStart.getFullYear()) * 12 +
+      candidate.getMonth() -
+      eventStart.getMonth();
+    if (monthDiff < 0 || monthDiff % interval !== 0) return false;
+    const byMonthDay = String(rule.BYMONTHDAY || eventStart.getDate())
+      .split(",")
+      .map((value) => Number.parseInt(value, 10));
+    return byMonthDay.includes(candidate.getDate());
+  }
+  if (frequency === "YEARLY") {
+    const yearDiff = candidate.getFullYear() - eventStart.getFullYear();
+    if (yearDiff < 0 || yearDiff % interval !== 0) return false;
+    const month = Number.parseInt(rule.BYMONTH || String(eventStart.getMonth() + 1), 10);
+    const monthDay = Number.parseInt(rule.BYMONTHDAY || String(eventStart.getDate()), 10);
+    return candidate.getMonth() + 1 === month && candidate.getDate() === monthDay;
+  }
+  return false;
+}
+
+function countRRuleOccurrences(rule, eventStart, candidate) {
+  let count = 0;
+  for (
+    let day = startOfDay(eventStart);
+    calendarDayDiff(day, candidate) >= 0;
+    day = addDays(day, 1)
+  ) {
+    const candidateAt = new Date(
+      day.getFullYear(),
+      day.getMonth(),
+      day.getDate(),
+      eventStart.getHours(),
+      eventStart.getMinutes(),
+    );
+    if (rruleMatchesDate(rule, eventStart, candidateAt)) count += 1;
+    if (count > 10000) break;
+  }
+  return count;
+}
+
+function expandEventInWeek(event, eventIndex, weekStart) {
+  const eventStart = parseLocalDateTime(event.start);
+  const eventEnd = parseLocalDateTime(event.end);
+  if (!eventStart || !eventEnd || eventEnd <= eventStart) return [];
+  const duration = eventEnd.getTime() - eventStart.getTime();
+  const weekEnd = addDays(weekStart, 7);
+  const rule = parseRRule(event.rrule);
+  const until = parseRRuleUntil(rule.UNTIL);
+  const countLimit = Number.parseInt(rule.COUNT || "", 10);
+  const occurrences = [];
+
+  // Include the previous day so an overnight course remains visible in both days.
+  for (let offset = -1; offset <= 6; offset += 1) {
+    const day = addDays(weekStart, offset);
+    const candidateStart = new Date(
+      day.getFullYear(),
+      day.getMonth(),
+      day.getDate(),
+      eventStart.getHours(),
+      eventStart.getMinutes(),
+    );
+    if (!rruleMatchesDate(rule, eventStart, candidateStart)) continue;
+    if (until && candidateStart > until) continue;
+    if (countLimit && countRRuleOccurrences(rule, eventStart, candidateStart) > countLimit) {
+      continue;
+    }
+    const candidateEnd = new Date(candidateStart.getTime() + duration);
+    if (candidateEnd > weekStart && candidateStart < weekEnd) {
+      occurrences.push({
+        event,
+        eventIndex,
+        start: candidateStart,
+        end: candidateEnd,
+      });
+    }
+  }
+  return occurrences;
+}
+
+function weekOccurrences(events, weekStart) {
+  return events.flatMap((event, index) => expandEventInWeek(event, index, weekStart));
+}
+
+function initialWeekStart(events) {
+  const currentWeek = startOfWeek(new Date());
+  if (weekOccurrences(events, currentWeek).length) return currentWeek;
+  const starts = events.map((event) => parseLocalDateTime(event.start)).filter(Boolean);
+  starts.sort((left, right) => left - right);
+  return starts.length ? startOfWeek(starts[0]) : currentWeek;
+}
+
+function calendarRange(occurrences) {
+  let startMinute = 8 * 60;
+  let endMinute = 20 * 60;
+  for (const occurrence of occurrences) {
+    const lastDay = startOfDay(new Date(occurrence.end.getTime() - 1));
+    for (
+      let day = startOfDay(occurrence.start);
+      calendarDayDiff(day, lastDay) >= 0;
+      day = addDays(day, 1)
+    ) {
+      const dayStart = startOfDay(day);
+      const dayEnd = addDays(dayStart, 1);
+      const sliceStart = new Date(Math.max(occurrence.start.getTime(), dayStart.getTime()));
+      const sliceEnd = new Date(Math.min(occurrence.end.getTime(), dayEnd.getTime()));
+      if (sliceEnd <= sliceStart) continue;
+      const start = Math.round((sliceStart - dayStart) / 60000);
+      const end = Math.round((sliceEnd - dayStart) / 60000);
+      startMinute = Math.min(startMinute, Math.floor(start / 60) * 60);
+      endMinute = Math.max(endMinute, Math.ceil(Math.max(end, start + 30) / 60) * 60);
+    }
+  }
+  if (endMinute - startMinute < 8 * 60) endMinute = Math.min(24 * 60, startMinute + 8 * 60);
+  return { startMinute, endMinute };
+}
+
+function eventColor(event) {
+  const text = `${event.course || ""}${event.uid || ""}`;
+  let hash = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    hash = (hash * 31 + text.charCodeAt(index)) | 0;
+  }
+  return CALENDAR_EVENT_COLORS[Math.abs(hash) % CALENDAR_EVENT_COLORS.length];
+}
+
+function sliceOccurrencesForDay(occurrences, day) {
+  const dayStart = startOfDay(day);
+  const dayEnd = addDays(dayStart, 1);
+  return occurrences.flatMap((occurrence) => {
+    const start = new Date(Math.max(occurrence.start.getTime(), dayStart.getTime()));
+    const end = new Date(Math.min(occurrence.end.getTime(), dayEnd.getTime()));
+    if (end <= start) return [];
+    return [
+      {
+        ...occurrence,
+        start,
+        end,
+        continuesBefore: occurrence.start < dayStart,
+        continuesAfter: occurrence.end > dayEnd,
+      },
+    ];
   });
-  $("#noCourses").classList.toggle("hidden", courseList.children.length > 0);
+}
+
+function layoutDayOccurrences(occurrences) {
+  const sorted = [...occurrences].sort(
+    (left, right) => left.start - right.start || right.end - left.end,
+  );
+  const layout = new Map();
+  let group = [];
+  let groupEnd = 0;
+
+  const flush = () => {
+    if (!group.length) return;
+    const columnEnds = [];
+    for (const occurrence of group) {
+      let column = columnEnds.findIndex((end) => end <= occurrence.start.getTime());
+      if (column < 0) {
+        column = columnEnds.length;
+        columnEnds.push(0);
+      }
+      columnEnds[column] = occurrence.end.getTime();
+      occurrence.column = column;
+    }
+    for (const occurrence of group) {
+      layout.set(occurrence, { column: occurrence.column, columns: columnEnds.length });
+    }
+    group = [];
+    groupEnd = 0;
+  };
+
+  for (const occurrence of sorted) {
+    if (group.length && occurrence.start.getTime() >= groupEnd) flush();
+    group.push(occurrence);
+    groupEnd = Math.max(groupEnd, occurrence.end.getTime());
+  }
+  flush();
+  return layout;
+}
+
+function updateEditorMeta() {
+  if (!state.schedule) return;
+  $("#memberMeta").textContent = `${state.schedule.events.length} 节课 · revision ${state.schedule.revision}`;
+}
+
+function renderCalendar() {
+  const schedule = state.schedule;
+  if (!schedule || !weekCalendar) return;
+  schedule.events = Array.isArray(schedule.events) ? schedule.events : [];
+  const weekStart = startOfWeek(state.calendarWeekStart || new Date());
+  state.calendarWeekStart = weekStart;
+  const weekEnd = addDays(weekStart, 6);
+  const occurrences = weekOccurrences(schedule.events, weekStart);
+  const range = calendarRange(occurrences);
+  const totalMinutes = range.endMinute - range.startMinute;
+  const minuteHeight = CALENDAR_HOUR_HEIGHT / 60;
+  const bodyHeight = totalMinutes * minuteHeight;
+
+  $("#calendarRange").textContent =
+    weekStart.getFullYear() === weekEnd.getFullYear()
+      ? `${weekStart.getFullYear()}年${weekStart.getMonth() + 1}月${weekStart.getDate()}日 - ${weekEnd.getMonth() + 1}月${weekEnd.getDate()}日`
+      : `${weekStart.getFullYear()}年${weekStart.getMonth() + 1}月${weekStart.getDate()}日 - ${weekEnd.getFullYear()}年${weekEnd.getMonth() + 1}月${weekEnd.getDate()}日`;
+  const count = $("#calendarCount");
+  count.textContent = `${occurrences.length} 节`;
+  count.setAttribute("aria-label", `本周 ${occurrences.length} 节课`);
+  $("#noCourses").classList.toggle("hidden", occurrences.length > 0);
+  updateEditorMeta();
+
+  weekCalendar.textContent = "";
+  weekCalendar.style.setProperty("--calendar-body-height", `${bodyHeight}px`);
+
+  const corner = document.createElement("div");
+  corner.className = "calendar-corner";
+  corner.textContent = "时间";
+  weekCalendar.append(corner);
+
+  const dayHeads = document.createElement("div");
+  dayHeads.className = "calendar-day-heads";
+  for (let index = 0; index < 7; index += 1) {
+    const day = addDays(weekStart, index);
+    const head = document.createElement("div");
+    head.className = "calendar-day-head";
+    if (sameCalendarDay(day, new Date())) head.classList.add("today");
+    const name = document.createElement("strong");
+    name.textContent = WEEKDAY_LABELS[index];
+    const date = document.createElement("span");
+    date.textContent = `${day.getMonth() + 1}/${day.getDate()}`;
+    head.append(name, date);
+    dayHeads.append(head);
+  }
+  weekCalendar.append(dayHeads);
+
+  const timeAxis = document.createElement("div");
+  timeAxis.className = "calendar-time-axis";
+  timeAxis.style.height = `${bodyHeight}px`;
+  for (let minute = range.startMinute; minute <= range.endMinute; minute += 60) {
+    const label = document.createElement("span");
+    label.className = "calendar-time-label";
+    label.style.top = `${(minute - range.startMinute) * minuteHeight}px`;
+    label.textContent = `${padNumber(Math.floor(minute / 60) % 24)}:00`;
+    timeAxis.append(label);
+  }
+  weekCalendar.append(timeAxis);
+
+  const days = document.createElement("div");
+  days.className = "calendar-days";
+  days.style.height = `${bodyHeight}px`;
+  for (let index = 0; index < 7; index += 1) {
+    const dayDate = addDays(weekStart, index);
+    const day = document.createElement("div");
+    day.className = "calendar-day";
+    if (sameCalendarDay(dayDate, new Date())) day.classList.add("today");
+    day.dataset.date = formatDateValue(dayDate);
+    day.dataset.startMinute = String(range.startMinute);
+    day.dataset.endMinute = String(range.endMinute);
+    day.style.height = `${bodyHeight}px`;
+    day.tabIndex = 0;
+    day.setAttribute(
+      "aria-label",
+      `${WEEKDAY_LABELS[index]}，${dayDate.getMonth() + 1}月${dayDate.getDate()}日，按回车添加课程`,
+    );
+    day.addEventListener("click", (event) => {
+      if (event.target.closest(".calendar-event")) return;
+      openCourseFromCalendar(dayDate, event);
+    });
+    day.addEventListener("keydown", (event) => {
+      if (event.target !== day || (event.key !== "Enter" && event.key !== " ")) return;
+      event.preventDefault();
+      openCourseFromCalendar(dayDate, null);
+    });
+
+    const slices = sliceOccurrencesForDay(occurrences, dayDate);
+    const layout = layoutDayOccurrences(slices);
+    for (const occurrence of slices) {
+      const position = layout.get(occurrence) || { column: 0, columns: 1 };
+      const startMinute =
+        Math.round((occurrence.start - dayDate) / 60000) - range.startMinute;
+      const endMinute =
+        Math.round((occurrence.end - dayDate) / 60000) - range.startMinute;
+      const top = Math.max(0, startMinute * minuteHeight);
+      const height = Math.max(34, (endMinute - startMinute) * minuteHeight);
+      const eventButton = document.createElement("button");
+      eventButton.type = "button";
+      eventButton.className = "calendar-event";
+      eventButton.dataset.eventIndex = String(occurrence.eventIndex);
+      eventButton.style.top = `${top}px`;
+      eventButton.style.height = `${height}px`;
+      eventButton.style.left = `calc(${(position.column / position.columns) * 100}% + 3px)`;
+      eventButton.style.width = `calc(${100 / position.columns}% - 6px)`;
+      eventButton.style.setProperty("--event-accent", eventColor(occurrence.event));
+      if (height < 66) eventButton.classList.add("compact");
+      if (height < 46) eventButton.classList.add("tiny");
+
+      const time = document.createElement("span");
+      time.className = "calendar-event-time";
+      time.textContent = `${formatClockTime(occurrence.start)} - ${formatClockTime(occurrence.end)}`;
+      const title = document.createElement("strong");
+      title.className = "calendar-event-title";
+      title.textContent = occurrence.event.course || "未命名课程";
+      const location = document.createElement("span");
+      location.className = "calendar-event-location";
+      location.textContent = occurrence.event.location || "";
+      eventButton.append(time, title, location);
+      eventButton.setAttribute(
+        "aria-label",
+        `${title.textContent}，${WEEKDAY_LABELS[index]} ${formatClockTime(occurrence.start)} 至 ${formatClockTime(occurrence.end)}${location.textContent ? `，地点 ${location.textContent}` : ""}，点击编辑`,
+      );
+      eventButton.title = `${title.textContent} ${formatClockTime(occurrence.start)}-${formatClockTime(occurrence.end)}`;
+      eventButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        openCourseDialog(occurrence.eventIndex);
+      });
+      day.append(eventButton);
+    }
+    days.append(day);
+  }
+  weekCalendar.append(days);
+}
+
+function selectedWeekdays() {
+  return [...document.querySelectorAll('input[name="courseWeekday"]:checked')].map(
+    (input) => input.value,
+  );
+}
+
+function setSelectedWeekdays(values) {
+  const selected = new Set(values);
+  for (const input of document.querySelectorAll('input[name="courseWeekday"]')) {
+    input.checked = selected.has(input.value);
+  }
+}
+
+function simpleRepeatValue(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "none";
+  const rule = parseRRule(raw);
+  if (!rule.FREQ) return "custom";
+  const fields = Object.keys(rule);
+  const hasSimpleInterval = !rule.INTERVAL || Number.parseInt(rule.INTERVAL, 10) === 1;
+  const allowedFields =
+    rule.FREQ === "WEEKLY"
+      ? new Set(["FREQ", "INTERVAL", "BYDAY"])
+      : new Set(["FREQ", "INTERVAL"]);
+  if (!hasSimpleInterval || fields.some((field) => !allowedFields.has(field))) return "custom";
+  if (rule.FREQ === "DAILY") return "daily";
+  if (rule.FREQ === "WEEKLY") return "weekly";
+  if (rule.FREQ === "MONTHLY") return "monthly";
+  if (rule.FREQ === "YEARLY") return "yearly";
+  return "custom";
+}
+
+function syncCourseRepeatFields({ initializeWeekdays = false } = {}) {
+  const repeat = $("#courseRepeat").value;
+  const weekly = repeat === "weekly";
+  const custom = repeat === "custom";
+  $("#courseWeekdaysField").classList.toggle("hidden", !weekly);
+  $("#courseCustomRuleField").classList.toggle("hidden", !custom);
+  $("#courseCustomRule").required = custom;
+  if (weekly && initializeWeekdays && selectedWeekdays().length === 0) {
+    const date = parseLocalDateTime(`${$("#courseDate").value}T00:00`);
+    if (date) setSelectedWeekdays([weekdayCode(date)]);
+  }
+}
+
+function courseRRule() {
+  const repeat = $("#courseRepeat").value;
+  if (repeat === "none") return "";
+  if (repeat === "daily") return "FREQ=DAILY";
+  if (repeat === "monthly") return "FREQ=MONTHLY";
+  if (repeat === "yearly") return "FREQ=YEARLY";
+  if (repeat === "custom") return $("#courseCustomRule").value.trim();
+
+  let weekdays = selectedWeekdays();
+  if (weekdays.length === 0) {
+    const date = parseLocalDateTime(`${$("#courseDate").value}T00:00`);
+    if (date) weekdays = [weekdayCode(date)];
+  }
+  return `FREQ=WEEKLY${weekdays.length ? `;BYDAY=${weekdays.join(",")}` : ""}`;
+}
+
+function timeValueFromMinutes(totalMinutes) {
+  const normalized = Math.max(0, Math.min(23 * 60 + 59, Math.round(totalMinutes)));
+  return `${padNumber(Math.floor(normalized / 60))}:${padNumber(normalized % 60)}`;
+}
+
+function openCourseFromCalendar(day, pointerEvent) {
+  let startMinute = 8 * 60;
+  const dayElement =
+    pointerEvent?.currentTarget instanceof HTMLElement ? pointerEvent.currentTarget : null;
+  if (pointerEvent && dayElement) {
+    const rect = dayElement.getBoundingClientRect();
+    const rangeStart = Number.parseInt(dayElement.dataset.startMinute || "480", 10);
+    const offset = Math.max(0, pointerEvent.clientY - rect.top);
+    startMinute = rangeStart + (offset / (CALENDAR_HOUR_HEIGHT / 60));
+    startMinute = Math.round(startMinute / 30) * 30;
+  }
+  startMinute = Math.max(0, Math.min(23 * 60 + 30, startMinute));
+  const endMinute = Math.min(23 * 60 + 59, startMinute + 60);
+  openCourseDialog(-1, {
+    date: formatDateValue(day),
+    startTime: timeValueFromMinutes(startMinute),
+    endTime: timeValueFromMinutes(endMinute),
+  });
+}
+
+function openCourseDialog(index = -1, defaults = {}) {
+  const events = state.schedule?.events || [];
+  const event = index >= 0 && index < events.length ? events[index] : null;
+  const now = new Date();
+  const fallbackDate =
+    state.calendarWeekStart && !sameCalendarDay(state.calendarWeekStart, startOfWeek(now))
+      ? state.calendarWeekStart
+      : now;
+  const start = event ? parseLocalDateTime(event.start) : null;
+  const end = event ? parseLocalDateTime(event.end) : null;
+  const startTime = defaults.startTime || (start ? formatTimeValue(start) : "08:00");
+  const endTime =
+    defaults.endTime || (end ? formatTimeValue(end) : timeValueFromMinutes(9 * 60));
+
+  courseEditor.index = event ? index : -1;
+  $("#courseDialogTitle").textContent = event ? "编辑课程" : "添加课程";
+  $("#courseDialogHint").textContent = event
+    ? "修改后保存课程，原课程标识会保留。"
+    : "设置首次上课日期、时间和重复规则。";
+  $("#courseName").value = event?.course || "";
+  $("#courseDate").value =
+    defaults.date || (start ? formatDateValue(start) : formatDateValue(fallbackDate));
+  $("#courseStartTime").value = startTime;
+  $("#courseEndTime").value = endTime;
+  $("#courseLocation").value = event?.location || "";
+  $("#courseDescription").value = event?.description || "";
+  $("#courseCustomRule").value = event?.rrule || "";
+  $("#courseRepeat").value = event ? simpleRepeatValue(event.rrule) : "none";
+  const rule = parseRRule(event?.rrule);
+  const weekdays = String(rule.BYDAY || "")
+    .split(",")
+    .filter((value) => WEEKDAY_CODES.includes(value));
+  if (weekdays.length === 0 && start && $("#courseRepeat").value === "weekly") {
+    weekdays.push(weekdayCode(start));
+  }
+  setSelectedWeekdays(weekdays);
+  syncCourseRepeatFields();
+  $("#courseDelete").classList.toggle("hidden", !event);
+  openDialog($("#courseDialog"), "#courseName");
+}
+
+function closeCourseDialog() {
+  closeDialog($("#courseDialog"));
+  courseEditor.index = -1;
+}
+
+function courseFormDateTime(date, time, addDay = false) {
+  const parsedDate = parseLocalDateTime(`${date}T${time}`);
+  if (!parsedDate) return null;
+  if (addDay) parsedDate.setDate(parsedDate.getDate() + 1);
+  return formatDateTimeValue(parsedDate);
+}
+
+function submitCourseForm(event) {
+  event.preventDefault();
+  const events = state.schedule?.events || [];
+  const isEditing = courseEditor.index >= 0;
+  const course = $("#courseName").value.trim();
+  const date = $("#courseDate").value;
+  const startTime = $("#courseStartTime").value;
+  const endTime = $("#courseEndTime").value;
+  if (!course || !date || !startTime || !endTime) {
+    showNotice("请填写课程名称、日期和上下课时间。", "error");
+    return;
+  }
+  if (startTime === endTime) {
+    showNotice("结束时间必须晚于开始时间。", "error");
+    $("#courseEndTime").focus();
+    return;
+  }
+  const crossesMidnight = endTime < startTime;
+  const start = courseFormDateTime(date, startTime);
+  const end = courseFormDateTime(date, endTime, crossesMidnight);
+  if (!start || !end) {
+    showNotice("无法解析课程时间，请重新选择。", "error");
+    return;
+  }
+
+  const rrule = courseRRule();
+  if ($("#courseRepeat").value === "custom" && !rrule) {
+    showNotice("请填写自定义重复规则。", "error");
+    $("#courseCustomRule").focus();
+    return;
+  }
+  const nextEvent = {
+    id: courseEditor.index >= 0 ? events[courseEditor.index]?.id || 0 : 0,
+    uid: courseEditor.index >= 0 ? events[courseEditor.index]?.uid || "" : "",
+    course,
+    start,
+    end,
+    location: $("#courseLocation").value.trim(),
+    rrule,
+    description: $("#courseDescription").value.trim(),
+  };
+  if (courseEditor.index >= 0) events[courseEditor.index] = nextEvent;
+  else events.push(nextEvent);
+
+  setDirty(true);
+  closeCourseDialog();
+  renderCalendar();
+  showNotice(isEditing ? "课程已更新，保存课表后生效。" : "课程已添加，保存课表后生效。", "success");
+}
+
+function deleteCourse() {
+  const events = state.schedule?.events || [];
+  if (courseEditor.index < 0 || courseEditor.index >= events.length) return;
+  const event = events[courseEditor.index];
+  if (!window.confirm(`删除课程“${event.course || "未命名课程"}”？`)) return;
+  if (events.length === 1) {
+    showNotice("至少需要保留一节课程。", "error");
+    return;
+  }
+  events.splice(courseEditor.index, 1);
+  setDirty(true);
+  closeCourseDialog();
+  renderCalendar();
+  showNotice("课程已删除，保存课表后生效。", "success");
 }
 
 function collectSchedule() {
-  return [...courseList.querySelectorAll(".course-card")].map((card) => {
-    const value = (name) => card.querySelector(`[data-field="${name}"]`).value.trim();
-    return {
-      course: value("course"),
-      start: value("start"),
-      end: value("end"),
-      location: value("location"),
-      rrule: value("rrule"),
-      description: value("description"),
-    };
-  });
+  return (state.schedule?.events || []).map((event) => ({
+    id: event.id || 0,
+    uid: event.uid || "",
+    course: String(event.course || "").trim(),
+    start: String(event.start || "").trim(),
+    end: String(event.end || "").trim(),
+    location: String(event.location || "").trim(),
+    rrule: String(event.rrule || "").trim(),
+    description: String(event.description || "").trim(),
+  }));
 }
 
 function validateSchedule(events) {
@@ -520,6 +1148,7 @@ async function saveSchedule() {
     state.schedule.name = saved.name;
     state.schedule.events = events;
     setDirty(false);
+    renderCalendar();
     showNotice(`已保存 ${saved.name} 的课表：${saved.event_count} 节课。`, "success");
     await loadScopes();
   } catch (error) {
@@ -1092,8 +1721,37 @@ function start() {
   });
   $("#scopeSearch").addEventListener("input", renderScopes);
   $("#addCourseButton").addEventListener("click", () => {
-    addCourseCard({});
-    setDirty(true);
+    openCourseDialog(-1);
+  });
+  $("#calendarPrev").addEventListener("click", () => {
+    state.calendarWeekStart = addDays(state.calendarWeekStart || new Date(), -7);
+    renderCalendar();
+    calendarScroll.scrollTop = 0;
+  });
+  $("#calendarNext").addEventListener("click", () => {
+    state.calendarWeekStart = addDays(state.calendarWeekStart || new Date(), 7);
+    renderCalendar();
+    calendarScroll.scrollTop = 0;
+  });
+  $("#calendarToday").addEventListener("click", () => {
+    state.calendarWeekStart = startOfWeek(new Date());
+    renderCalendar();
+    calendarScroll.scrollTop = 0;
+  });
+  $("#courseForm").addEventListener("submit", submitCourseForm);
+  $("#courseClose").addEventListener("click", closeCourseDialog);
+  $("#courseCancel").addEventListener("click", closeCourseDialog);
+  $("#courseDelete").addEventListener("click", deleteCourse);
+  $("#courseRepeat").addEventListener("change", () => {
+    syncCourseRepeatFields({ initializeWeekdays: true });
+  });
+  $("#courseDate").addEventListener("change", () => {
+    if ($("#courseRepeat").value === "weekly" && selectedWeekdays().length === 0) {
+      syncCourseRepeatFields({ initializeWeekdays: true });
+    }
+  });
+  $("#courseDialog").addEventListener("click", (event) => {
+    if (event.target === $("#courseDialog")) closeCourseDialog();
   });
   $("#memberName").addEventListener("input", () => setDirty(true));
   $("#memberQQ").addEventListener("input", () => {

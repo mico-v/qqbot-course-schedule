@@ -97,6 +97,9 @@ func (h *Handler) Dispatch(ctx context.Context, in *Inbound, r *Replier) {
 	// set it, so the paths that never reach a command record a success.
 	var dispatchErr error
 	if h.env != nil {
+		// Expired handling records are swept here (throttled to once an hour)
+		// so retention no longer depends on a background ticker.
+		h.env.pruneStats(h.env.now())
 		// Install the recorder here rather than at every construction site, so a
 		// caller that builds a bare replier still gets its stages recorded.
 		if r != nil {

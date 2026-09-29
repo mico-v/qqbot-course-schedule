@@ -36,8 +36,7 @@ type Inbound struct {
 	Mentions    []Mention
 
 	// receivedCtx carries the webhook arrival stamp used for timing. It is nil
-	// for messages built by tests and by proactive pushes, where ReceivedAt
-	// falls back to now.
+	// for messages built by tests, where ReceivedAt falls back to now.
 	receivedCtx context.Context
 }
 

@@ -152,12 +152,6 @@ func (d *Dispatcher) process(payload Payload) {
 			UserOpenID:  firstNonEmpty(data.GroupMemberOpenID, data.UserOpenID),
 		})
 
-	case EventGroupMsgRecv, EventC2CMsgRecv:
-		var data BroadcastData
-		_ = json.Unmarshal(payload.D, &data)
-		slog.Info("主动推送开关变更", "event", payload.T,
-			"group", shortID(data.GroupOpenID), "openid", shortID(firstNonEmpty(data.OpenID, data.OPMemberOpenID)))
-
 	default:
 		slog.Debug("未处理的事件", "event", payload.T)
 	}

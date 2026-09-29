@@ -70,7 +70,6 @@ func run() error {
 	domainService := schedule.NewService(storeHandle)
 	env := &bot.Env{
 		Client:        client,
-		PushStore:     storeHandle,
 		PanelStore:    storeHandle,
 		Service:       domainService,
 		Renderer:      renderer,
@@ -79,7 +78,6 @@ func run() error {
 		FilesDir:      filepath.Join(cfg.DataDir, "files"),
 		PublicBaseURL: cfg.PublicImageBase(),
 		Buttons:       cfg.Buttons,
-		PushCron:      cfg.PushCron,
 	}
 	handler := bot.NewDefaultHandler(env)
 	dispatcher := webhook.NewDispatcher(client, cfg.Secret, handler)
@@ -111,14 +109,6 @@ func run() error {
 	go env.RefreshBotAvatar(context.Background())
 	go syncCommandPanels(env, handler)
 	go syncMenu(env)
-
-	scheduler, err := bot.StartScheduler(env)
-	if err != nil {
-		slog.Warn("定时推送未启用", "err", err)
-	} else {
-		defer scheduler.Stop()
-		slog.Info("定时推送已启用", "default_cron", cfg.PushCron)
-	}
 
 	serveErr := make(chan error, 1)
 	go func() {

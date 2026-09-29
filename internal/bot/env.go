@@ -20,7 +20,6 @@ import (
 // Env carries everything the command handlers need.
 type Env struct {
 	Client        *qqapi.Client
-	PushStore     schedule.PushStore
 	PanelStore    schedule.PanelStore
 	Service       *schedule.Service
 	Renderer      *render.Renderer
@@ -30,8 +29,6 @@ type Env struct {
 	PublicBaseURL string
 	// Buttons enables markdown+keyboard card messages (platform invite only).
 	Buttons bool
-	// PushCron is the daily push schedule (5-field cron, local time).
-	PushCron string
 	// Now is overridable in tests.
 	Now func() time.Time
 
@@ -348,12 +345,12 @@ func renderStart(in *Inbound, fallback time.Time) time.Time {
 	return fallback
 }
 
-// statsPruneInterval is how often expired handling records are swept. The tick
-// itself is every minute, so a hour-sized throttle keeps the sweep cheap.
+// statsPruneInterval is how often expired handling records are swept during
+// message dispatch. The throttle keeps the sweep cheap.
 const statsPruneInterval = time.Hour
 
 // pruneStats drops handling records past their retention, at most once per
-// statsPruneInterval. Failures are logged and never disturb the push tick.
+// statsPruneInterval. Failures are logged and never disturb dispatch.
 func (e *Env) pruneStats(now time.Time) {
 	if e == nil || e.Service == nil {
 		return

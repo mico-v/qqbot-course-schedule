@@ -60,7 +60,7 @@ type MessageStats struct {
 	// SendMS is the duration of the final send call.
 	SendMS int
 	// ReplyMS is from message receipt to a text/file reply returning. It is
-	// only set on the stages that do not push a card.
+	// only set on the stages that do not render a card.
 	ReplyMS int
 }
 
@@ -144,8 +144,8 @@ func (e *Env) recordStats(ctx context.Context, in *Inbound, r *Replier, stage sc
 	}
 	received, ok := timing.Received(ctx)
 	if !ok {
-		// Messages built without a stamp (proactive pushes) have no origin to
-		// measure from; the per stage durations are still worth keeping.
+		// Messages built without a stamp (tests) have no origin to measure
+		// from; the per stage durations are still worth keeping.
 		received = in.ReceivedAt()
 	}
 	stats := r.Stats()
@@ -289,40 +289,6 @@ func (r *Replier) ReplyFile(ctx context.Context, fileURL, fileName string) error
 	}
 	r.markSend(start, time.Time{})
 	r.afterSend(ctx, schedule.StatsStageReply, err)
-	return err
-}
-
-// PushImage sends a proactive image message with no msg_id.
-func (r *Replier) PushImage(ctx context.Context, imageURL string) error {
-	in := r.Inbound
-	start := time.Now()
-	var err error
-	switch in.Origin {
-	case OriginGroup:
-		err = r.Client.SendGroupImage(ctx, in.GroupOpenID, imageURL, "", 0)
-	case OriginPrivate:
-		err = r.Client.SendC2CImage(ctx, in.UserOpenID, imageURL, "", 0)
-	default:
-		return fmt.Errorf("未知消息来源 %q", in.Origin)
-	}
-	r.markSend(start, time.Time{})
-	return err
-}
-
-// Push sends a proactive text message with no msg_id.
-func (r *Replier) Push(ctx context.Context, text string) error {
-	in := r.Inbound
-	start := time.Now()
-	var err error
-	switch in.Origin {
-	case OriginGroup:
-		_, err = r.Client.SendGroupText(ctx, in.GroupOpenID, text, "", 0)
-	case OriginPrivate:
-		_, err = r.Client.SendC2CText(ctx, in.UserOpenID, text, "", 0)
-	default:
-		return fmt.Errorf("未知消息来源 %q", in.Origin)
-	}
-	r.markSend(start, time.Time{})
 	return err
 }
 

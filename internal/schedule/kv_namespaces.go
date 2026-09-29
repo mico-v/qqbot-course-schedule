@@ -9,8 +9,6 @@ const (
 	KVNamespaceSettings = "settings"
 	// KVNamespaceSeen stores members observed through incoming messages.
 	KVNamespaceSeen = "seen"
-	// KVNamespacePush stores per-scope daily push subscriptions.
-	KVNamespacePush = "push"
 	// KVNamespacePanel stores command panel state managed by the bot.
 	KVNamespacePanel = "panel"
 )

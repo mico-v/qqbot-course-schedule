@@ -58,7 +58,7 @@ go run ./cmd/bot
 qqbot-course-schedule/
 ├── README.md / PLAN.md / DEV-GUIDE.md / CONNECT.md / COVERAGE-AstrBot.md
 ├── cmd/
-│   ├── bot/main.go              # 装配：config → store → schedule/admin → qqapi → bot/server → scheduler
+│   ├── bot/main.go              # 装配：config → store → schedule/admin → qqapi → bot/server
 │   └── cardpreview/main.go      # 样例卡片预览（-rank 预览榜单）
 ├── internal/
 │   ├── config/                  # config.json 加载、默认值、校验
@@ -78,19 +78,18 @@ qqbot-course-schedule/
 │   │   └── dispatch.go          #   事件分发、msg_id 幂等、互动回调
 │   ├── bot/
 │   │   ├── handler.go           #   指令路由、别名、args、观察成员记录
-│   │   ├── commands.go          #   全部指令处理器（课表/榜单/休假/推送/面板）
+│   │   ├── commands.go          #   全部指令处理器（课表/榜单/休假/面板）
 │   │   ├── inbound.go           #   Inbound 入站事实、Args/Command、收到时刻
-│   │   ├── replier.go           #   被动/主动回复、event_id 回复、5 次计数
+│   │   ├── replier.go           #   被动回复、event_id 回复、5 次计数
 │   │   ├── env.go               #   Env 依赖与卡片发送（媒体 / markdown+键盘）
 │   │   ├── import.go            #   .ics 附件下载与导入、失败留存
 │   │   ├── export.go            #   .ics 导出与公开文件
 │   │   ├── panel.go             #   指令面板同步
 │   │   ├── menu.go              #   自定义菜单同步
-│   │   ├── push.go              #   推送订阅、每日推送、卡片键盘
-│   │   └── scheduler.go         #   robfig/cron 调度
+│   │   └── cardui.go            #   卡片键盘（日期/榜单切换按钮）
 │   ├── store/                   # SQLite：三表 + KV + revision 乐观锁
 │   │   ├── store.go             #   课表、标记、统计与通用 KV
-│   │   └── kv_state.go          #   推送订阅/面板状态的窄接口适配
+│   │   └── kv_state.go          #   面板状态的窄接口适配
 │   ├── admin/                   # 管理台应用层（无 Gin / SQLite / 渲染依赖）
 │   │   ├── service.go           #   会话汇总、成员读写、批量建表、标记管理
 │   │   └── backup.go            #   管理台原始备份/恢复与限额
@@ -104,8 +103,7 @@ qqbot-course-schedule/
 │   │   ├── daycard.go           #   每日状态行、收纳拆分、区间合并
 │   │   ├── rank.go              #   时长榜口径
 │   │   ├── override.go          #   休假/调休目标解析与写入
-│   │   ├── kv_namespaces.go     #   四个 KV 命名空间集中定义
-│   │   ├── pushstore.go         #   推送订阅 DTO 与存储接口
+│   │   ├── kv_namespaces.go     #   三个 KV 命名空间集中定义
 │   │   ├── panelstore.go        #   面板状态 DTO 与存储接口
 │   │   ├── seen.go              #   观察成员记录（管理台候选来源）
 │   │   └── service.go           #   ICS 导入与日卡数据
@@ -148,8 +146,8 @@ schedule 包内不得 import gin/qqapi/store/admin
 admin 包内不得 import gin/sqlite/render/store
 ```
 
-`bot` 的非测试代码不得 import `store`；`Env` 只暴露 `schedule.PushStore` /
-`schedule.PanelStore` 两个窄接口。KV 命名空间集中定义在 `schedule/kv_namespaces.go`。
+`bot` 的非测试代码不得 import `store`；`Env` 只暴露 `schedule.PanelStore` 窄接口。
+KV 命名空间集中定义在 `schedule/kv_namespaces.go`。
 `store.Store` 是适配器，同时实现 `schedule.Storage` 与 `admin.Storage`；HTTP 路由只拿到
 `*admin.Service`，不得直接访问 SQLite。边界由 `scripts/check-architecture.sh` 强制检查。
 
@@ -170,7 +168,6 @@ admin 包内不得 import gin/sqlite/render/store
 | `public_base_url` | string | | — | 对外 HTTPS 地址，用于图床与分享链接 |
 | `database` | string | | `data/course_schedule.sqlite3` | SQLite 路径 |
 | `admin_password` | string | | 空 | 管理台密码；空时仅本机可访问 |
-| `push_cron` | string | | `30 7 * * *` | 推送默认时间（5 段 cron，本地时区）；`/启用推送` 后生效，会话可用 `/推送时间` 覆盖 |
 | `buttons` | bool | | false | 卡片按钮（markdown+keyboard）；官方为内邀能力，默认关闭 |
 | `log_level` | string | | `info` | `debug/info/warn/error` |
 | `data_dir` | string | | `data` | 图片、缓存根目录 |
@@ -216,13 +213,12 @@ admin 包内不得 import gin/sqlite/render/store
 | Op=13 | 用同一私钥对 `event_ts + plain_token` 签名，返回 `{plain_token, signature}` |
 | 幂等 | `op` 非 13 且事件类型未知 → 直接 200 忽略；业务处理按 `payload.id` 去重 |
 
-### 5.4 被动回复与主动推送
+### 5.4 被动回复
 
 | 场景 | 规则 |
 | --- | --- |
 | 被动回复 | 携带 `msg_id`（事件 `d.id`），5 分钟内有效，同一 `msg_id` 最多 5 条，`msg_seq` 从 1 递增 |
 | 超限 | 客户端计数达 5 时返回明确错误，不静默失败 |
-| 主动推送 | 不带 `msg_id`；仅 `GROUP_MSG_RECEIVE`/`C2C_MSG_RECEIVE` 后允许；受 `40034100`（频控）/`40034105`（无权限）限制 |
 
 ---
 
@@ -289,26 +285,9 @@ _, err = adminService.SavePageSchedule(admin.SavePagePayload{
 - 一次业务操作 = 一个事务；不得跨事务拼接。
 - 迁移用 `metadata.schema_version` + 顺序脚本，禁止直接改线上表结构。
 
-### 6.4 定时任务
+### 6.4 按钮与互动回调
 
-```go
-// StartScheduler 校验默认 push_cron 后，注册一个每分钟触发的 tick。
-scheduler.AddFunc("* * * * *", func() {
-    env.PushDue(ctx, env.now()) // 每个订阅按自己的 cron 判断是否到点
-})
-```
-
-- 推送时间逐会话存储：订阅里的 `cron` 优先，缺省用全局 `push_cron`；
-  `/推送时间 HH:MM`（或 5 段 cron）修改，`/推送时间 默认` 恢复。
-- `cronDue(spec, now)` 用 `cron.Schedule.Next(minute-1s)` 判断本分钟是否命中，
-  支持任意 5 段表达式；订阅里的 `last_run`（分钟精度）防止重启/重复 tick 二次发送。
-- 任务回调在独立 goroutine 执行，注意并发安全（store 已串行化）。
-- 主动推送必须 `msg.SetInitiative()`；失败按错误码分类：频控退避、无权限则暂停该目标订阅并记录原因。
-- 修改推送时间立即生效，无需重建 cron 条目；重启后以订阅存储为准。
-
-### 6.5 按钮与互动回调
-
-> 课表卡片默认携带日期切换按钮（前一天 / 今天 / 后一天），交互注册见 6.8。
+> 课表卡片默认携带日期切换按钮（前一天 / 今天 / 后一天），交互注册见 6.7。
 
 ```go
 kb := buttons.NewKeyboard()
@@ -323,7 +302,7 @@ msg.Keyboard(kb)
 - 按钮 `permission` 用 `specify_user_ids` 限制为消息接收者（原插件同类场景）。
 - 按钮数量限制：每行最多 5 个、最多 5 行；button data 用 `action:param` 编码，参数保持短小。
 
-### 6.6 发送消息与媒体
+### 6.5 发送消息与媒体
 
 | 类型 | 方式 |
 | --- | --- |
@@ -335,7 +314,7 @@ msg.Keyboard(kb)
 
 禁止使用未在官方文档出现的 `file_data` 字段（历史实现依赖此字段，已失效）。
 
-### 6.7 Web 管理台
+### 6.6 Web 管理台
 
 - 前端在 `web/`，`go:embed` 进二进制，经 `/admin` 提供；接口在 `/api/*`（`internal/server/admin.go`）。
 - 鉴权：`admin_password` 为空时仅回环地址可访问；设置后要求 HTTP Basic Auth（用户名 `admin`）。
@@ -366,7 +345,7 @@ msg.Keyboard(kb)
     文件名约定导入、`.json` 备份恢复（清空并重建标记）、`.ics` 导入到选中成员
   - 上限：总文件 20 MiB、压缩包条目 ≤ 510、单 ICS 2 MiB；空课表成员不进入 ICS 压缩包
 
-### 6.8 指令面板与自定义菜单
+### 6.7 指令面板与自定义菜单
 
 指令集合是单一事实来源：面板从已注册指令生成，不手写列表。实现见 `internal/bot/panel.go`、`internal/qqapi/panel.go`。
 
@@ -417,7 +396,7 @@ JSON 键名沿用，便于对照与手工排查。
 | 域名 | 默认 `api.bot.qq.com`；`domain` 可配置 |
 | 超时 | 普通请求 10s；媒体上传 60s；Token 10s |
 | 重试 | 网络错误与 5xx 重试（幂等请求）；4xx 不重试，返回结构化错误 |
-| 限频 | 识别 `429`/频控错误码，退避后重试；主动推送失败要记录目标 |
+| 限频 | 识别 `429`/频控错误码，退避后重试 |
 | 错误结构 | `{code, message, err_code}` 统一解析，错误码表见官方 `dev-prepare/api-call-guide.md` |
 | 日志 | 请求打点：method、路径（脱敏 openid）、耗时、结果码；body 仅在 `debug` 级别 |
 
@@ -562,8 +541,8 @@ bot.example.com {
 
 ```
 feat(schedule): 实现 /课表 日期解析与卡片渲染
-fix(qqapi): 修正分片上传 part_index 从 0 开始
-docs(plan): 补充主动推送错误码处理
+fix(render): 修正头像裁圆边界溢出
+docs(plan): 补充 ICS 导入失败排查说明
 ```
 
 - 不提交 `config.json`、`data/`、`bin/`（`.gitignore` 覆盖）。
@@ -575,7 +554,7 @@ docs(plan): 补充主动推送错误码处理
 | 现象 | 原因 | 处理 |
 | --- | --- | --- |
 | 平台提示回调验证失败 | 端口不在 80/443/8080/8443；secret 错误；回包缺 `signature` | 对照 5.3；本地先手动构造 Op=13 验证 |
-| 发消息返回 `msg_id` 过期 | 超过 5 分钟被动窗口 | 改用主动推送（需接收开关）或忽略 |
+| 发消息返回 `msg_id` 过期 | 超过 5 分钟被动窗口 | 忽略；提示用户重新发送指令 |
 | 同一 `msg_id` 回复 5 条后失败 | 被动回复上限 | 合并消息；多余内容走主动或按钮 |
 | `40034105 主动消息发送失败，无权限` | 群未开启消息接收 | 记录并提示管理员在机器人资料页开启 |
 | 事件重复收到 | 平台为保证可达会重复推送 | 按 `payload.id` 幂等 |

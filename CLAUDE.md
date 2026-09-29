@@ -51,17 +51,17 @@ schedule 包内不得 import gin / qqapi / store / admin（只认 types.go 里�
 admin 包内不得 import gin / sqlite / render / store（只认自己的 Storage 端口）
 ```
 
-`main` 只做装配：`config → store → schedule.Service → admin.Service → render → qqapi → bot.Env → webhook.Dispatcher → gin 路由 → scheduler`（见 `cmd/bot/main.go`）。
-`bot.Env` 不持有通用 `schedule.Storage`：推送订阅与面板状态分别只依赖 `schedule.PushStore` /
-`schedule.PanelStore`，非测试代码不得 import `store`。
+`main` 只做装配：`config → store → schedule.Service → admin.Service → render → qqapi → bot.Env → webhook.Dispatcher → gin 路由`（见 `cmd/bot/main.go`）。
+`bot.Env` 不持有通用 `schedule.Storage`：面板状态只依赖 `schedule.PanelStore`，
+非测试代码不得 import `store`。
 
 ## 关键约定
 
 **所有课表写路径都经过服务层**：领域操作使用 `schedule.Service`，管理台应用操作使用
 `internal/admin.Service`（它组合 `*schedule.Service`，并通过 `admin.Storage` 读取管理台数据）。
 排序、ICS 重建、派生字段与 `course_id` 重排仍由 `schedule` 负责。机器人指令、WebUI `/api/*`、
-批量导入导出不得绕过服务层直接写 `store`。推送订阅/面板状态属于独立的 KV 配置，只能走
-`schedule.PushStore` / `schedule.PanelStore`。
+批量导入导出不得绕过服务层直接写 `store`。面板状态属于独立的 KV 配置，只能走
+`schedule.PanelStore`。
 
 **乐观锁**：`Storage.PutMember(scopeID, userID, member, expectedRevision)`，`expectedRevision=nil` 表示新建。
 `schedule.ErrConflict` → WebUI 返回 409（提示刷新，**不自动重试覆盖**）；机器人侧回中文提示。
@@ -83,16 +83,15 @@ admin 包内不得 import gin / sqlite / render / store（只认自己的 Storag
 **日期解析只有两个入口**：`schedule/dayoff.go`（天/范围，含相对词）与 `schedule/timerange.go`（区间表达式）。新需求必须扩展这两个，**不要新写解析器**。
 
 **KV 命名空间**（表 `kv_data`，`store.GetKV/SetKV/ListKV/DeleteKV`，`global` scope 下）：
-`settings/bot`（总开关+回复策略）、`push/<scopeID>`（推送订阅）、`seen/<scopeID>`（观察成员）、
-`panel/<scope>`（面板 ID 与 items hash）。新增命名空间时集中定义常量。
+`settings/bot`（总开关+回复策略）、`seen/<scopeID>`（观察成员）、`panel/<scope>`
+（面板 ID 与 items hash）。新增命名空间时集中定义常量。
 
 **SQLite**：`modernc.org/sqlite` 纯 Go，必须保持 `MaxOpenConns(1)`（多连接写会 `database is locked`）；事务短小；`PutMember` 用 `begin immediate` + 删旧事件 + 批量插入。迁移走 `metadata.schema_version` + `store.migrate()` 顺序幂等语句，禁止直接改线上表结构；**不做** Python 数据自动迁移（OpenID 无法对应 QQ 号，用户重新导入 ICS）。
 
 **QQ API 客户端**（`internal/qqapi/`，自研不用 botgo）：
-- 被动回复带 `msg_id`，5 分钟窗口内同一 `msg_id` 最多 5 条（`msg_seq` 递增，超限返回明确错误）；主动推送不带 `msg_id` 且必须 `msg.SetInitiative()`。
+- 被动回复带 `msg_id`，5 分钟窗口内同一 `msg_id` 最多 5 条（`msg_seq` 递增，超限返回明确错误）。
 - 图片/文件一律**公网 URL 上传**拿 `file_info`（配合 `public_base_url` 图床），**不实现分片上传**；禁止使用未文档化的 `file_data` 字段（历史实现依赖它，已失效）。
 - 群接口的 `file_info` 只能用于群消息，单聊同理。
-- 错误码分类见 `internal/qqapi/errors.go`：频控退避重试，`40034105`（主动消息无权限）暂停该订阅并记录原因。
 
 **渲染**（`internal/render/`，纯函数无副作用，`gg` + 内嵌 Noto 字体）：
 文本测量必须用 `render.Measure`/`WrapFit`，禁止直接 `font.MeasureString` 处理中英混排；

@@ -6,7 +6,6 @@ require (
 	github.com/fogleman/gg v1.3.0
 	github.com/gin-gonic/gin v1.12.0
 	github.com/rivo/uniseg v0.4.7
-	github.com/robfig/cron/v3 v3.0.1
 	github.com/teambition/rrule-go v1.8.2
 	golang.org/x/image v0.46.0
 	golang.org/x/text v0.42.0
