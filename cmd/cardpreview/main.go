@@ -20,6 +20,7 @@ func main() {
 	rankMode := flag.Bool("rank", false, "render a sample rank board instead of a day card")
 	avatarPath := flag.String("avatar", "", "optional avatar image to draw in the card header")
 	memberAvatarPath := flag.String("member-avatar", "", "optional avatar image to use for every member row")
+	botName := flag.String("name", "", "optional bot nickname drawn next to the header avatar")
 	flag.Parse()
 
 	loadImage := func(path, label string) image.Image {
@@ -93,6 +94,7 @@ func main() {
 		Folded:        folded,
 		DurationLabel: "本节持续",
 		BotAvatar:     avatar,
+		BotName:       *botName,
 		Avatars:       memberAvatars,
 		FooterSince:   previewSince,
 	})
@@ -111,6 +113,7 @@ func main() {
 				{Key: "none", Label: "同一时段冲突的课程只计一次"},
 				{Key: "none", Label: "全天日程不计入时长"},
 			},
+			BotName:     *botName,
 			FooterSince: previewSince,
 		})
 	}

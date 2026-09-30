@@ -104,8 +104,8 @@ func (h *Handler) handleSettings(ctx context.Context, in *Inbound, r *Replier) e
 // applySettingArgs parses one /设置 invocation. It returns a usage/error text
 // (empty on success) alongside the updated settings.
 func applySettingArgs(settings schedule.Settings, args []string) (schedule.Settings, string) {
-	usage := fmt.Sprintf("用法：\n%s\n%s 机器人 开|关\n%s 回复 无斜杠|斜杠|@|全部 开|关\n%s 格式 图片|markdown",
-		settingsCommandPrefix, settingsCommandPrefix, settingsCommandPrefix, settingsCommandPrefix)
+	usage := fmt.Sprintf("用法：\n%s\n%s 机器人 开|关\n%s 回复 无斜杠|斜杠|@|全部 开|关\n%s 格式 图片|markdown\n%s 昵称 <名字|清空>",
+		settingsCommandPrefix, settingsCommandPrefix, settingsCommandPrefix, settingsCommandPrefix, settingsCommandPrefix)
 
 	switch args[0] {
 	case "机器人", "bot":
@@ -152,6 +152,20 @@ func applySettingArgs(settings schedule.Settings, args []string) (schedule.Setti
 			return settings, "未知的发送格式：" + args[1] + "（可选 图片 / markdown）"
 		}
 		return settings, ""
+	case "昵称", "nickname", "nikname":
+		if len(args) < 2 {
+			return settings, usage
+		}
+		name := strings.Join(args[1:], " ")
+		if isClearNickname(name) {
+			settings.Nickname = ""
+			return settings, ""
+		}
+		if len([]rune(name)) > schedule.MaxBotNicknameLength {
+			return settings, fmt.Sprintf("昵称不能超过 %d 个字符。", schedule.MaxBotNicknameLength)
+		}
+		settings.Nickname = name
+		return settings, ""
 	}
 	if len(args) == 1 {
 		if value, ok := parseOnOff(args[0]); ok {
@@ -172,6 +186,15 @@ func parseOnOff(value string) (bool, bool) {
 	return false, false
 }
 
+// isClearNickname reports whether a nickname argument asks to clear the name.
+func isClearNickname(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "清空", "无", "清除", "clear", "none", "-":
+		return true
+	}
+	return false
+}
+
 func settingsText(settings schedule.Settings) string {
 	onOff := func(value bool) string {
 		if value {
@@ -183,11 +206,16 @@ func settingsText(settings schedule.Settings) string {
 	if settings.SendFormat == schedule.SendFormatMarkdown {
 		sendFormat = "markdown"
 	}
+	nickname := settings.Nickname
+	if nickname == "" {
+		nickname = "未设置"
+	}
 	return fmt.Sprintf(
-		"机器人：%s\n回复策略：无斜杠 %s · 斜杠 %s · @机器人 %s\n发送格式：%s\n\n修改：\n%s 机器人 开|关\n%s 回复 无斜杠|斜杠|@|全部 开|关\n%s 格式 图片|markdown",
+		"机器人：%s\n回复策略：无斜杠 %s · 斜杠 %s · @机器人 %s\n发送格式：%s\n机器人昵称：%s\n\n修改：\n%s 机器人 开|关\n%s 回复 无斜杠|斜杠|@|全部 开|关\n%s 格式 图片|markdown\n%s 昵称 <名字|清空>",
 		onOff(settings.Enabled),
 		onOff(settings.ReplyPlain), onOff(settings.ReplySlash), onOff(settings.ReplyMention),
 		sendFormat,
-		settingsCommandPrefix, settingsCommandPrefix, settingsCommandPrefix,
+		nickname,
+		settingsCommandPrefix, settingsCommandPrefix, settingsCommandPrefix, settingsCommandPrefix,
 	)
 }

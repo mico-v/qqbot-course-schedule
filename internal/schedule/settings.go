@@ -1,5 +1,7 @@
 package schedule
 
+import "strings"
+
 // Send formats accepted by Settings.SendFormat.
 const (
 	SendFormatImage    = "image"
@@ -20,9 +22,14 @@ type Settings struct {
 	// SendFormat selects how schedule cards are delivered: an image (default)
 	// or a markdown list of the day's courses.
 	SendFormat string `json:"send_format"`
+	// Nickname is the bot name drawn on rendered cards; empty hides it.
+	Nickname string `json:"nickname"`
 }
 
 const settingsKey = "bot"
+
+// MaxBotNicknameLength caps the bot nickname drawn on cards.
+const MaxBotNicknameLength = 24
 
 // DefaultSettings returns the switches used before any customization. All of
 // them are on so an upgrade keeps the previous behaviour.
@@ -42,12 +49,14 @@ func (s *Service) BotSettings() (Settings, error) {
 		return DefaultSettings(), err
 	}
 	settings.SendFormat = NormalizeSendFormat(settings.SendFormat)
+	settings.Nickname = NormalizeNickname(settings.Nickname)
 	return settings, nil
 }
 
 // SaveBotSettings stores the bot switches.
 func (s *Service) SaveBotSettings(settings Settings) error {
 	settings.SendFormat = NormalizeSendFormat(settings.SendFormat)
+	settings.Nickname = NormalizeNickname(settings.Nickname)
 	return s.store.SetKV(KVScopeGlobal, KVNamespaceSettings, settingsKey, settings)
 }
 
@@ -58,4 +67,15 @@ func NormalizeSendFormat(value string) string {
 		return SendFormatMarkdown
 	}
 	return SendFormatImage
+}
+
+// NormalizeNickname trims the bot nickname and caps it so a stored value
+// always fits the card header.
+func NormalizeNickname(value string) string {
+	value = strings.TrimSpace(value)
+	runes := []rune(value)
+	if len(runes) > MaxBotNicknameLength {
+		value = string(runes[:MaxBotNicknameLength])
+	}
+	return value
 }

@@ -262,3 +262,12 @@ func (failingStorage) GetKV(string, string, string, any) (bool, error)        { 
 func (failingStorage) ListKV(string, string) ([]schedule.KVEntry, error)      { return nil, nil }
 func (failingStorage) SetKV(string, string, string, any) error                { return nil }
 func (failingStorage) DeleteKV(string, string, string) error                  { return nil }
+func (failingStorage) GetCheckinRecord(string, string, string) (*schedule.CheckinRecord, bool, error) {
+	return nil, false, nil
+}
+func (failingStorage) InsertCheckinRecord(schedule.CheckinRecord) (bool, error) { return false, nil }
+func (failingStorage) CountCheckinRecords(string) (int, error)                  { return 0, nil }
+func (failingStorage) ListCheckinRecords(string, string, int) ([]schedule.CheckinRecord, error) {
+	return nil, nil
+}
+func (failingStorage) DeleteCheckinRecord(string, string, string) (bool, error) { return false, nil }

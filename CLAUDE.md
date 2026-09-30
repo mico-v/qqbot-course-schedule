@@ -72,7 +72,7 @@ admin 包内不得 import gin / sqlite / render / store（只认自己的 Storag
 - `panel.go` 用 items 的 SHA-256 存 KV 做变更检测；面板错误只记日志，不影响启动与消息链路，管理员可用 `/同步面板` 手动触发。
 - `Handler.Dispatch` 已剥离命中的前缀并放入 `in.Args`（群内平台面板会去掉前导 `/`，`Dispatch` 同时接受 `/课表` 与 `课表`）。
 
-**`Dispatch` 的处理顺序**（改动消息链路前必读 `internal/bot/handler.go`）：去 @ 前缀 → 总开关开时 `recordSeenMember` + `.ics` 附件自动导入（直接 return，不再走指令）→ 查指令 → `/设置` 可绕过总开关 → 回复策略过滤（无斜杠/斜杠/@机器人，提到 @ 优先于斜杠判定）→ 执行。
+**`Dispatch` 的处理顺序**（改动消息链路前必读 `internal/bot/handler.go`）：去 @ 前缀 → 总开关开时 `recordSeenMember` + `.ics` 附件自动导入（直接 return，不再走指令）→ 查指令 → `/设置` `/nikname` 对管理员可绕过总开关（`managesBotSettings`）→ 回复策略过滤（无斜杠/斜杠/@机器人，提到 @ 优先于斜杠判定）→ 执行。
 `Handler.currentSettings()` 读设置失败时回退默认值，绝不因此静默静音机器人。
 
 **会话作用域**：`group:<group_openid>` / `private:<user_openid>`（`schedule.ScopeGroup` / `ScopePrivate` / `ParseScope`）。
@@ -83,8 +83,12 @@ admin 包内不得 import gin / sqlite / render / store（只认自己的 Storag
 **日期解析只有两个入口**：`schedule/dayoff.go`（天/范围，含相对词）与 `schedule/timerange.go`（区间表达式）。新需求必须扩展这两个，**不要新写解析器**。
 
 **KV 命名空间**（表 `kv_data`，`store.GetKV/SetKV/ListKV/DeleteKV`，`global` scope 下）：
-`settings/bot`（总开关+回复策略+发送格式）、`seen/<scopeID>`（观察成员）、`panel/<scope>`
+`settings/bot`（总开关+回复策略+发送格式+昵称）、`seen/<scopeID>`（观察成员）、`panel/<scope>`
 （面板 ID 与 items hash）。新增命名空间时集中定义常量。
+
+**签到积分**：`checkin_records`（PK `scope_id+user_id+day`）每人每天一条，`INSERT OR IGNORE` 保证
+重复签到不重复加分；积分在 `schedule.Service.Checkin` 内校验 1-10 并由调用方掷点（测试可固定）。
+删记录即扣分，WebUI 与 `/积分` 共用同一服务层。
 
 **SQLite**：`modernc.org/sqlite` 纯 Go，必须保持 `MaxOpenConns(1)`（多连接写会 `database is locked`）；事务短小；`PutMember` 用 `begin immediate` + 删旧事件 + 批量插入。迁移走 `metadata.schema_version` + `store.migrate()` 顺序幂等语句，禁止直接改线上表结构；**不做** Python 数据自动迁移（OpenID 无法对应 QQ 号，用户重新导入 ICS）。
 

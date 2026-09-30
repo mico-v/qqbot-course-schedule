@@ -29,7 +29,7 @@ func TestSettingsAPI(t *testing.T) {
 	// Save a mixed configuration and read it back.
 	want := schedule.Settings{
 		Enabled: false, ReplyPlain: true, ReplySlash: false, ReplyMention: true,
-		SendFormat: schedule.SendFormatMarkdown,
+		SendFormat: schedule.SendFormatMarkdown, Nickname: "课表小助手",
 	}
 	if recorder := adminRequest(router, http.MethodPost, "/api/settings", want, true); recorder.Code != http.StatusOK {
 		t.Fatalf("post settings = %d (%s)", recorder.Code, recorder.Body.String())

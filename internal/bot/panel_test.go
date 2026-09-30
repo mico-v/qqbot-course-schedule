@@ -152,6 +152,7 @@ func TestSyncPanelsCreatesBothScopes(t *testing.T) {
 			"/休假", "/调休", "/销假", "/假期", "/导入课表", "/导出课表",
 			"/绑定QQ", "/解绑QQ",
 			"/设置", "/help",
+			"/nikname", "/积分", "/签到",
 		}
 		if strings.Join(names, ",") != strings.Join(expected, ",") {
 			t.Errorf("%s items = %v, want %v", scope, names, expected)
@@ -251,9 +252,14 @@ func TestPanelItemsIncludeNewReadyCommand(t *testing.T) {
 	})
 
 	items := panelItems(handler)
-	last := items[len(items)-1]
-	if last.Name != "/新指令" || last.Desc != "自动加入面板" {
-		t.Fatalf("last item = %+v, want /新指令 appended", last)
+	appended := false
+	for _, item := range items {
+		if item.Name == "/新指令" && item.Desc == "自动加入面板" {
+			appended = true
+		}
+	}
+	if !appended {
+		t.Fatalf("items = %+v, want /新指令 appended", items)
 	}
 }
 

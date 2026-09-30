@@ -121,8 +121,9 @@ func TestDefaultHandlerRegistersCommands(t *testing.T) {
 	expected := []string{
 		"/ping", "/help", "/今日课表", "/明日课表", "/课表", "/导入课表", "/导出课表",
 		"/上课时长榜", "/休假", "/调休", "/销假", "/假期",
-		"/同步面板", "/设置",
+		"/同步面板", "/设置", "/nikname",
 		"/绑定QQ", "/解绑QQ",
+		"/签到", "/积分",
 	}
 	for _, prefix := range expected {
 		if _, ok := handler.Command(prefix); !ok {

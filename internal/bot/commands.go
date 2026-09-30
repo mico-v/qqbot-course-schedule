@@ -125,6 +125,27 @@ func NewDefaultHandler(env *Env) *Handler {
 		Handle:      h.handleSettings,
 	})
 	h.Register(&Command{
+		Prefix:      nicknameCommandPrefix,
+		Aliases:     []string{"/nickname", "/昵称"},
+		Description: "设置机器人昵称（管理员）",
+		Ready:       true,
+		Handle:      h.handleNickname,
+	})
+	h.Register(&Command{
+		Prefix:      "/签到",
+		Aliases:     []string{"/打卡"},
+		Description: "每日签到随机获得 1-10 群积分",
+		Ready:       true,
+		Handle:      h.handleCheckin,
+	})
+	h.Register(&Command{
+		Prefix:      "/积分",
+		Aliases:     []string{"/我的积分", "/积分记录"},
+		Description: "查看群积分与签到记录",
+		Ready:       true,
+		Handle:      h.handlePoints,
+	})
+	h.Register(&Command{
 		Prefix:      "/同步面板",
 		Description: "同步机器人指令面板（管理员）",
 		Handle:      h.handleSyncPanelCommand,

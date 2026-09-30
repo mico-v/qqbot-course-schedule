@@ -7,6 +7,7 @@ const state = {
   selectedUserId: "",
   schedule: null,
   overrides: [],
+  checkins: { totals: [], records: [] },
   dirty: false,
   calendarWeekStart: null,
 };
@@ -1099,6 +1100,7 @@ async function loadMember(scopeId, userId) {
   renderEditor();
   renderScopes();
   await loadOverrides(scopeId);
+  await loadCheckins(scopeId);
 }
 
 async function loadScopes({ keepSelection = true } = {}) {
@@ -1615,6 +1617,79 @@ async function deleteOverride(row) {
   }
 }
 
+async function loadCheckins(scopeId) {
+  try {
+    const data = await apiGet("/api/checkins", { scope_id: scopeId });
+    if (state.selectedScopeId !== scopeId) return;
+    state.checkins = { totals: data.totals || [], records: data.records || [] };
+  } catch (error) {
+    if (state.selectedScopeId !== scopeId) return;
+    state.checkins = { totals: [], records: [] };
+    showNotice(error.message, "error");
+  }
+  renderCheckins();
+}
+
+function renderCheckins() {
+  const totals = $("#checkinTotals");
+  const list = $("#checkinList");
+  if (!totals || !list) return;
+  totals.textContent = "";
+  list.textContent = "";
+  const { totals: rows, records } = state.checkins;
+  if (!rows.length) {
+    const empty = document.createElement("p");
+    empty.className = "no-courses";
+    empty.textContent = "本会话还没有签到记录。";
+    list.append(empty);
+    return;
+  }
+  for (const row of rows) {
+    const pill = document.createElement("span");
+    pill.className = "checkin-total";
+    pill.textContent = `${row.name || row.user_id} · ${row.points} 分（${row.days} 天）`;
+    totals.append(pill);
+  }
+  for (const row of records) {
+    const item = document.createElement("div");
+    item.className = "override-item";
+
+    const text = document.createElement("div");
+    text.className = "override-item-text";
+    const title = document.createElement("strong");
+    title.textContent = `${row.day} · ${row.name || row.user_id} · +${row.points}`;
+    const meta = document.createElement("span");
+    meta.className = "muted";
+    meta.textContent = `OpenID ${row.user_id}`;
+    text.append(title, meta);
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "remove-course";
+    remove.textContent = "删除";
+    remove.addEventListener("click", () => deleteCheckin(row));
+
+    item.append(text, remove);
+    list.append(item);
+  }
+}
+
+async function deleteCheckin(row) {
+  if (!state.selectedScopeId) return;
+  if (!window.confirm(`删除 ${row.name || row.user_id} 在 ${row.day} 的签到记录（-${row.points} 分）？`)) return;
+  try {
+    await apiPost("/api/checkins/delete", {
+      scope_id: state.selectedScopeId,
+      user_id: row.user_id,
+      day: row.day,
+    });
+    showNotice(`已删除 ${row.day} 的签到记录。`, "success");
+    await loadCheckins(state.selectedScopeId);
+  } catch (error) {
+    showNotice(error.message, "error");
+  }
+}
+
 async function exportMemberICS() {
   const schedule = state.schedule;
   if (!schedule || !canExport()) return;
@@ -1676,6 +1751,7 @@ async function loadSettings() {
     $("#settingsReplySlash").checked = settings.reply_slash !== false;
     $("#settingsReplyMention").checked = settings.reply_mention !== false;
     $("#settingsSendFormat").value = settings.send_format === "markdown" ? "markdown" : "image";
+    $("#settingsNickname").value = settings.nickname || "";
   } catch (error) {
     showNotice(error.message, "error");
   }
@@ -1701,6 +1777,7 @@ async function saveSettings() {
       reply_slash: $("#settingsReplySlash").checked,
       reply_mention: $("#settingsReplyMention").checked,
       send_format: $("#settingsSendFormat").value,
+      nickname: $("#settingsNickname").value.trim(),
     });
     $("#settingsHint").textContent = "已保存，立即生效。";
     showNotice("机器人设置已保存。", "success");
@@ -1797,6 +1874,9 @@ function start() {
   $("#addOverrideButton").addEventListener("click", openOverrideForm);
   $("#overrideCancel").addEventListener("click", closeOverrideForm);
   $("#overrideSubmit").addEventListener("click", submitOverride);
+  $("#checkinReloadButton").addEventListener("click", () => {
+    if (state.selectedScopeId) loadCheckins(state.selectedScopeId);
+  });
   $("#overrideKind").addEventListener("change", (event) => {
     $("#overrideSourceField").classList.toggle("hidden", event.target.value !== "shift");
   });

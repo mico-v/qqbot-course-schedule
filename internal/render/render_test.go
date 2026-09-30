@@ -60,6 +60,45 @@ func TestDayCardEmptyScope(t *testing.T) {
 	}
 }
 
+func TestDayCardDrawsBotName(t *testing.T) {
+	renderer, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	base := DayCardData{Title: "课程表 · 2026-09-17 周四", Footer: "实时状态", Rows: sampleRows()}
+	plain := renderer.DayCard(base)
+
+	named := base
+	named.BotName = "课表小助手"
+	withName := renderer.DayCard(named)
+	if plain.Bounds() != withName.Bounds() {
+		t.Fatalf("bot name changed card size: %v vs %v", plain.Bounds(), withName.Bounds())
+	}
+	changed := 0
+	for y := 70; y < 100; y++ {
+		for x := cardWidth - 430; x < cardWidth-190; x++ {
+			if plain.At(x, y) != withName.At(x, y) {
+				changed++
+			}
+		}
+	}
+	if changed == 0 {
+		t.Fatal("bot name drew no pixels in the header band")
+	}
+
+	// An over-long name is truncated instead of running under the avatar.
+	long := base
+	long.BotName = strings.Repeat("长", 80)
+	withLong := renderer.DayCard(long)
+	for y := 70; y < 115; y++ {
+		for x := cardWidth - 180; x < cardWidth; x++ {
+			if plain.At(x, y) != withLong.At(x, y) {
+				t.Fatalf("long nickname painted into the avatar area at (%d,%d)", x, y)
+			}
+		}
+	}
+}
+
 func TestSaveJPEG(t *testing.T) {
 	renderer, err := New()
 	if err != nil {

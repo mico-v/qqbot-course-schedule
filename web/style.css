@@ -1450,3 +1450,18 @@ h3 {
   gap: 8px;
   margin-left: auto;
 }
+
+.checkin-totals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.checkin-total {
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--soft);
+  font-size: 0.82rem;
+}

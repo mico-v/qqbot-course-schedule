@@ -30,6 +30,7 @@ func RegisterAdmin(router *gin.Engine, service *admin.Service, password string) 
 	registerTransferRoutes(api, service)
 	registerOverrideRoutes(api, service)
 	registerSettingsRoutes(api, service)
+	registerCheckinRoutes(api, service)
 	api.GET("/scopes", func(c *gin.Context) {
 		summaries, err := service.ScopeSummaries()
 		if err != nil {

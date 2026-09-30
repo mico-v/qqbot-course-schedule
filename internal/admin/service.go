@@ -19,6 +19,8 @@ type Storage interface {
 	ListScopeSummaries() ([]ScopeSummary, error)
 	SetDayOverride(scopeID, userID, day string, override schedule.DayOverride, createdBy, createdAt string) error
 	DeleteDayOverride(scopeID, userID, day string) (bool, error)
+	ListCheckinRecords(scopeID, userID string, limit int) ([]schedule.CheckinRecord, error)
+	DeleteCheckinRecord(scopeID, userID, day string) (bool, error)
 	GetKV(scope, namespace, key string, out any) (bool, error)
 	ListKV(scope, namespace string) ([]schedule.KVEntry, error)
 	SetKV(scope, namespace, key string, value any) error

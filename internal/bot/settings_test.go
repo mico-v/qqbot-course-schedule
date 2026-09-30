@@ -105,11 +105,24 @@ func TestApplySettingArgs(t *testing.T) {
 		t.Fatalf("格式 图片 => %+v problem=%q", updated, problem)
 	}
 
+	updated, problem = applySettingArgs(base, []string{"昵称", "课表", "小助手"})
+	if problem != "" || updated.Nickname != "课表 小助手" {
+		t.Fatalf("昵称 课表 小助手 => %+v problem=%q", updated, problem)
+	}
+
+	updated, problem = applySettingArgs(base, []string{"昵称", "清空"})
+	if problem != "" || updated.Nickname != "" {
+		t.Fatalf("昵称 清空 => %+v problem=%q", updated, problem)
+	}
+
 	if _, problem = applySettingArgs(base, []string{"回复", "斜杠"}); problem == "" {
 		t.Error("missing value should return usage")
 	}
 	if _, problem = applySettingArgs(base, []string{"格式", "乱写"}); problem == "" {
 		t.Error("unknown send format should return an error")
+	}
+	if _, problem = applySettingArgs(base, []string{"昵称"}); problem == "" {
+		t.Error("missing nickname should return usage")
 	}
 	if _, problem = applySettingArgs(base, []string{"乱写"}); problem == "" {
 		t.Error("unknown token should return usage")
@@ -220,6 +233,17 @@ func TestSettingsTextShowsSendFormat(t *testing.T) {
 	settings.SendFormat = schedule.SendFormatMarkdown
 	if text := settingsText(settings); !strings.Contains(text, "发送格式：markdown") {
 		t.Fatalf("markdown text = %q", text)
+	}
+}
+
+func TestSettingsTextShowsNickname(t *testing.T) {
+	if text := settingsText(schedule.DefaultSettings()); !strings.Contains(text, "机器人昵称：未设置") {
+		t.Fatalf("default text = %q", text)
+	}
+	settings := schedule.DefaultSettings()
+	settings.Nickname = "课表小助手"
+	if text := settingsText(settings); !strings.Contains(text, "机器人昵称：课表小助手") {
+		t.Fatalf("nickname text = %q", text)
 	}
 }
 

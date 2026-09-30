@@ -174,6 +174,7 @@ func (e *Env) RenderDayCard(ctx context.Context, in *Inbound, r *Replier, day ti
 		Rows:          card.Rows,
 		Folded:        card.Folded,
 		BotAvatar:     e.BotAvatar(),
+		BotName:       e.currentSettings().Nickname,
 		Avatars:       e.MemberAvatars(ctx, e.Scope(in), rowUserIDs(card.Rows, card.Folded)),
 		DurationLabel: "本节持续",
 		FooterSince:   renderStart(in, start),
@@ -319,6 +320,7 @@ func (e *Env) RenderRankCard(ctx context.Context, in *Inbound, r *Replier, perio
 			{Key: "none", Label: "全天日程不计入时长"},
 		},
 		BotAvatar:   e.BotAvatar(),
+		BotName:     e.currentSettings().Nickname,
 		FooterSince: renderStart(in, start),
 	})
 	name, err := render.SaveJPEG(image, e.ImagesDir, "rank_"+label)

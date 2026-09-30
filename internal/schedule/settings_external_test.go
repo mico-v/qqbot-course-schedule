@@ -1,6 +1,7 @@
 package schedule_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/mico-v/qqbot-course-schedule/internal/schedule"
@@ -56,5 +57,51 @@ func TestBotSettingsMissingFieldKeepsDefault(t *testing.T) {
 	}
 	if got.SendFormat != schedule.SendFormatImage {
 		t.Fatalf("absent send format must default to image: %+v", got)
+	}
+}
+
+func TestNicknameNormalization(t *testing.T) {
+	if got := schedule.NormalizeNickname("  课表小助手  "); got != "课表小助手" {
+		t.Fatalf("NormalizeNickname trim = %q", got)
+	}
+	if got := schedule.NormalizeNickname("   "); got != "" {
+		t.Fatalf("blank nickname = %q, want empty", got)
+	}
+	long := strings.Repeat("字", schedule.MaxBotNicknameLength+5)
+	if got := schedule.NormalizeNickname(long); len([]rune(got)) != schedule.MaxBotNicknameLength {
+		t.Fatalf("NormalizeNickname length = %d, want %d", len([]rune(got)), schedule.MaxBotNicknameLength)
+	}
+}
+
+func TestBotSettingsNicknameRoundTrip(t *testing.T) {
+	service, storeHandle := newService(t)
+	settings, err := service.BotSettings()
+	if err != nil {
+		t.Fatalf("BotSettings: %v", err)
+	}
+	settings.Nickname = "  课表小助手  "
+	if err := service.SaveBotSettings(settings); err != nil {
+		t.Fatalf("SaveBotSettings: %v", err)
+	}
+	got, err := service.BotSettings()
+	if err != nil {
+		t.Fatalf("BotSettings: %v", err)
+	}
+	if got.Nickname != "课表小助手" {
+		t.Fatalf("nickname = %q, want 课表小助手", got.Nickname)
+	}
+
+	// A stored value longer than the cap is trimmed on read.
+	if err := storeHandle.SetKV("global", "settings", "bot", map[string]any{
+		"nickname": strings.Repeat("长", schedule.MaxBotNicknameLength+3),
+	}); err != nil {
+		t.Fatalf("SetKV: %v", err)
+	}
+	got, err = service.BotSettings()
+	if err != nil {
+		t.Fatalf("BotSettings: %v", err)
+	}
+	if len([]rune(got.Nickname)) != schedule.MaxBotNicknameLength {
+		t.Fatalf("stored nickname length = %d", len([]rune(got.Nickname)))
 	}
 }

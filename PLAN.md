@@ -24,6 +24,7 @@
 | M10 增强 | ✅ 已上线 | QQ 号绑定（`/绑定QQ` `/解绑QQ` + WebUI 字段）→ 用 qlogo 公开接口取成员真实头像（并发预取 + 内存/磁盘缓存 + 失败回退） |
 | M11 增强 | ✅ 已上线 | 机器人设置（`/设置` + WebUI「设置」）：总开关 + 回复策略（无斜杠 / 斜杠 / @机器人 分别开关），存 KV 即时生效 |
 | M12 增强 | ✅ 已上线 | 课表发送格式设置（`/设置 格式 图片\|markdown` + WebUI）：markdown 发送文字列表，平台拒绝时回退纯文本 |
+| M13 增强 | ✅ 已上线 | 机器人昵称（`/nikname` + WebUI，渲染在卡片右上角）；签到积分（`/签到` 每日一次随机 1-10 群积分、`/积分` 查记录，WebUI 可查看/删除） |
 
 线上形态：`/opt/qqbot-course-schedule` + systemd（开机自启）+ Caddy（公网只放行
 `/webhook` `/healthz` `/images/*` `/files/*`，管理台走 ZeroTier 内网入口）。
@@ -332,6 +333,10 @@ schedule_day_overrides(scope_id, user_id, day, kind,
 | POST | `/api/schedule/save` | `{scope_id,user_id,revision,name?,events[]}` | `{scope_id,user_id,name,revision,event_count}`；revision 不符返回 409 |
 | GET | `/api/members` | `scope_id` | `{scope_id,members,member_count}`；平台不支持时返回提示 |
 | POST | `/api/schedule/create` | `{scope_id,members:[{user_id,name}]}` | `{scope_id,created,created_count}` |
+| GET | `/api/settings` | — | `{settings:{enabled,reply_plain,reply_slash,reply_mention,send_format,nickname}}` |
+| POST | `/api/settings` | `{enabled,reply_plain,reply_slash,reply_mention,send_format,nickname}` | `{ok,settings}`；昵称超长自动截断 |
+| GET | `/api/checkins` | `scope_id` | `{scope_id,totals:[{user_id,name,points,days}],records:[{user_id,name,day,points,created_at}]}`（按积分降序、日期降序，最多 1000 条记录） |
+| POST | `/api/checkins/delete` | `{scope_id,user_id,day}` | `{ok,deleted}`；删除记录即扣回对应积分 |
 
 #### F7.2 页面功能
 
@@ -358,6 +363,10 @@ schedule_day_overrides(scope_id, user_id, day, kind,
 | `/休假` `/调休` `/销假` `/假期` | 见 F5 | 标记管理 |
 | `/导入课表` | 附件 | ICS 导入 |
 | `/导出课表`（新增） | `[成员]` | ICS 导出 |
+| `/设置` | 见 M11/M12 | 总开关、回复策略、发送格式、昵称（管理员/私聊） |
+| `/nikname` | `[昵称\|清空]` | 设置卡片上的机器人昵称（管理员/私聊，别名 `/nickname` `/昵称`） |
+| `/签到` | — | 每日一次随机 1-10 群积分（别名 `/打卡`） |
+| `/积分` | — | 查看自己的群积分与最近签到记录（别名 `/我的积分` `/积分记录`） |
 
 #### F8.2 输入解析
 
@@ -376,6 +385,8 @@ schedule_day_overrides(scope_id, user_id, day, kind,
 | 休假/调休自己 | ✅ | ✅ | ✅ |
 | 休假/调休他人/全体 | ✅ | ❌ | ❌ |
 | 销假全体标记 | ✅ | ❌ | ❌ |
+| 修改机器人昵称 | ✅ | ❌ | ✅ |
+| 签到 / 查积分 | ✅ | ✅ | ✅ |
 | Web 管理台 | 独立 Basic Auth，与群角色无关 | | |
 
 管理员判定：官方事件 `author.member_role ∈ {admin, owner}`（`owner` 视为管理员）。
@@ -392,7 +403,7 @@ schedule_day_overrides(scope_id, user_id, day, kind,
 | 指令面板 | `POST /v2/panels`（10 QPM）：`scope=c2c` 与 `scope=group` 各一个，`target_type=all`；机器人上限 20 个面板、每面板 20 个元素 |
 | 面板元素 | 每个指令一个 item：`type=command`，`name` 为点击后填入输入框的指令文本（≤14 显示列，CJK 算 2），`desc` 说明（≤30 显示列） |
 | 同步时机 | 启动后异步同步一次；以 `remark=qqbot-course-schedule` 认领旧面板，KV 存 `panel_id + items_hash`，指令集合变化时 PUT 更新，平台侧被删除时重建 |
-| 注册范围 | 只注册标记 `Ready` 的已实现指令（当前 5 个）；`/同步面板`（管理员）可手动触发 |
+| 注册范围 | 只注册标记 `Ready` 的已实现指令（当前 17 个）；`/同步面板`（管理员）可手动触发 |
 | 自定义菜单 | `PUT /v2/menu`（5 QPM）：仅单聊全局；一级最多 10 项、二级最多 5 项；`send_message` 点击填入输入框，`link` 需 HTTPS（待实现） |
 | 失败处理 | 面板/菜单失败只记日志，不影响启动；频控退避重试 |
 | 已知平台行为 | 面板条目名会去掉前导 `/`，因此指令匹配同时接受带/不带 `/` 两种写法 |

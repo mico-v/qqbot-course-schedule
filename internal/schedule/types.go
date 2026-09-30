@@ -89,6 +89,11 @@ type Storage interface {
 	InsertMessageStats(record MessageStats) error
 	ListMessageStats(since time.Time, scopeID string) ([]MessageStats, error)
 	PruneMessageStats(before time.Time) (int, error)
+	GetCheckinRecord(scopeID, userID, day string) (*CheckinRecord, bool, error)
+	InsertCheckinRecord(record CheckinRecord) (bool, error)
+	CountCheckinRecords(scopeID string) (int, error)
+	ListCheckinRecords(scopeID, userID string, limit int) ([]CheckinRecord, error)
+	DeleteCheckinRecord(scopeID, userID, day string) (bool, error)
 	GetKV(scope, namespace, key string, out any) (bool, error)
 	ListKV(scope, namespace string) ([]KVEntry, error)
 	SetKV(scope, namespace, key string, value any) error

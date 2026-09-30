@@ -159,7 +159,7 @@ func (h *Handler) Dispatch(ctx context.Context, in *Inbound, r *Replier) {
 
 	// An administrator may always manage the switches, even while the bot is off,
 	// so it can be turned back on from chat.
-	managingSettings := cmd.Prefix == settingsCommandPrefix && canManageSettings(in)
+	managingSettings := managesBotSettings(cmd, in)
 	if !settings.Enabled && !managingSettings {
 		slog.Debug("机器人已关闭，忽略指令", "prefix", prefix, "origin", in.Origin)
 		return
@@ -178,6 +178,16 @@ func (h *Handler) Dispatch(ctx context.Context, in *Inbound, r *Replier) {
 		slog.Error("指令执行失败", "prefix", prefix, "err", err)
 	}
 	dispatchErr = err
+}
+
+// managesBotSettings reports whether a command may run while the bot is off.
+// Administrators keep access to the settings and nickname commands so they can
+// fix the configuration from chat.
+func managesBotSettings(cmd *Command, in *Inbound) bool {
+	if cmd == nil || !canManageSettings(in) {
+		return false
+	}
+	return cmd.Prefix == settingsCommandPrefix || cmd.Prefix == nicknameCommandPrefix
 }
 
 // Callback is one button press delivered as an INTERACTION_CREATE event.

@@ -17,7 +17,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 3
+const schemaVersion = 4
 
 // Store is the SQLite-backed implementation of schedule.Storage.
 type Store struct {
@@ -139,6 +139,16 @@ func (s *Store) migrate() error {
 			err_code TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_message_stats_received ON message_stats(received_at)`,
+		`CREATE TABLE IF NOT EXISTS checkin_records (
+			scope_id TEXT NOT NULL,
+			user_id TEXT NOT NULL,
+			name TEXT NOT NULL DEFAULT '',
+			day TEXT NOT NULL,
+			points INTEGER NOT NULL,
+			created_at TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (scope_id, user_id, day)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_checkin_records_scope ON checkin_records(scope_id, day)`,
 		`CREATE TABLE IF NOT EXISTS kv_data (
 			scope TEXT NOT NULL,
 			namespace TEXT NOT NULL,

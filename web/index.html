@@ -196,6 +196,20 @@
                 </div>
               </div>
             </div>
+
+            <div class="override-section">
+              <div class="course-toolbar">
+                <div>
+                  <h3>签到记录</h3>
+                  <p class="muted">
+                    群成员每天可用 <code>/签到</code> 随机获得 1-10 群积分，每人每天限一次；删除记录会同时扣掉对应积分。
+                  </p>
+                </div>
+                <button id="checkinReloadButton" class="button button-ghost" type="button">刷新记录</button>
+              </div>
+              <div id="checkinTotals" class="checkin-totals"></div>
+              <div id="checkinList" class="override-list"></div>
+            </div>
           </div>
         </section>
       </section>
@@ -378,6 +392,15 @@
               <option value="image">图片</option>
               <option value="markdown">Markdown 列表</option>
             </select>
+          </label>
+        </section>
+
+        <section class="settings-group">
+          <h3>机器人昵称</h3>
+          <p class="muted">昵称显示在课表卡片右上角；留空则只显示机器人头像。群内也可以用 <code>/nikname 昵称</code> 修改。</p>
+          <label class="field">
+            <span>昵称</span>
+            <input id="settingsNickname" type="text" maxlength="24" placeholder="例如：课表小助手" />
           </label>
         </section>
 

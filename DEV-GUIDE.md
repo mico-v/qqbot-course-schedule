@@ -254,7 +254,8 @@ func handleSchedule(ctx context.Context, in *Inbound, r *Replier) error {
 
 - `Handle` 返回的 `error` 只写日志；用户可见错误必须显式 `ctx.Text(...).Send()` 或返回带用户文案的错误类型。
 - 指令参数用 `in.Args`（`Dispatch` 已剥离命中的前缀），不要自己 `TrimPrefix`。
-- 别名在 `Command.Aliases` 声明，会注册到同一处理器；`Commands()` 会去重，面板只展示 `panelOrder` 中的主指令。
+- 别名在 `Command.Aliases` 声明，会注册到同一处理器；`Commands()` 会去重。`panelOrder` 只决定面板排序，
+  新指令标 `Ready: true` 会自动追加进面板（见 6.7），无需手改列表。
 - 群成员身份用 `in.UserOpenID`（群内为 member_openid），@ 目标从 `in.Mentions` 解析。
 
 ### 6.2 新增一个事件
@@ -336,6 +337,12 @@ msg.Keyboard(kb)
     `POST /api/overrides/delete`（`scope_id`/`user_id`/`day`）
   - 服务端复用 `admin.Service.SetWebDayOverride`/`DeleteWebDayOverride`，与机器人指令共享同一张表与校验
     （类型、来源日期、上限），`created_by` 记为 `webui`
+- 签到记录（`internal/server/checkins.go`）：
+  - `GET /api/checkins?scope_id=` 返回该会话每人总分/天数与最近记录（带成员显示名）
+  - `POST /api/checkins/delete`（`scope_id`/`user_id`/`day`）删除某天记录，积分随之扣回；
+    服务端复用 `admin.Service.WebCheckinBoard`/`DeleteWebCheckin`，与 `/签到` `/积分` 共享服务层
+- 机器人设置面板含「机器人昵称」：写入 `settings/bot` 的 `nickname`，渲染时由
+  `render.DayCardData.BotName` 画在卡片右上角（空值只显示头像）
 - 批量导入/导出（`internal/server/transfer.go`）：
   - `GET /api/export?scope_id=&format=ics|backup`：ICS 压缩包（每成员 `schedule_<OpenID>.ics`
     + `manifest.json`）或原始备份 JSON（成员 + 休假/调休标记）
@@ -371,13 +378,15 @@ created, updated, err := bot.SyncPanels(ctx, env, handler)
 ### 7.1 表结构
 
 见 [PLAN.md F1.2](PLAN.md#f12-数据表照搬原插件-schema语义等价)。Go 版字段与 Python 版保持一致，
-JSON 键名沿用，便于对照与手工排查。
+JSON 键名沿用，便于对照与手工排查。签到记录是 Go 版新增表 `checkin_records`
+（`scope_id` + `user_id` + `day` 主键，`points`/`created_at`）。
 
 ### 7.2 写入语义
 
 - `PutMember`：`begin immediate` → 更新成员行（revision CAS）→ 删除旧事件 → 批量插入新事件 → 提交。
 - 派生字段（`ics/schedule/event_count/updated_at/...`）由服务层计算后一并写入。
 - 覆盖标记读取顺序：先取 `*` 行，再用成员行覆盖同 `day`。
+- 签到写入用 `INSERT OR IGNORE`：同一天重复签到返回已有记录（`Already=true`），不会重复加分。
 
 ### 7.3 迁移策略
 

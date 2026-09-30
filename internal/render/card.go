@@ -31,6 +31,8 @@ const (
 	foldedPadX       = 30
 	foldedPadY       = 22
 	foldedTitleH     = 40
+	// botNameWidth is the widest nickname drawn beside the header avatar.
+	botNameWidth = 240
 )
 
 type statusColors struct {
@@ -88,6 +90,8 @@ type DayCardData struct {
 	Rows        []schedule.DayRow
 	Folded      []schedule.DayRow
 	BotAvatar   image.Image
+	// BotName is the bot nickname drawn next to the header avatar; empty hides it.
+	BotName string
 	// Avatars maps user_id to a real avatar; missing ids fall back to initials.
 	Avatars map[string]image.Image
 	// Legend overrides the auto-generated legend when non-nil.
@@ -182,6 +186,11 @@ func (r *Renderer) DayCard(data DayCardData) image.Image {
 
 	if data.BotAvatar != nil {
 		dc.DrawImage(circleImage(data.BotAvatar, 88), cardWidth-172, 57)
+	}
+	if name := strings.TrimSpace(data.BotName); name != "" {
+		name = fc.fitText(name, 22, botNameWidth, true)
+		width := fc.measureText(name, 22, true)
+		fc.drawText(dc, cardWidth-172-16-width, 90, name, 22, "#e2e8f0", true, 0)
 	}
 
 	legend := data.Legend

@@ -132,6 +132,7 @@ type memoryStorage struct {
 	overrides map[string][]DayOverrideRow
 	kv        map[string][]byte
 	stats     []MessageStats
+	checkins  map[string][]CheckinRecord
 }
 
 func newMemoryStorage() *memoryStorage {
@@ -139,6 +140,7 @@ func newMemoryStorage() *memoryStorage {
 		members:   make(map[string]map[string]*Member),
 		overrides: make(map[string][]DayOverrideRow),
 		kv:        make(map[string][]byte),
+		checkins:  make(map[string][]CheckinRecord),
 	}
 }
 
@@ -279,4 +281,57 @@ func (m *memoryStorage) PruneMessageStats(before time.Time) (int, error) {
 	}
 	m.stats = kept
 	return removed, nil
+}
+
+func (m *memoryStorage) GetCheckinRecord(scopeID, userID, day string) (*CheckinRecord, bool, error) {
+	for _, record := range m.checkins[scopeID] {
+		if record.UserID == userID && record.Day == day {
+			copied := record
+			return &copied, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
+func (m *memoryStorage) InsertCheckinRecord(record CheckinRecord) (bool, error) {
+	if _, found, _ := m.GetCheckinRecord(record.ScopeID, record.UserID, record.Day); found {
+		return false, nil
+	}
+	m.checkins[record.ScopeID] = append(m.checkins[record.ScopeID], record)
+	return true, nil
+}
+
+func (m *memoryStorage) CountCheckinRecords(scopeID string) (int, error) {
+	return len(m.checkins[scopeID]), nil
+}
+
+func (m *memoryStorage) ListCheckinRecords(scopeID, userID string, limit int) ([]CheckinRecord, error) {
+	records := make([]CheckinRecord, 0, len(m.checkins[scopeID]))
+	for _, record := range m.checkins[scopeID] {
+		if userID != "" && record.UserID != userID {
+			continue
+		}
+		records = append(records, record)
+	}
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].Day != records[j].Day {
+			return records[i].Day > records[j].Day
+		}
+		return records[i].UserID < records[j].UserID
+	})
+	if limit > 0 && len(records) > limit {
+		records = records[:limit]
+	}
+	return records, nil
+}
+
+func (m *memoryStorage) DeleteCheckinRecord(scopeID, userID, day string) (bool, error) {
+	records := m.checkins[scopeID]
+	for index, record := range records {
+		if record.UserID == userID && record.Day == day {
+			m.checkins[scopeID] = append(records[:index], records[index+1:]...)
+			return true, nil
+		}
+	}
+	return false, nil
 }
