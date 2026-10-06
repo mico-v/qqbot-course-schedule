@@ -3,10 +3,12 @@
 package server
 
 import (
-	"crypto/subtle"
 	"errors"
+	"mime"
 	"net"
 	"net/http"
+	"path/filepath"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -15,18 +17,25 @@ import (
 	"github.com/mico-v/qqbot-course-schedule/web"
 )
 
-// RegisterAdmin mounts the schedule manager page and its JSON API under /admin
-// and /api. When password is empty only loopback clients may access them.
+// RegisterAdmin mounts the schedule manager SPA and its JSON API under /admin
+// and /api. The SPA bundle is served for both /login and /admin; a successful
+// login issues an HttpOnly session cookie. When password is empty only
+// loopback clients may access them.
 func RegisterAdmin(router *gin.Engine, service *admin.Service, password string) {
-	auth := adminAuth(password)
+	auth := newAdminAuth(password)
 
-	adminGroup := router.Group("/admin", auth)
-	adminGroup.GET("", serveAsset("index.html", "text/html; charset=utf-8"))
-	adminGroup.GET("/", serveAsset("index.html", "text/html; charset=utf-8"))
-	adminGroup.GET("/app.js", serveAsset("app.js", "application/javascript; charset=utf-8"))
-	adminGroup.GET("/style.css", serveAsset("style.css", "text/css; charset=utf-8"))
+	router.GET("/login", serveAdminIndex)
+	// Hashed build assets stay public: the login page itself loads them before
+	// a session exists. Content is immutable per filename.
+	router.GET("/admin/assets/*filepath", serveAdminAsset)
+	router.POST("/api/login", auth.login)
+	router.POST("/api/logout", auth.logout)
 
-	api := router.Group("/api", auth)
+	adminGroup := router.Group("/admin", auth.middleware())
+	adminGroup.GET("", serveAdminIndex)
+	adminGroup.GET("/", serveAdminIndex)
+
+	api := router.Group("/api", auth.middleware())
 	registerTransferRoutes(api, service)
 	registerOverrideRoutes(api, service)
 	registerSettingsRoutes(api, service)
@@ -158,37 +167,40 @@ func scopeLabel(kind, targetID string) string {
 	}
 }
 
-func serveAsset(name, contentType string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		data, err := web.FS.ReadFile(name)
-		if err != nil {
-			c.Status(http.StatusNotFound)
-			return
-		}
-		// Admin assets are small; never let a stale app.js survive an upgrade.
-		c.Header("Cache-Control", "no-store")
-		c.Data(http.StatusOK, contentType, data)
+// serveAdminIndex serves the SPA shell for both /login and /admin. The file is
+// tiny and references hashed assets, so it must never be cached.
+func serveAdminIndex(c *gin.Context) {
+	data, err := web.FS.ReadFile("dist/index.html")
+	if err != nil {
+		c.Status(http.StatusNotFound)
+		return
 	}
+	c.Header("Cache-Control", "no-store")
+	c.Data(http.StatusOK, "text/html; charset=utf-8", data)
 }
 
-func adminAuth(password string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if password == "" {
-			if !isLoopback(c.ClientIP()) {
-				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "未设置 admin_password，管理页面仅允许从服务器本机访问"})
-				return
-			}
-			c.Next()
-			return
-		}
-		user, pass, ok := c.Request.BasicAuth()
-		if !ok || user != "admin" || subtle.ConstantTimeCompare([]byte(pass), []byte(password)) != 1 {
-			c.Header("WWW-Authenticate", `Basic realm="qqbot-course-schedule"`)
-			c.AbortWithStatus(http.StatusUnauthorized)
-			return
-		}
-		c.Next()
+// serveAdminAsset serves hashed files from web/dist/assets. embed.FS rejects
+// paths escaping dist, so no extra traversal guard is needed.
+func serveAdminAsset(c *gin.Context) {
+	name := strings.TrimPrefix(c.Param("filepath"), "/")
+	if name == "" {
+		c.Status(http.StatusNotFound)
+		return
 	}
+	data, err := web.FS.ReadFile("dist/assets/" + name)
+	if err != nil {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	c.Header("Cache-Control", "public, max-age=31536000, immutable")
+	c.Data(http.StatusOK, assetContentType(name), data)
+}
+
+func assetContentType(name string) string {
+	if contentType := mime.TypeByExtension(filepath.Ext(name)); contentType != "" {
+		return contentType
+	}
+	return "application/octet-stream"
 }
 
 func isLoopback(ip string) bool {

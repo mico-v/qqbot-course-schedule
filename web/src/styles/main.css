@@ -1,0 +1,127 @@
+:root {
+  --kb-bg: #f3f6fb;
+  --kb-panel: #ffffff;
+  --kb-panel-soft: #f8fafc;
+  --kb-border: #e2e8f0;
+  --kb-text: #0f172a;
+  --kb-text-secondary: #64748b;
+  --kb-accent: #4268df;
+  color-scheme: light;
+}
+
+html.dark {
+  --kb-bg: #0f141d;
+  --kb-panel: #161d29;
+  --kb-panel-soft: #1b2331;
+  --kb-border: #273244;
+  --kb-text: #e6edf7;
+  --kb-text-secondary: #93a1b5;
+  --kb-accent: #6f8cf0;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family:
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", system-ui,
+    -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px;
+  background: var(--kb-bg);
+  color: var(--kb-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+.muted {
+  color: var(--kb-text-secondary);
+}
+
+.panel {
+  background: var(--kb-panel);
+  border: 1px solid var(--kb-border);
+  border-radius: 14px;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--kb-border);
+}
+
+.panel-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.panel-body {
+  padding: 14px 18px;
+}
+
+.list-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--kb-border);
+  border-radius: 10px;
+  background: var(--kb-panel-soft);
+}
+
+.list-row + .list-row {
+  margin-top: 8px;
+}
+
+.list-row-main {
+  min-width: 0;
+}
+
+.list-row-title {
+  display: block;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.list-row-meta {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--kb-text-secondary);
+}
+
+.list-empty {
+  margin: 4px 0;
+  color: var(--kb-text-secondary);
+  font-size: 13px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--kb-text-secondary) 30%, transparent);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}

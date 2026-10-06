@@ -3,9 +3,11 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"regexp"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -43,7 +45,7 @@ func newAdminRouter(t *testing.T, password string) (*gin.Engine, *admin.Service)
 	return router, service
 }
 
-func adminRequest(router *gin.Engine, method, path string, body any, withAuth bool) *httptest.ResponseRecorder {
+func newAdminRequest(method, path string, body any) *http.Request {
 	var reader *bytes.Reader
 	if body != nil {
 		encoded, _ := json.Marshal(body)
@@ -54,8 +56,29 @@ func adminRequest(router *gin.Engine, method, path string, body any, withAuth bo
 	req := httptest.NewRequest(method, path, reader)
 	req.RemoteAddr = "127.0.0.1:12345"
 	req.Header.Set("Content-Type", "application/json")
+	return req
+}
+
+// loginCookie performs the real login round-trip so tests exercise the same
+// cookie session path as the browser.
+func loginCookie(router *gin.Engine, password string) *http.Cookie {
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, newAdminRequest(http.MethodPost, "/api/login", map[string]string{"password": password}))
+	if recorder.Code != http.StatusOK {
+		panic(fmt.Sprintf("test login = %d: %s", recorder.Code, recorder.Body.String()))
+	}
+	for _, cookie := range recorder.Result().Cookies() {
+		if cookie.Name == adminSessionCookie {
+			return cookie
+		}
+	}
+	panic("test login response missing session cookie")
+}
+
+func adminRequest(router *gin.Engine, method, path string, body any, withAuth bool) *httptest.ResponseRecorder {
+	req := newAdminRequest(method, path, body)
 	if withAuth {
-		req.SetBasicAuth("admin", adminPassword)
+		req.AddCookie(loginCookie(router, adminPassword))
 	}
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, req)
@@ -65,10 +88,59 @@ func adminRequest(router *gin.Engine, method, path string, body any, withAuth bo
 func TestAdminRequiresPassword(t *testing.T) {
 	router, _ := newAdminRouter(t, adminPassword)
 
-	if recorder := adminRequest(router, http.MethodGet, "/admin", nil, false); recorder.Code != http.StatusUnauthorized {
-		t.Fatalf("unauthenticated /admin = %d, want 401", recorder.Code)
+	// 登录页与登录接口本身无需会话。
+	recorder := adminRequest(router, http.MethodGet, "/login", nil, false)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("login page = %d, want 200", recorder.Code)
 	}
-	recorder := adminRequest(router, http.MethodGet, "/admin", nil, true)
+	if !bytes.Contains(recorder.Body.Bytes(), []byte("课表管理")) {
+		t.Fatal("login page body missing SPA title")
+	}
+
+	// 未登录访问页面：跳转登录页并携带返回地址。
+	recorder = adminRequest(router, http.MethodGet, "/admin", nil, false)
+	if recorder.Code != http.StatusFound {
+		t.Fatalf("unauthenticated /admin = %d, want 302", recorder.Code)
+	}
+	if location := recorder.Header().Get("Location"); location != "/login?next=%2Fadmin" {
+		t.Fatalf("redirect location = %q", location)
+	}
+
+	// 未登录调用 API：JSON 401，且不得触发 Basic Auth 弹窗。
+	recorder = adminRequest(router, http.MethodGet, "/api/scopes", nil, false)
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated /api/scopes = %d, want 401", recorder.Code)
+	}
+	if header := recorder.Header().Get("WWW-Authenticate"); header != "" {
+		t.Fatalf("unexpected WWW-Authenticate header %q", header)
+	}
+
+	// 密码错误。
+	recorder = adminRequest(router, http.MethodPost, "/api/login", map[string]string{"password": "wrong-password"}, false)
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong password login = %d, want 401", recorder.Code)
+	}
+
+	// 密码正确：下发 HttpOnly 会话 Cookie。
+	recorder = adminRequest(router, http.MethodPost, "/api/login", map[string]string{"password": adminPassword}, false)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("login = %d, want 200", recorder.Code)
+	}
+	var session *http.Cookie
+	for _, cookie := range recorder.Result().Cookies() {
+		if cookie.Name == adminSessionCookie {
+			session = cookie
+		}
+	}
+	if session == nil || session.Value == "" {
+		t.Fatal("login response missing session cookie")
+	}
+	if !session.HttpOnly || session.SameSite != http.SameSiteLaxMode || session.MaxAge <= 0 {
+		t.Fatalf("session cookie attributes = %+v", session)
+	}
+
+	// 携带会话后可访问页面与 API。
+	recorder = adminRequest(router, http.MethodGet, "/admin", nil, true)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("authenticated /admin = %d, want 200", recorder.Code)
 	}
@@ -78,8 +150,43 @@ func TestAdminRequiresPassword(t *testing.T) {
 	if !bytes.Contains(recorder.Body.Bytes(), []byte("课表管理")) {
 		t.Fatal("admin page body missing title")
 	}
-	if recorder := adminRequest(router, http.MethodGet, "/api/scopes", nil, false); recorder.Code != http.StatusUnauthorized {
-		t.Fatalf("unauthenticated /api/scopes = %d, want 401", recorder.Code)
+	if recorder := adminRequest(router, http.MethodGet, "/api/scopes", nil, true); recorder.Code != http.StatusOK {
+		t.Fatalf("authenticated /api/scopes = %d, want 200", recorder.Code)
+	}
+}
+
+func TestAdminLogoutInvalidatesSession(t *testing.T) {
+	router, _ := newAdminRouter(t, adminPassword)
+	cookie := loginCookie(router, adminPassword)
+
+	logout := newAdminRequest(http.MethodPost, "/api/logout", nil)
+	logout.AddCookie(cookie)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, logout)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("logout = %d, want 200", recorder.Code)
+	}
+
+	reuse := newAdminRequest(http.MethodGet, "/api/scopes", nil)
+	reuse.AddCookie(cookie)
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, reuse)
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("reused session = %d, want 401", recorder.Code)
+	}
+}
+
+func TestAdminLoginRateLimit(t *testing.T) {
+	router, _ := newAdminRouter(t, adminPassword)
+	for attempt := 0; attempt < loginMaxFailures; attempt++ {
+		recorder := adminRequest(router, http.MethodPost, "/api/login", map[string]string{"password": "wrong-password"}, false)
+		if recorder.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d = %d, want 401", attempt+1, recorder.Code)
+		}
+	}
+	recorder := adminRequest(router, http.MethodPost, "/api/login", map[string]string{"password": adminPassword}, false)
+	if recorder.Code != http.StatusTooManyRequests {
+		t.Fatalf("blocked login = %d, want 429", recorder.Code)
 	}
 }
 
@@ -220,19 +327,36 @@ func TestAdminAPIFlow(t *testing.T) {
 func TestAdminAssetsAndTrailingSlash(t *testing.T) {
 	router, _ := newAdminRouter(t, adminPassword)
 
-	for _, path := range []string{"/admin", "/admin/", "/admin/app.js", "/admin/style.css"} {
+	for _, path := range []string{"/admin", "/admin/"} {
 		recorder := adminRequest(router, http.MethodGet, path, nil, true)
 		if recorder.Code != http.StatusOK {
 			t.Fatalf("%s = %d, want 200", path, recorder.Code)
 		}
+		if contentType := recorder.Header().Get("Content-Type"); contentType != "text/html; charset=utf-8" {
+			t.Fatalf("%s content type = %q", path, contentType)
+		}
 	}
+
+	// 页面必须用绝对 /admin 路径引用带哈希的构建产物，且产物无需登录即可加载
+	// （登录页本身在建立会话前就要用到它们）。
 	recorder := adminRequest(router, http.MethodGet, "/admin", nil, true)
 	body := recorder.Body.String()
-	if !bytes.Contains([]byte(body), []byte(`href="/admin/style.css"`)) ||
-		!bytes.Contains([]byte(body), []byte(`src="/admin/app.js"`)) {
-		t.Fatalf("admin page must reference assets by absolute /admin path")
+	assets := adminAssetPathRe.FindAllString(body, -1)
+	if len(assets) == 0 {
+		t.Fatalf("admin page must reference hashed assets by absolute /admin path")
+	}
+	for _, asset := range assets {
+		assetRecorder := adminRequest(router, http.MethodGet, asset, nil, false)
+		if assetRecorder.Code != http.StatusOK {
+			t.Fatalf("%s = %d, want 200", asset, assetRecorder.Code)
+		}
+		if cache := assetRecorder.Header().Get("Cache-Control"); cache != "public, max-age=31536000, immutable" {
+			t.Fatalf("%s cache control = %q", asset, cache)
+		}
 	}
 }
+
+var adminAssetPathRe = regexp.MustCompile(`/admin/assets/[A-Za-z0-9._-]+`)
 
 func TestScopesIncludeSeenOnlyGroup(t *testing.T) {
 	router, service := newAdminRouter(t, adminPassword)

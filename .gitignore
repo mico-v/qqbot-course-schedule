@@ -17,3 +17,6 @@
 .idea/
 .vscode/
 .DS_Store
+
+# 前端依赖（构建产物 web/dist 需要入库，保证无 Node 环境也能 go build）
+web/node_modules/

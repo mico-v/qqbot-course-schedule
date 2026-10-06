@@ -48,7 +48,7 @@ func multipartRequest(t *testing.T, router *gin.Engine, path, scopeID, userID, f
 	req := httptest.NewRequest(http.MethodPost, path, body)
 	req.RemoteAddr = "127.0.0.1:12345"
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.SetBasicAuth("admin", adminPassword)
+	req.AddCookie(loginCookie(router, adminPassword))
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, req)
 	return recorder
