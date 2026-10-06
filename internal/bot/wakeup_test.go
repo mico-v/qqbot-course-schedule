@@ -17,9 +17,11 @@ type stubWakeUp struct {
 	shareData string
 	err       error
 	gotCode   string
+	fetches   int
 }
 
 func (s *stubWakeUp) FetchShareData(_ context.Context, code string) (string, error) {
+	s.fetches++
 	s.gotCode = code
 	return s.shareData, s.err
 }
@@ -86,6 +88,52 @@ func TestImportCommandWithoutCodePrompts(t *testing.T) {
 	content, _ := reply["content"].(string)
 	if !strings.Contains(content, "未检测到") {
 		t.Fatalf("reply = %v", reply)
+	}
+}
+
+func TestWakeUpCommandAcceptsShareLink(t *testing.T) {
+	fake := newFakeQQ()
+	apiServer := httptest.NewServer(fake.handler())
+	t.Cleanup(apiServer.Close)
+
+	env, message := newTestEnv(t, fake, apiServer.URL)
+	stub := &stubWakeUp{shareData: botWakeUpShare}
+	env.WakeUp = stub
+	handler := NewDefaultHandler(env)
+
+	message.Content = "/wakeup https://wakeup.example/share/aBc123"
+	dispatch(context.Background(), env, handler, message)
+
+	reply := waitMessage(t, fake)
+	content, _ := reply["content"].(string)
+	if !strings.Contains(content, "已创建 小明 的课表") {
+		t.Fatalf("reply = %v", reply)
+	}
+	if stub.gotCode != "aBc123" {
+		t.Fatalf("fetched code = %q, want aBc123", stub.gotCode)
+	}
+}
+
+func TestWakeUpCommandWithoutArgumentPrompts(t *testing.T) {
+	fake := newFakeQQ()
+	apiServer := httptest.NewServer(fake.handler())
+	t.Cleanup(apiServer.Close)
+
+	env, message := newTestEnv(t, fake, apiServer.URL)
+	stub := &stubWakeUp{shareData: botWakeUpShare}
+	env.WakeUp = stub
+	handler := NewDefaultHandler(env)
+
+	message.Content = "/wakeup"
+	dispatch(context.Background(), env, handler, message)
+
+	reply := waitMessage(t, fake)
+	content, _ := reply["content"].(string)
+	if !strings.Contains(content, "/wakeup <WakeUp分享链接或分享口令>") {
+		t.Fatalf("reply = %v", reply)
+	}
+	if stub.fetches != 0 {
+		t.Fatalf("fetches = %d, want 0", stub.fetches)
 	}
 }
 

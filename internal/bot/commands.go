@@ -43,6 +43,12 @@ func NewDefaultHandler(env *Env) *Handler {
 		Handle:      h.handleImportCommand,
 	})
 	h.Register(&Command{
+		Prefix:      "/wakeup",
+		Description: "通过 WakeUp 分享链接或口令导入课表",
+		Ready:       true,
+		Handle:      h.handleWakeUpCommand,
+	})
+	h.Register(&Command{
 		Prefix:      "/修改课程表",
 		Description: "生成仅可修改自己课表的临时链接",
 		Ready:       true,
@@ -187,6 +193,16 @@ func (h *Handler) handleImportCommand(ctx context.Context, in *Inbound, r *Repli
 		return h.env.ImportWakeUp(ctx, in, r, code)
 	}
 	return r.Reply(ctx, "未检测到 .ics 文件或 WakeUp 分享口令。可以附加 .ics 文件，或发送 /导入课表 <WakeUp分享口令>。")
+}
+
+func (h *Handler) handleWakeUpCommand(ctx context.Context, in *Inbound, r *Replier) error {
+	if h.env == nil {
+		return r.Reply(ctx, "课表功能未初始化。")
+	}
+	if strings.TrimSpace(in.Args) == "" {
+		return r.Reply(ctx, "请发送 /wakeup <WakeUp分享链接或分享口令>。")
+	}
+	return h.env.ImportWakeUp(ctx, in, r, in.Args)
 }
 
 func (h *Handler) handleRankCommand(ctx context.Context, in *Inbound, r *Replier) error {
