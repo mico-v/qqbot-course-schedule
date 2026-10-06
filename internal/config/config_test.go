@@ -39,6 +39,9 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	if cfg.LogLevel != DefaultLogLevel {
 		t.Errorf("LogLevel = %q, want %q", cfg.LogLevel, DefaultLogLevel)
 	}
+	if cfg.WakeUpAndroidID != DefaultWakeUpAndroidID {
+		t.Errorf("WakeUpAndroidID = %q, want %q", cfg.WakeUpAndroidID, DefaultWakeUpAndroidID)
+	}
 }
 
 func TestLoadRejectsInvalidPort(t *testing.T) {

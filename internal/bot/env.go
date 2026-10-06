@@ -27,6 +27,9 @@ type Env struct {
 	ImagesDir     string
 	FilesDir      string
 	PublicBaseURL string
+	// WakeUp fetches and imports WakeUp share codes. It is nil when the
+	// feature is not configured, in which case those commands explain so.
+	WakeUp WakeUpFetcher
 	// Buttons enables markdown+keyboard card messages (platform invite only).
 	Buttons bool
 	// Now is overridable in tests.

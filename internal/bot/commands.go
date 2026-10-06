@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/mico-v/qqbot-course-schedule/internal/schedule"
+	"github.com/mico-v/qqbot-course-schedule/internal/wakeup"
 )
 
 // NewDefaultHandler registers the implemented commands.
@@ -54,7 +55,7 @@ func NewDefaultHandler(env *Env) *Handler {
 	})
 	h.Register(&Command{
 		Prefix:      "/导入课表",
-		Description: "导入 .ics 课程表文件",
+		Description: "导入 .ics 课表文件或 WakeUp 分享口令",
 		Ready:       true,
 		Handle:      h.handleImportCommand,
 	})
@@ -193,7 +194,10 @@ func (h *Handler) handleImportCommand(ctx context.Context, in *Inbound, r *Repli
 			return h.env.ImportICS(ctx, in, r, attachment)
 		}
 	}
-	return r.Reply(ctx, "未检测到 .ics 文件。请发送 /导入课表 并附加 .ics 文件，或直接发送 .ics 文件。")
+	if code := wakeup.ExtractShareCode(in.Args); code != "" {
+		return h.env.ImportWakeUp(ctx, in, r, code)
+	}
+	return r.Reply(ctx, "未检测到 .ics 文件或 WakeUp 分享口令。可以附加 .ics 文件，或发送 /导入课表 <WakeUp分享口令>。")
 }
 
 func (h *Handler) handleRankCommand(ctx context.Context, in *Inbound, r *Replier) error {

@@ -9,5 +9,6 @@
   "data_dir": "data",
   "admin_password": "",
   "log_level": "info",
-  "buttons": false
+  "buttons": false,
+  "wakeup_android_id": "0000000000000000"
 }

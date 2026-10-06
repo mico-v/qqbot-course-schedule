@@ -42,7 +42,21 @@ func (s *Service) SaveICS(scopeID, userID, name, content, sourceFile, actor stri
 	if len(events) == 0 {
 		return nil, fmt.Errorf("ICS 中没有 VEVENT，未保存。")
 	}
+	return s.saveEvents(scopeID, userID, name, events, text, scheduleText, "ics", sourceFile, actor)
+}
 
+// SaveWakeUpShare parses a decoded WakeUp share payload and replaces a
+// member's whole schedule.
+func (s *Service) SaveWakeUpShare(scopeID, userID, name, shareData, sourceFile, actor string) (*SaveResult, error) {
+	events, scheduleText, err := ParseWakeUpEventsAndSchedule(shareData)
+	if err != nil {
+		return nil, fmt.Errorf("WakeUp 分享解析失败，未保存：%v", err)
+	}
+	ics := SerializeScheduleICS(events, "", firstNonEmpty(name, "WakeUp课表"))
+	return s.saveEvents(scopeID, userID, name, events, ics, scheduleText, "wakeup", sourceFile, actor)
+}
+
+func (s *Service) saveEvents(scopeID, userID, name string, events []Event, icsText, scheduleText, source, sourceFile, actor string) (*SaveResult, error) {
 	previous, found, err := s.store.GetMember(scopeID, userID)
 	if err != nil {
 		return nil, err
@@ -55,9 +69,9 @@ func (s *Service) SaveICS(scopeID, userID, name, content, sourceFile, actor stri
 	// An existing name wins: a member renamed in the WebUI keeps that name.
 	updated.Name = firstNonEmpty(previous.Name, name, userID)
 	updated.Events = events
-	updated.ICS = text
+	updated.ICS = icsText
 	updated.Schedule = scheduleText
-	updated.Source = "ics"
+	updated.Source = source
 	updated.SourceFile = sourceFile
 	updated.EventCount = len(events)
 	updated.UpdatedAt = now

@@ -26,6 +26,7 @@ import (
 	"github.com/mico-v/qqbot-course-schedule/internal/schedule"
 	"github.com/mico-v/qqbot-course-schedule/internal/server"
 	"github.com/mico-v/qqbot-course-schedule/internal/store"
+	"github.com/mico-v/qqbot-course-schedule/internal/wakeup"
 	"github.com/mico-v/qqbot-course-schedule/internal/webhook"
 )
 
@@ -78,6 +79,7 @@ func run() error {
 		FilesDir:      filepath.Join(cfg.DataDir, "files"),
 		PublicBaseURL: cfg.PublicImageBase(),
 		Buttons:       cfg.Buttons,
+		WakeUp:        wakeup.NewClient(wakeup.Options{AndroidID: cfg.WakeUpAndroidID}),
 	}
 	handler := bot.NewDefaultHandler(env)
 	dispatcher := webhook.NewDispatcher(client, cfg.Secret, handler)

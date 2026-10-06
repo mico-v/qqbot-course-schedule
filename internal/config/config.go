@@ -20,6 +20,9 @@ const (
 	DefaultDatabase      = "data/course_schedule.sqlite3"
 	DefaultDataDir       = "data"
 	DefaultLogLevel      = "info"
+	// DefaultWakeUpAndroidID is a placeholder Android ID that currently works
+	// for the WakeUp share import. Replace it with a real device id if banned.
+	DefaultWakeUpAndroidID = "0000000000000000"
 )
 
 // AllowedWebhookPorts lists the callback ports accepted by the QQ open platform.
@@ -39,6 +42,9 @@ type Config struct {
 	AdminPassword string `json:"admin_password"`
 	LogLevel      string `json:"log_level"`
 	Buttons       bool   `json:"buttons"`
+	// WakeUpAndroidID is the Android ID used to derive WakeUp cuid/adid for
+	// share-code imports.
+	WakeUpAndroidID string `json:"wakeup_android_id"`
 }
 
 // Load reads path, applies defaults and validates the result.
@@ -78,6 +84,9 @@ func (cfg *Config) applyDefaults() {
 	}
 	if cfg.LogLevel == "" {
 		cfg.LogLevel = DefaultLogLevel
+	}
+	if cfg.WakeUpAndroidID == "" {
+		cfg.WakeUpAndroidID = DefaultWakeUpAndroidID
 	}
 }
 

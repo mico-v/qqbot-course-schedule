@@ -134,6 +134,13 @@ func (h *Handler) Dispatch(ctx context.Context, in *Inbound, r *Replier) {
 				return
 			}
 		}
+		// A pasted WakeUp share message imports without an explicit command.
+		if h.env.WakeUp != nil && isWakeUpShareText(content) {
+			if err := h.env.ImportWakeUp(ctx, in, r, content); err != nil {
+				slog.Error("导入 WakeUp 课表失败", "err", err)
+			}
+			return
+		}
 	}
 
 	if content == "" {
