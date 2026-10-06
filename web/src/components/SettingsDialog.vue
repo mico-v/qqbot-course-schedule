@@ -13,6 +13,8 @@ const form = reactive<BotSettings>({
   reply_mention: true,
   send_format: "image",
   nickname: "",
+  base_url: "",
+  schedule_link_ttl_minutes: 60,
 });
 
 const loading = ref(false);
@@ -42,6 +44,8 @@ async function submit(): Promise<void> {
       reply_mention: form.reply_mention,
       send_format: form.send_format,
       nickname: form.nickname.trim(),
+      base_url: form.base_url.trim(),
+      schedule_link_ttl_minutes: form.schedule_link_ttl_minutes,
     });
     hint.value = "已保存，立即生效。";
     ElMessage.success("机器人设置已保存。");
@@ -83,6 +87,26 @@ async function submit(): Promise<void> {
             placeholder="例如：课表小助手（留空则不显示）"
           />
           <span class="setting-hint muted">昵称会显示在渲染的课表图片上。</span>
+        </el-form-item>
+        <el-form-item label="回调地址">
+          <el-input
+            v-model="form.base_url"
+            placeholder="例如：https://kb.example.com"
+            clearable
+          />
+          <span class="setting-hint muted">
+            用于生成课表修改链接；留空时使用 config.json 的 public_base_url。
+          </span>
+        </el-form-item>
+        <el-form-item label="课表连接过期时间">
+          <el-input-number
+            v-model="form.schedule_link_ttl_minutes"
+            :min="5"
+            :max="43200"
+            :step="5"
+            controls-position="right"
+          />
+          <span class="setting-hint muted">单位：分钟，最短 5 分钟，最长 30 天。</span>
         </el-form-item>
       </el-form>
       <p v-if="hint" class="save-hint">{{ hint }}</p>

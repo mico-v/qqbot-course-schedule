@@ -156,7 +156,21 @@ func (e *Env) Scope(in *Inbound) string {
 
 // PublicImageURL builds the public URL of a generated card.
 func (e *Env) PublicImageURL(name string) string {
-	return strings.TrimRight(e.PublicBaseURL, "/") + "/images/" + name
+	return e.PublicBaseURLForLinks() + "/images/" + name
+}
+
+// PublicBaseURLForLinks returns the service origin used in public links.
+// The WebUI setting wins over the config.json fallback.
+func (e *Env) PublicBaseURLForLinks() string {
+	if e == nil {
+		return ""
+	}
+	if e.Service != nil {
+		if settings, err := e.Service.BotSettings(); err == nil && settings.BaseURL != "" {
+			return settings.BaseURL
+		}
+	}
+	return strings.TrimRight(strings.TrimSpace(e.PublicBaseURL), "/")
 }
 
 // RenderDayCard builds and saves the card for one day, recording how long the

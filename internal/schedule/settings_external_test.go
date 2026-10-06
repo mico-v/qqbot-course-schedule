@@ -26,6 +26,7 @@ func TestBotSettingsRoundTrip(t *testing.T) {
 	want := schedule.Settings{
 		Enabled: false, ReplyPlain: true, ReplySlash: false, ReplyMention: true,
 		SendFormat: schedule.SendFormatMarkdown,
+		BaseURL:    "https://kb.example.com", ScheduleLinkTTLMinutes: 90,
 	}
 	if err := service.SaveBotSettings(want); err != nil {
 		t.Fatalf("SaveBotSettings: %v", err)

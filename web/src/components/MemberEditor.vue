@@ -170,6 +170,8 @@ function onCalendarAdd(defaults: { date: string; startTime: string; endTime: str
       v-model:visible="courseDialogVisible"
       :index="courseIndex"
       :defaults="courseDefaults"
+      :events="schedule.events"
+      :week-start="state.calendarWeekStart"
       @saved="ElMessage.success($event)"
     />
   </div>

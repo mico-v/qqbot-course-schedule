@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { reactive, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { setDirty, state } from "../store/admin";
+import { setDirty } from "../store/admin";
 import type { WebEvent } from "../types";
 import {
   formatDateValue,
@@ -21,6 +21,9 @@ const visible = defineModel<boolean>("visible", { required: true });
 const props = defineProps<{
   index: number;
   defaults: { date: string; startTime: string; endTime: string } | null;
+  events: WebEvent[];
+  weekStart?: Date;
+  markDirty?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -52,13 +55,13 @@ const repeatOptions = [
 ];
 
 function initialize(): void {
-  const events = state.schedule?.events || [];
+  const events = props.events || [];
   const event =
     props.index >= 0 && props.index < events.length ? (events[props.index] as WebEvent) : null;
   const now = new Date();
   const fallbackDate =
-    state.calendarWeekStart && !sameCalendarDay(state.calendarWeekStart, startOfWeek(now))
-      ? state.calendarWeekStart
+    props.weekStart && !sameCalendarDay(props.weekStart, startOfWeek(now))
+      ? props.weekStart
       : now;
   const start = event ? parseLocalDateTime(event.start) : null;
   const end = event ? parseLocalDateTime(event.end) : null;
@@ -121,7 +124,7 @@ function formDateTime(date: string, time: string, addDay = false): string | null
 }
 
 function save(): void {
-  const events = state.schedule?.events || [];
+  const events = props.events || [];
   if (!form.course.trim() || !form.date || !form.startTime || !form.endTime) {
     ElMessage.error("请填写课程名称、日期和上下课时间。");
     return;
@@ -155,13 +158,13 @@ function save(): void {
   };
   if (editingIndex.value >= 0) events[editingIndex.value] = nextEvent;
   else events.push(nextEvent);
-  setDirty(true);
+  if (props.markDirty !== false) setDirty(true);
   visible.value = false;
   emit("saved", editingIndex.value >= 0 ? "课程已更新，保存课表后生效。" : "课程已添加，保存课表后生效。");
 }
 
 async function remove(): Promise<void> {
-  const events = state.schedule?.events || [];
+  const events = props.events || [];
   if (editingIndex.value < 0 || editingIndex.value >= events.length) return;
   const event = events[editingIndex.value];
   try {
@@ -178,7 +181,7 @@ async function remove(): Promise<void> {
     return;
   }
   events.splice(editingIndex.value, 1);
-  setDirty(true);
+  if (props.markDirty !== false) setDirty(true);
   visible.value = false;
   emit("saved", "课程已删除，保存课表后生效。");
 }

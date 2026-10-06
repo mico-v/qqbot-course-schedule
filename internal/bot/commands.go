@@ -60,6 +60,12 @@ func NewDefaultHandler(env *Env) *Handler {
 		Handle:      h.handleImportCommand,
 	})
 	h.Register(&Command{
+		Prefix:      "/修改课程表",
+		Description: "生成仅可修改自己课表的临时链接",
+		Ready:       true,
+		Handle:      h.handleEditScheduleCommand,
+	})
+	h.Register(&Command{
 		Prefix:      "/上课时长榜",
 		Aliases:     []string{"/上课排行", "/本周上课排行", "/学习时长榜"},
 		Description: "生成本会话群友上课时长排行榜",

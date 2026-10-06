@@ -336,6 +336,12 @@ export async function loadSettings(): Promise<BotSettings> {
     reply_mention: settings.reply_mention !== false,
     send_format: settings.send_format === "markdown" ? "markdown" : "image",
     nickname: settings.nickname || "",
+    base_url: settings.base_url || "",
+    schedule_link_ttl_minutes:
+      Number.isFinite(settings.schedule_link_ttl_minutes) &&
+      settings.schedule_link_ttl_minutes > 0
+        ? settings.schedule_link_ttl_minutes
+        : 60,
   };
 }
 

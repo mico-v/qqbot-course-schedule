@@ -30,6 +30,7 @@ func TestSettingsAPI(t *testing.T) {
 	want := schedule.Settings{
 		Enabled: false, ReplyPlain: true, ReplySlash: false, ReplyMention: true,
 		SendFormat: schedule.SendFormatMarkdown, Nickname: "课表小助手",
+		BaseURL: "https://kb.example.com", ScheduleLinkTTLMinutes: 90,
 	}
 	if recorder := adminRequest(router, http.MethodPost, "/api/settings", want, true); recorder.Code != http.StatusOK {
 		t.Fatalf("post settings = %d (%s)", recorder.Code, recorder.Body.String())

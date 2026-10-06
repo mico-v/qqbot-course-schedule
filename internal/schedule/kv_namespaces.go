@@ -11,4 +11,6 @@ const (
 	KVNamespaceSeen = "seen"
 	// KVNamespacePanel stores command panel state managed by the bot.
 	KVNamespacePanel = "panel"
+	// KVNamespaceEditLinks stores hashed schedule edit-link tokens.
+	KVNamespaceEditLinks = "edit_links"
 )

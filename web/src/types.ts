@@ -74,6 +74,22 @@ export interface BotSettings {
   reply_mention: boolean;
   send_format: string;
   nickname: string;
+  base_url: string;
+  schedule_link_ttl_minutes: number;
+}
+
+export interface PublicPageSchedule {
+  name: string;
+  qq?: string;
+  revision: number;
+  expires_at: string;
+  events: WebEvent[];
+}
+
+export interface PublicSaveResult {
+  name: string;
+  revision: number;
+  event_count: number;
 }
 
 export interface PendingMember {

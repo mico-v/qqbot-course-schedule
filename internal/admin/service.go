@@ -175,6 +175,76 @@ type SavePageResult struct {
 	EventCount int    `json:"event_count"`
 }
 
+// PublicPageSchedule is the token-scoped payload exposed to the public editor.
+// The member OpenID and scope stay on the server.
+type PublicPageSchedule struct {
+	Name      string     `json:"name"`
+	QQ        string     `json:"qq,omitempty"`
+	Revision  int64      `json:"revision"`
+	ExpiresAt string     `json:"expires_at"`
+	Events    []WebEvent `json:"events"`
+}
+
+// PublicSavePayload is the public editor's save request.
+type PublicSavePayload struct {
+	Revision *int64          `json:"revision"`
+	Name     *string         `json:"name"`
+	QQ       *string         `json:"qq"`
+	Events   []WebEventInput `json:"events"`
+}
+
+// PublicSaveResult is the public editor's save response.
+type PublicSaveResult struct {
+	Name       string `json:"name"`
+	Revision   int64  `json:"revision"`
+	EventCount int    `json:"event_count"`
+}
+
+// PublicPageSchedule resolves one edit token and loads only that member.
+func (s *Service) PublicPageSchedule(token string, now time.Time) (*PublicPageSchedule, bool, error) {
+	link, err := s.ResolveScheduleEditLink(token, now)
+	if err != nil {
+		return nil, false, err
+	}
+	page, found, err := s.PageSchedule(link.ScopeID, link.UserID)
+	if err != nil || !found {
+		return nil, found, err
+	}
+	return &PublicPageSchedule{
+		Name:      page.Name,
+		QQ:        page.QQ,
+		Revision:  page.Revision,
+		ExpiresAt: link.ExpiresAt.In(schedule.LocalTZ).Format(time.RFC3339),
+		Events:    page.Events,
+	}, true, nil
+}
+
+// SavePublicSchedule validates one edit token and saves only the member bound
+// to that token. Scope and user identifiers from the request are ignored
+// because the public payload does not accept them.
+func (s *Service) SavePublicSchedule(token string, payload PublicSavePayload, now time.Time) (*PublicSaveResult, error) {
+	link, err := s.ResolveScheduleEditLink(token, now)
+	if err != nil {
+		return nil, err
+	}
+	result, err := s.SavePageSchedule(SavePagePayload{
+		ScopeID:  link.ScopeID,
+		UserID:   link.UserID,
+		Revision: payload.Revision,
+		Name:     payload.Name,
+		QQ:       payload.QQ,
+		Events:   payload.Events,
+	}, "edit-link")
+	if err != nil {
+		return nil, err
+	}
+	return &PublicSaveResult{
+		Name:       result.Name,
+		Revision:   result.Revision,
+		EventCount: result.EventCount,
+	}, nil
+}
+
 // SavePageSchedule validates and stores a member's whole schedule with the
 // revision the page read, preserving RAW_ICAL for events matched by uid/index.
 func (s *Service) SavePageSchedule(payload SavePagePayload, actor string) (*SavePageResult, error) {

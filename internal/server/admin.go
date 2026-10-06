@@ -25,11 +25,13 @@ func RegisterAdmin(router *gin.Engine, service *admin.Service, password string) 
 	auth := newAdminAuth(password)
 
 	router.GET("/login", serveAdminIndex)
+	router.GET("/schedule/edit", serveAdminIndex)
 	// Hashed build assets stay public: the login page itself loads them before
 	// a session exists. Content is immutable per filename.
 	router.GET("/admin/assets/*filepath", serveAdminAsset)
 	router.POST("/api/login", auth.login)
 	router.POST("/api/logout", auth.logout)
+	registerPublicScheduleRoutes(router, service)
 
 	adminGroup := router.Group("/admin", auth.middleware())
 	adminGroup.GET("", serveAdminIndex)

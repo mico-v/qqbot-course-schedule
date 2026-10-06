@@ -23,7 +23,7 @@ func (e *Env) SavePublicFile(content, extension string) (string, error) {
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
 		return "", fmt.Errorf("写入导出文件失败: %w", err)
 	}
-	return strings.TrimRight(e.PublicBaseURL, "/") + "/files/" + name, nil
+	return e.PublicBaseURLForLinks() + "/files/" + name, nil
 }
 
 func (e *Env) filesDir() string {

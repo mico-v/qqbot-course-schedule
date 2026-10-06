@@ -44,6 +44,46 @@ export function apiPost<T>(path: string, body: unknown): Promise<T> {
   return api<T>(path, { method: "POST", body: JSON.stringify(body) });
 }
 
+// publicApi serves token-bearing endpoints without the admin 401 redirect.
+export async function publicApi<T = unknown>(
+  path: string,
+  options: RequestInit = {},
+): Promise<T> {
+  const response = await fetch(path, {
+    headers: { "Content-Type": "application/json" },
+    ...options,
+  });
+  const text = await response.text();
+  let data: unknown = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = null;
+    }
+  }
+  if (!response.ok) {
+    const message =
+      data && typeof data === "object" && "error" in data
+        ? String((data as { error: unknown }).error)
+        : `请求失败（HTTP ${response.status}）`;
+    throw new ApiError(message, response.status);
+  }
+  return data as T;
+}
+
+export function publicApiGet<T>(
+  path: string,
+  params: Record<string, string> = {},
+): Promise<T> {
+  const query = new URLSearchParams(params).toString();
+  return publicApi<T>(query ? `${path}?${query}` : path);
+}
+
+export function publicApiPost<T>(path: string, body: unknown): Promise<T> {
+  return publicApi<T>(path, { method: "POST", body: JSON.stringify(body) });
+}
+
 // downloadFile fetches an attachment with the session cookie and triggers a
 // browser download without navigating away from the SPA.
 export async function downloadFile(

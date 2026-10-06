@@ -115,6 +115,16 @@ func TestApplySettingArgs(t *testing.T) {
 		t.Fatalf("昵称 清空 => %+v problem=%q", updated, problem)
 	}
 
+	updated, problem = applySettingArgs(base, []string{"回调地址", "https://kb.example.com/"})
+	if problem != "" || updated.BaseURL != "https://kb.example.com" {
+		t.Fatalf("回调地址 => %+v problem=%q", updated, problem)
+	}
+
+	updated, problem = applySettingArgs(base, []string{"连接过期时间", "90"})
+	if problem != "" || updated.ScheduleLinkTTLMinutes != 90 {
+		t.Fatalf("连接过期时间 90 => %+v problem=%q", updated, problem)
+	}
+
 	if _, problem = applySettingArgs(base, []string{"回复", "斜杠"}); problem == "" {
 		t.Error("missing value should return usage")
 	}
@@ -126,6 +136,12 @@ func TestApplySettingArgs(t *testing.T) {
 	}
 	if _, problem = applySettingArgs(base, []string{"乱写"}); problem == "" {
 		t.Error("unknown token should return usage")
+	}
+	if _, problem = applySettingArgs(base, []string{"回调地址", "kb.example.com"}); problem == "" {
+		t.Error("an invalid callback address should fail")
+	}
+	if _, problem = applySettingArgs(base, []string{"连接过期时间", "0"}); problem == "" {
+		t.Error("zero TTL should fail when set explicitly")
 	}
 }
 
@@ -244,6 +260,19 @@ func TestSettingsTextShowsNickname(t *testing.T) {
 	settings.Nickname = "课表小助手"
 	if text := settingsText(settings); !strings.Contains(text, "机器人昵称：课表小助手") {
 		t.Fatalf("nickname text = %q", text)
+	}
+}
+
+func TestSettingsTextShowsPublicLinkSettings(t *testing.T) {
+	settings := schedule.DefaultSettings()
+	settings.BaseURL = "https://kb.example.com"
+	settings.ScheduleLinkTTLMinutes = 90
+	text := settingsText(settings)
+	if !strings.Contains(text, "回调地址：https://kb.example.com") {
+		t.Fatalf("base URL missing from %q", text)
+	}
+	if !strings.Contains(text, "课表连接过期时间：90 分钟") {
+		t.Fatalf("TTL missing from %q", text)
 	}
 }
 
