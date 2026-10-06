@@ -67,8 +67,8 @@ async function submit(): Promise<void> {
         </el-form-item>
         <el-form-item label="响应方式">
           <div class="switch-row">
-            <el-checkbox v-model="form.reply_plain">无前缀（今日课表）</el-checkbox>
-            <el-checkbox v-model="form.reply_slash">斜杠命令（/今日课表）</el-checkbox>
+            <el-checkbox v-model="form.reply_plain">无前缀（课表）</el-checkbox>
+            <el-checkbox v-model="form.reply_slash">斜杠命令（/课表）</el-checkbox>
             <el-checkbox v-model="form.reply_mention">@ 机器人</el-checkbox>
           </div>
         </el-form-item>

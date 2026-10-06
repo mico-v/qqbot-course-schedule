@@ -188,8 +188,8 @@ func TestImportThenDayCardPipeline(t *testing.T) {
 		t.Fatalf("import reply = %v", importReply)
 	}
 
-	// 2. /今日课表 renders a card and sends it as a media message.
-	message.Content = "/今日课表"
+	// 2. /课表 renders a card and sends it as a media message.
+	message.Content = "/课表"
 	dispatch(ctx, env, handler, message)
 	cardReply := waitMessage(t, fake)
 

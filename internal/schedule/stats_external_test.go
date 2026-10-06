@@ -77,7 +77,7 @@ func TestMessageStatsRoundTrip(t *testing.T) {
 	want := schedule.MessageStats{
 		ScopeID:    "group:G1",
 		Origin:     "group",
-		Command:    "/今日课表",
+		Command:    "/课表",
 		UserID:     "U1",
 		Stage:      schedule.StatsStageCard,
 		ReceivedAt: received,
@@ -112,9 +112,9 @@ func TestMessageStatsRoundTrip(t *testing.T) {
 func TestMessageStatsSummaryByCommand(t *testing.T) {
 	service, _ := newStatsService(t)
 	for _, record := range []schedule.MessageStats{
-		{ScopeID: "group:G1", Command: "/今日课表", ReceivedAt: at(5), RenderMS: 100, SendMS: 100, OK: true},
-		{ScopeID: "group:G1", Command: "/今日课表", ReceivedAt: at(4), RenderMS: 200, SendMS: 200, OK: true},
-		{ScopeID: "group:G1", Command: "/课表", ReceivedAt: at(3), RenderMS: 50, SendMS: 50, OK: true},
+		{ScopeID: "group:G1", Command: "/课表", ReceivedAt: at(5), RenderMS: 100, SendMS: 100, OK: true},
+		{ScopeID: "group:G1", Command: "/课表", ReceivedAt: at(4), RenderMS: 200, SendMS: 200, OK: true},
+		{ScopeID: "group:G1", Command: "/上课时长榜", ReceivedAt: at(3), RenderMS: 50, SendMS: 50, OK: true},
 		{ScopeID: "group:G1", Command: "", ReceivedAt: at(2), RenderMS: 10, SendMS: 10, OK: false},
 	} {
 		if err := service.RecordMessageStats(record); err != nil {
@@ -131,12 +131,12 @@ func TestMessageStatsSummaryByCommand(t *testing.T) {
 	if summary.Failed != 1 {
 		t.Fatalf("failed = %d, want 1", summary.Failed)
 	}
-	dayCard, ok := summary.ByCommand["/今日课表"]
+	dayCard, ok := summary.ByCommand["/课表"]
 	if !ok {
-		t.Fatalf("ByCommand missing /今日课表: %+v", summary.ByCommand)
+		t.Fatalf("ByCommand missing /课表: %+v", summary.ByCommand)
 	}
 	if dayCard.Count != 2 || dayCard.AverageMS != 300 || dayCard.MaxMS != 400 {
-		t.Fatalf("/今日课表 summary = %+v", dayCard)
+		t.Fatalf("/课表 summary = %+v", dayCard)
 	}
 	if _, ok := summary.ByCommand["（无指令）"]; !ok {
 		t.Fatalf("commandless records must group under （无指令）: %+v", summary.ByCommand)

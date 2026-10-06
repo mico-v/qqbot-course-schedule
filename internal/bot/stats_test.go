@@ -76,13 +76,13 @@ func TestInboundReceivedAtFallsBackToNow(t *testing.T) {
 	}
 }
 
-// TestDayCardPipelineRecordsRenderStats drives a real /今日课表 and asserts the
+// TestDayCardPipelineRecordsRenderStats drives a real /课表 and asserts the
 // card footer carries the timing and exactly one record lands in storage.
 func TestDayCardPipelineRecordsRenderStats(t *testing.T) {
 	env := newStatsTestEnv(t)
 	handler := NewDefaultHandler(env.Env)
 	in := &Inbound{Origin: OriginGroup, GroupOpenID: "GROUP", UserOpenID: "U1", MsgID: "m1"}
-	in.Content = "/今日课表"
+	in.Content = "/课表"
 	received := time.Now()
 	ctx := timing.WithReceived(context.Background(), received)
 
@@ -100,8 +100,8 @@ func TestDayCardPipelineRecordsRenderStats(t *testing.T) {
 	if got.Stage != schedule.StatsStageCard {
 		t.Fatalf("stage = %q, want %q", got.Stage, schedule.StatsStageCard)
 	}
-	if got.Command != "/今日课表" {
-		t.Fatalf("command = %q, want /今日课表", got.Command)
+	if got.Command != "/课表" {
+		t.Fatalf("command = %q, want /课表", got.Command)
 	}
 	if got.ScopeID != schedule.ScopeGroup("GROUP") {
 		t.Fatalf("scope = %q", got.ScopeID)

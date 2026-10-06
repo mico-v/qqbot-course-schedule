@@ -66,7 +66,7 @@
 | --- | --- | --- | --- |
 | F1 | 会话作用域与存储 | P0 | SQLite 三表 + revision 乐观锁 |
 | F2 | 成员与课程事件管理 | P0 | create/update/delete + ICS 重建 |
-| F3 | 课表查询与当日卡片 | P0 | `/今日课表` `/明日课表` `/课表` + Pillow 渲染 |
+| F3 | 课表查询与当日卡片 | P0 | `/课表 [日期]` + Pillow 渲染 |
 | F4 | 上课时长榜 | P1 | `/上课时长榜` + union 去重口径 |
 | F5 | 休假 / 调休 | P1 | `/休假` `/调休` `/销假` `/假期` |
 | F6 | ICS 导入 / 导出 | P0 | 文件消息自动导入 + `schedule<QQ号>.ics` 约定 |
@@ -200,8 +200,6 @@ schedule_day_overrides(scope_id, user_id, day, kind,
 
 | 指令 | 行为 |
 | --- | --- |
-| `/今日课表` | 当前会话今日卡片 |
-| `/明日课表` | 当前会话明日卡片 |
 | `/课表 [日期]` | 指定日期卡片；不带参数等于今天 |
 
 日期写法：`2026-09-17`、`2026/9/17`、`2026年9月17日`、`9.17`、`9月17日`、`前天/昨天/今天/明天/后天/大后天`，带虚词（"明天的课"）也可。
@@ -357,7 +355,6 @@ schedule_day_overrides(scope_id, user_id, day, kind,
 
 | 指令 | 参数 | 说明 |
 | --- | --- | --- |
-| `/今日课表` `/明日课表` | — | 卡片 |
 | `/课表` | `[日期]` | 卡片 |
 | `/上课时长榜` | `[范围]` | 榜单卡片 |
 | `/休假` `/调休` `/销假` `/假期` | 见 F5 | 标记管理 |
@@ -526,7 +523,7 @@ web/    管理台前端（Vue 3 + Vite + TypeScript + Element Plus）
 ### M1 数据与图片（已完成，待真机验收）
 
 - store（三表 + revision）、ICS 解析/序列化、occurrence 展开、日期解析。
-- 渲染（gg 纯 Go）+ 公网 URL 上传；`/今日课表` `/明日课表` `/课表` 全部输出图片。
+- 渲染（gg 纯 Go）+ 公网 URL 上传；`/课表` 输出图片。
 - 机器人头像：`GET /users/@me` 拉取并缓存（24h），用于卡片页眉。
 - 已交付：`internal/store`（SQLite 三表 + KV + 乐观锁）、`internal/schedule`（ICS/RRULE/RDATE/EXDATE、休假调休展开、中文日期/区间解析、日卡数据）、`internal/render`（内嵌 Noto 字体、卡片/收纳条带/头像）、`/images/:name` 公网图床、`/导入课表` 与附件自动导入、`cmd/cardpreview` 预览工具。
 - 验收：导入样例 ICS → 三个指令收到卡片图片；状态/排序与 Python 用例一致；`test_ics/test_ics_import/test_schedule_day` 对应用例通过。

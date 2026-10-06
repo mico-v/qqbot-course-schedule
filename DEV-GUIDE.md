@@ -32,7 +32,7 @@ go run ./cmd/bot
 ```
 [INFO] webhook listening on :8080
 [INFO] qq access token refreshed, expires in ...
-[INFO] registered commands: /今日课表 /明日课表 /课表 /上课时长榜 /休假 /调休 /销假 /假期 /导入课表
+[INFO] registered commands: /课表 /上课时长榜 /休假 /调休 /销假 /假期 /导入课表
 ```
 
 首次接入 QQ 开放平台的步骤见第 5.1 节。

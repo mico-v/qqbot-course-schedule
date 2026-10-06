@@ -41,7 +41,7 @@ func setupMarkdownEnv(t *testing.T) (*fakeQQ, *Env, *Handler, *Inbound) {
 func TestDayCardMarkdownFormat(t *testing.T) {
 	fake, env, handler, base := setupMarkdownEnv(t)
 	msg := freshMessage(base)
-	msg.Content = "/今日课表"
+	msg.Content = "/课表"
 	dispatch(context.Background(), env, handler, msg)
 
 	card := waitMessage(t, fake)
@@ -59,7 +59,7 @@ func TestDayCardMarkdownFallsBackToText(t *testing.T) {
 	fake, env, handler, base := setupMarkdownEnv(t)
 	fake.failMarkdown = true
 	msg := freshMessage(base)
-	msg.Content = "/今日课表"
+	msg.Content = "/课表"
 	dispatch(context.Background(), env, handler, msg)
 
 	card := waitMessage(t, fake)

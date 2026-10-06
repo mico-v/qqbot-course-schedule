@@ -9,8 +9,7 @@ import (
 
 // menuItems is the c2c custom menu (global, replaced wholesale).
 var menuItems = []qqapi.MenuItem{
-	{Name: "今日课表", Type: "send_message", SendMessage: "/今日课表"},
-	{Name: "明日课表", Type: "send_message", SendMessage: "/明日课表"},
+	{Name: "课表", Type: "send_message", SendMessage: "/课表"},
 	{Name: "上课时长榜", Type: "send_message", SendMessage: "/上课时长榜"},
 	{Name: "导入课表", Type: "send_message", SendMessage: "/导入课表"},
 	{Name: "帮助", Type: "send_message", SendMessage: "/help"},

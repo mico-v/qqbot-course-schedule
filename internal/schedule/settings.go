@@ -17,9 +17,9 @@ const (
 type Settings struct {
 	// Enabled is the master switch: when false the bot ignores every message.
 	Enabled bool `json:"enabled"`
-	// ReplyPlain answers commands without a leading slash ("今日课表").
+	// ReplyPlain answers commands without a leading slash ("课表").
 	ReplyPlain bool `json:"reply_plain"`
-	// ReplySlash answers commands with a leading slash ("/今日课表").
+	// ReplySlash answers commands with a leading slash ("/课表").
 	ReplySlash bool `json:"reply_slash"`
 	// ReplyMention answers commands that open with an @ mention.
 	ReplyMention bool `json:"reply_mention"`

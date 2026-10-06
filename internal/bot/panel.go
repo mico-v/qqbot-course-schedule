@@ -25,7 +25,7 @@ const (
 // listed here are appended automatically when they are marked Ready, so a newly
 // registered command shows up without editing this list.
 var panelOrder = []string{
-	"/今日课表", "/明日课表", "/课表",
+	"/课表",
 	"/上课时长榜",
 	"/休假", "/调休", "/销假", "/假期",
 	"/导入课表",

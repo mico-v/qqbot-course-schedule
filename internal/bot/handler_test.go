@@ -119,7 +119,7 @@ func TestAdminRoles(t *testing.T) {
 func TestDefaultHandlerRegistersCommands(t *testing.T) {
 	handler := NewDefaultHandler(nil)
 	expected := []string{
-		"/ping", "/help", "/今日课表", "/明日课表", "/课表", "/导入课表", "/修改课程表", "/导出课表",
+		"/ping", "/help", "/课表", "/导入课表", "/修改课程表", "/导出课表",
 		"/上课时长榜", "/休假", "/调休", "/销假", "/假期",
 		"/同步面板", "/设置", "/nikname",
 		"/绑定QQ", "/解绑QQ",
@@ -132,6 +132,11 @@ func TestDefaultHandlerRegistersCommands(t *testing.T) {
 	}
 	if got := len(handler.Commands()); got != len(expected) {
 		t.Errorf("Commands() = %d, want %d", got, len(expected))
+	}
+	for _, prefix := range []string{"/今日课表", "/明日课表"} {
+		if _, ok := handler.Command(prefix); ok {
+			t.Errorf("retired command %s is still registered", prefix)
+		}
 	}
 
 	// Aliases resolve to the same command pointer.

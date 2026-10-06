@@ -31,23 +31,6 @@ func NewDefaultHandler(env *Env) *Handler {
 	})
 
 	h.Register(&Command{
-		Prefix:      "/今日课表",
-		Description: "生成当前会话今日课程表图片",
-		Ready:       true,
-		Handle: func(ctx context.Context, in *Inbound, r *Replier) error {
-			return handleDayCard(ctx, h.env, in, r, nil)
-		},
-	})
-	h.Register(&Command{
-		Prefix:      "/明日课表",
-		Description: "生成当前会话明日课程表图片",
-		Ready:       true,
-		Handle: func(ctx context.Context, in *Inbound, r *Replier) error {
-			tomorrow := h.env.now().AddDate(0, 0, 1)
-			return handleDayCard(ctx, h.env, in, r, &tomorrow)
-		},
-	})
-	h.Register(&Command{
 		Prefix:      "/课表",
 		Description: "查询指定日期课程表",
 		Ready:       true,

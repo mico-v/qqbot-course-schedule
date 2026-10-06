@@ -64,7 +64,7 @@ func TestSyncMenu(t *testing.T) {
 	fake.mu.Lock()
 	items := fake.menu.Items
 	fake.mu.Unlock()
-	if len(items) != 5 || items[0].Name != "今日课表" || items[0].SendMessage != "/今日课表" {
+	if len(items) != 4 || items[0].Name != "课表" || items[0].SendMessage != "/课表" {
 		t.Fatalf("menu items = %+v", items)
 	}
 

@@ -148,7 +148,7 @@ func TestSyncPanelsCreatesBothScopes(t *testing.T) {
 			names = append(names, item.Name)
 		}
 		expected := []string{
-			"/今日课表", "/明日课表", "/课表", "/上课时长榜",
+			"/课表", "/上课时长榜",
 			"/休假", "/调休", "/销假", "/假期", "/导入课表", "/导出课表",
 			"/绑定QQ", "/解绑QQ",
 			"/设置", "/help",
@@ -197,7 +197,7 @@ func TestSyncPanelsUpdatesWhenItemsChange(t *testing.T) {
 		t.Fatalf("updates = %d, want 2", fake.updates)
 	}
 	record := fake.panelForScope("group")
-	if record == nil || record.Panel.Items[2].Desc != "新的描述" {
+	if record == nil || record.Panel.Items[0].Desc != "新的描述" {
 		t.Fatalf("panel not updated: %+v", record)
 	}
 }
