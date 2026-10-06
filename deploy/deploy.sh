@@ -5,6 +5,7 @@
 # 用法:
 #   deploy/deploy.sh                      # 测试 → 构建 → 上传 → 重启 → 健康检查
 #   deploy/deploy.sh --skip-tests         # 跳过 go test（快速迭代）
+#   deploy/deploy.sh --web                # 先用 npm 重新构建 web/dist（需要 Node）
 #   deploy/deploy.sh --caddy              # 同时安装/更新 Caddy 反代（需 CADDY_DOMAIN）
 #   HOST=myserver deploy/deploy.sh        # 指定 SSH 主机别名
 #
@@ -14,7 +15,7 @@
 #   SERVICE      systemd 服务名          默认 qqbot-course-schedule
 #   RUN_USER     运行用户                默认 qqbot
 #   LOCAL_PORT   健康检查端口            默认 18080
-#   CADDY_DOMAIN Caddy 域名（--caddy 时必填，如 qqbot.example.com）
+#   CADDY_DOMAIN 站点域名（--caddy 时必填，如 kb.example.com；回调与管理台同域）
 #
 set -euo pipefail
 
@@ -25,16 +26,18 @@ RUN_USER="${RUN_USER:-qqbot}"
 LOCAL_PORT="${LOCAL_PORT:-18080}"
 SKIP_TESTS=0
 INSTALL_CADDY=0
+BUILD_WEB=0
 CADDY_DOMAIN="${CADDY_DOMAIN:-}"
 
 usage() {
-	sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--skip-tests) SKIP_TESTS=1; shift ;;
 	--caddy) INSTALL_CADDY=1; shift ;;
+	--web) BUILD_WEB=1; shift ;;
 	-h | --help)
 		usage
 		exit 0
@@ -60,6 +63,12 @@ command -v scp >/dev/null || fail "未找到 scp"
 
 log "检查架构边界"
 bash scripts/check-architecture.sh
+
+if [[ "$BUILD_WEB" == "1" ]]; then
+	log "构建前端 web/dist"
+	command -v npm >/dev/null || fail "未找到 npm（可去掉 --web 直接使用已入库的 web/dist）"
+	(cd web && npm ci --no-audit --no-fund && npm run build)
+fi
 
 UNFORMATTED="$(gofmt -l .)"
 [[ -z "$UNFORMATTED" ]] || fail "以下文件未通过 gofmt:\n$UNFORMATTED"
@@ -98,9 +107,9 @@ fi
 ssh "$HOST" "systemctl enable $SERVICE >/dev/null 2>&1 || true"
 
 if [[ "$INSTALL_CADDY" == "1" ]]; then
-	[[ -n "$CADDY_DOMAIN" ]] || fail "--caddy 需要设置 CADDY_DOMAIN，例如 CADDY_DOMAIN=qqbot.example.com"
+	[[ -n "$CADDY_DOMAIN" ]] || fail "--caddy 需要设置 CADDY_DOMAIN，例如 CADDY_DOMAIN=kb.example.com"
 	log "更新 Caddy 反代 $CADDY_DOMAIN -> 127.0.0.1:$LOCAL_PORT"
-	sed "s/qqbot\.example\.com/$CADDY_DOMAIN/g" deploy/qqbot.caddy >/tmp/qqbot.caddy
+	sed -e "s/kb\.example\.com/$CADDY_DOMAIN/g" deploy/qqbot.caddy >/tmp/qqbot.caddy
 	scp -q /tmp/qqbot.caddy "$HOST:/etc/caddy/Caddyfile.d/qqbot.caddy"
 	ssh "$HOST" "caddy validate --config /etc/caddy/Caddyfile >/dev/null && systemctl reload caddy"
 fi

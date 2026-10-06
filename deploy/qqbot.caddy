@@ -1,12 +1,15 @@
-# QQ 课表机器人反向代理模板
+# QQ 课表机器人反向代理模板（单域名）
 #
 # 放置到 /etc/caddy/Caddyfile.d/qqbot.caddy，主 Caddyfile 需包含：
 #   import /etc/caddy/Caddyfile.d/*.caddy
 #
-# 将 qqbot.example.com 换成真实域名；DNS 需指向本机（支持泛域名时可直接使用）。
-# 机器人监听 127.0.0.1:18080（见 config.json 的 bind/port），Caddy 负责 TLS 与 443 对外。
+# 机器人回调 /webhook、健康检查 /healthz、卡片图片 /images/*、导出文件 /files/*
+# 以及管理台 /admin、登录页 /login 全部走同一个域名；管理台由服务端会话
+# Cookie 校验保护（config.json 的 admin_password），无需内网入口。
+# 域名需有指向本机的 DNS；机器人监听 127.0.0.1:18080（见 config.json 的
+# bind/port），Caddy 负责 TLS 与 443 对外。
 
-qqbot.example.com {
+kb.example.com {
 	log {
 		output file /var/log/caddy/qqbot_access.log {
 			roll_size 20MiB
@@ -14,17 +17,5 @@ qqbot.example.com {
 		}
 		format json
 	}
-	# 公网只放行机器人回调、健康检查、卡片图片与导出文件；管理台/API 不公开。
-	@public path /webhook /healthz /images/* /files/*
-	handle @public {
-		reverse_proxy 127.0.0.1:18080
-	}
-	handle {
-		respond "Not Found" 404
-	}
+	reverse_proxy 127.0.0.1:18080
 }
-
-# 可选：ZeroTier 等内网管理入口（仍需 config.json 的 admin_password）
-# http://<ZeroTier IP>:18081 {
-# 	reverse_proxy 127.0.0.1:18080
-# }

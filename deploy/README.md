@@ -8,11 +8,15 @@
 # 本地准备：填写 config.json（可从 config.example.json 复制）
 ./deploy/deploy.sh                 # 测试 → 构建 → 上传 → 重启 → 健康检查
 ./deploy/deploy.sh --skip-tests    # 跳过 go test
+./deploy/deploy.sh --web           # 先用 npm 重新构建 web/dist（需要 Node）
 ./deploy/deploy.sh --caddy         # 同时安装/更新 Caddy 反代，需 CADDY_DOMAIN
 HOST=myserver ./deploy/deploy.sh   # 指定 SSH 主机别名（默认 as）
 ```
 
-可覆盖的环境变量：`HOST`、`REMOTE_DIR`、`SERVICE`、`RUN_USER`、`LOCAL_PORT`、`CADDY_DOMAIN`。
+可覆盖的环境变量：`HOST`、`REMOTE_DIR`、`SERVICE`、`RUN_USER`、`LOCAL_PORT`、
+`CADDY_DOMAIN`（站点域名，回调与管理台同域）。
+
+例如：`CADDY_DOMAIN=kb.example.com ./deploy/deploy.sh --caddy`
 
 脚本会：
 
@@ -23,6 +27,8 @@ HOST=myserver ./deploy/deploy.sh   # 指定 SSH 主机别名（默认 as）
 5. 轮询 `/healthz`，失败时自动打印 `journalctl` 最近日志。
 
 Caddy 反代只装一次即可（`--caddy` 会覆盖生成 `/etc/caddy/Caddyfile.d/qqbot.caddy` 并 reload）。
+生成的配置只有一个站点：`/webhook`、`/healthz`、`/images/*`、`/files/*` 与
+管理台（`/admin`、`/login`、`/api/*`）同域反代，管理台由登录页 + 会话 Cookie 保护。
 
 ## 手动步骤（备用）
 

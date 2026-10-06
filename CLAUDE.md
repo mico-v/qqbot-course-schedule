@@ -103,10 +103,12 @@ admin 包内不得 import gin / sqlite / render / store（只认自己的 Storag
 头像必须先按 cover 缩放再裁圆；JPEG quality 80 写 `data/images`，24h TTL 清理，单卡目标 <300ms。
 
 **Web 管理台**（`web/`，`go:embed`，`internal/admin/` + `internal/server/`）：`/admin` + `/api/*`，
-`admin_password` 为空时仅回环可访问，设置后为 Basic Auth（用户名 `admin`）。HTTP 路由只依赖
-`*admin.Service`，不接触 `store`。
+`admin_password` 为空时仅回环可访问，设置后走独立登录页 `/login` + HttpOnly 会话 Cookie
+（不再使用 Basic Auth 弹窗；登录限流、会话 7 天、重启失效）。HTTP 路由只依赖 `*admin.Service`，不接触 `store`。
 前端不用 `window.AstrBotPluginPage`，统一 `fetch('/api/...')`，错误统一 `{error: "..."}`。
-服务端必须重新校验所有输入，前端校验只是体验。公网只放行 `/webhook`、`/healthz`、`/images/*`、`/files/*`。
+服务端必须重新校验所有输入，前端校验只是体验。前端为 Vue 3 + Vite + TypeScript + Element Plus，
+源码在 `web/src/`，构建产物 `web/dist/` 入库并由 `go:embed` 内嵌（`go build` 不依赖 Node）。
+公网单域名对外：`/webhook`、`/healthz`、`/images/*`、`/files/*` 与管理台同域，管理台靠会话 Cookie 保护。
 
 **日志与错误**：`log/slog` 字段化（`event`/`group`/`user`(脱敏短 ID)/`cmd`/`err`）。请求路径禁止 `panic`；启动配置错误可 `log.Fatal` + 中文指引。用户可见错误必须显式回复（`r.Reply(...)` 或 `UserError`），`Handle` 返回的裸 error 只写日志、用户看不到。
 

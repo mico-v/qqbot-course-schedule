@@ -113,11 +113,13 @@ qqbot-course-schedule/
 │   │   ├── avatar.go            #   机器人头像缓存 + 成员首字底色
 │   │   └── output.go            #   JPEG 输出、TTL 清理
 │   └── server/
-│       ├── admin.go             #   /admin 页面 + /api/*（Basic Auth）
+│       ├── admin.go             #   /admin 页面 + /api/*（会话校验）
+│       ├── auth.go              #   /login 登录页 + 会话 Cookie + 登录限流
 │       ├── images.go            #   公开卡片图床 /images/:name
 │       └── files.go             #   公开导出文件 /files/:name
-├── web/                         # 管理台前端（改造自插件 Pages，embed）
-│   ├── index.html / app.js / style.css
+├── web/                         # 管理台前端（Vue 3 + Vite + TS + Element Plus）
+│   ├── src/                     #   源码（views/ components/ store/ utils/）
+│   ├── dist/                    #   npm run build 产物，入库后 go:embed
 │   └── embed.go
 ├── assets/
 │   ├── embed.go                 # go:embed 字体
@@ -126,7 +128,7 @@ qqbot-course-schedule/
 ├── deploy/
 │   ├── deploy.sh                # 一键编译上传部署
 │   ├── qqbot-course-schedule.service
-│   ├── qqbot.caddy              # 公网白名单 + ZeroTier 管理入口模板
+│   ├── qqbot.caddy              # 单域名反代模板（回调 + 管理台同域）
 │   └── README.md
 ├── docs/                        # 仅官方文档快照（autogen/dev-prepare/...）
 ├── config.example.json
@@ -317,10 +319,13 @@ msg.Keyboard(kb)
 
 ### 6.6 Web 管理台
 
-- 前端在 `web/`，`go:embed` 进二进制，经 `/admin` 提供；接口在 `/api/*`（`internal/server/admin.go`）。
-- 鉴权：`admin_password` 为空时仅回环地址可访问；设置后要求 HTTP Basic Auth（用户名 `admin`）。
-- 公网只放行 `/webhook`、`/healthz`、`/images/*`、`/files/*`（QQ 平台需要拉取卡片图与导出文件）；
-  管理台建议走内网入口（如 ZeroTier）或反代白名单，见 `deploy/qqbot.caddy`。
+- 前端在 `web/`（Vue 3 + Vite + TypeScript + Element Plus，源码 `web/src/`，构建产物 `web/dist/` 入库），
+  `go:embed` 进二进制，经 `/admin` 提供；接口在 `/api/*`（`internal/server/admin.go`）。
+- 鉴权：`admin_password` 为空时仅回环地址可访问；设置后走独立登录页 `/login`，登录成功下发
+  HttpOnly + SameSite=Lax 会话 Cookie（7 天，内存态，重启失效）；未登录 API 返回 401 JSON，
+  页面跳转 `/login`；密码错误次数过多会临时限流。
+- 公网域名只放行 `/webhook`、`/healthz`、`/images/*`、`/files/*`（QQ 平台需要拉取卡片图与导出文件）；
+  回调与管理台使用同一个域名（如 `kb.example.com`）整站反代，登录页负责管理台鉴权，见 `deploy/qqbot.caddy`。
 - 导出的 `.ics` 写在 `data/files`，随机文件名 + 24h 清理；平台错误码分类见 `qqapi/errors.go`。
 - 前端不使用 `window.AstrBotPluginPage`，统一 `fetch('/api/...')`，错误统一 `{error: "..."}`。
 - 保存流程：读取时拿 `revision` → 提交时回传 → 409 时提示刷新，**不要自动重试覆盖**。

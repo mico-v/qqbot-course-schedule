@@ -14,7 +14,7 @@
 | M0 骨架 | ✅ 已上线 | webhook 验签 + Op=13、Token、文本收发、`deploy/deploy.sh` |
 | M1 数据与图片 | ✅ 已上线 | SQLite 三表 + KV、ICS/RRULE/RDATE/EXDATE、中文日期解析、gg 图片渲染、`/images` 图床、`/导入课表` |
 | M2 休假调休 + 榜单 | ✅ 已上线 | `/休假` `/调休` `/销假` `/假期`、`/上课时长榜`（union 口径） |
-| M3 Web 管理台 | ✅ 已上线 | `/admin` + 5 个 API + Basic Auth + revision 409 |
+| M3 Web 管理台 | ✅ 已上线 | `/admin` + 5 个 API + 登录页/会话 Cookie（2026-10-06 替换 Basic Auth）+ revision 409 |
 | M4 面板/菜单/按钮 | ✅ 已上线 | 指令面板（14 项）、自定义菜单（5 项）、按钮框架（内邀默认关闭） |
 | M5 收尾 | ✅ 已上线 | `/导出课表`、错误码分类、文档与测试补齐 |
 | M6 增强 | ✅ 已上线 | WebUI 批量导入/导出：ICS 压缩包（含 manifest）、原始备份 JSON、单文件导入 |
@@ -26,8 +26,8 @@
 | M12 增强 | ✅ 已上线 | 课表发送格式设置（`/设置 格式 图片\|markdown` + WebUI）：markdown 发送文字列表，平台拒绝时回退纯文本 |
 | M13 增强 | ✅ 已上线 | 机器人昵称（`/nikname` + WebUI，渲染在卡片右上角）；签到积分（`/签到` 每日一次随机 1-10 群积分、`/积分` 查记录，WebUI 可查看/删除） |
 
-线上形态：`/opt/qqbot-course-schedule` + systemd（开机自启）+ Caddy（公网只放行
-`/webhook` `/healthz` `/images/*` `/files/*`，管理台走 ZeroTier 内网入口）。
+线上形态：`/opt/qqbot-course-schedule` + systemd（开机自启）+ Caddy 单域名反代
+（`/webhook` `/healthz` `/images/*` `/files/*` 与管理台同域，管理台由登录页 + 会话 Cookie 保护）。
 
 **已知平台限制与降级**：自定义按钮为内邀能力（`buttons=false`）；群成员列表为内邀
 （管理台批量添加只列"与机器人互动过且无课表"的成员）；彩色 emoji 不做（单色回退）。
@@ -348,7 +348,7 @@ schedule_day_overrides(scope_id, user_id, day, kind,
 
 #### F7.3 鉴权
 
-- 独立管理页走 Basic Auth（沿用 Polarix：`admin_password`，未设置仅本机可访问）。
+- 独立管理页走独立登录页 `/login` + 会话 Cookie（`admin_password`，未设置仅本机可访问；2026-10-06 起替换 Basic Auth）。
 - 管理台页面与图片静态资源使用 `embed.FS` 内嵌。
 
 ### F8 对话交互与权限
@@ -387,7 +387,7 @@ schedule_day_overrides(scope_id, user_id, day, kind,
 | 销假全体标记 | ✅ | ❌ | ❌ |
 | 修改机器人昵称 | ✅ | ❌ | ✅ |
 | 签到 / 查积分 | ✅ | ✅ | ✅ |
-| Web 管理台 | 独立 Basic Auth，与群角色无关 | | |
+| Web 管理台 | 独立登录页 + 会话 Cookie，与群角色无关 | | |
 
 管理员判定：官方事件 `author.member_role ∈ {admin, owner}`（`owner` 视为管理员）。
 
@@ -486,7 +486,7 @@ internal/schedule  领域：ics / occurrences / dayoff / timerange / rank / serv
 internal/render    卡片渲染
 internal/server    Web 管理台 API + 静态资源 + 图床
 assets/ fonts、模板
-web/    管理台前端
+web/    管理台前端（Vue 3 + Vite + TypeScript + Element Plus）
 ```
 
 ### 5.2 技术选型
@@ -541,11 +541,12 @@ web/    管理台前端
 
 ### M3 Web 管理台（已完成，待真机验收）
 
-- 5 个 API + 单页应用改造 + Basic Auth + 409 冲突。
-- 已交付：`internal/server/admin.go`（`/admin` 页面与 `/api/*`，Basic Auth，未设密码仅本机可访问）、
+- 5 个 API + 单页应用改造 + 登录页/会话 Cookie + 409 冲突。
+- 已交付：`internal/server/admin.go`（`/admin` 页面与 `/api/*`）、`internal/server/auth.go`（`/login`
+  登录页与会话 Cookie，2026-10-06 替换 Basic Auth；未设密码仅本机可访问）、
   `internal/admin/service.go` 与 `internal/admin/backup.go`（会话汇总、成员读取/保存、批量建课表、
   管理台标记与备份恢复）、`internal/schedule/seen.go`（观察成员记录）、
-  `web/`（改造自插件 Pages，`fetch` 直连 API）。
+  `web/`（Vue 3 + Vite + TypeScript + Element Plus 重写，`fetch` 直连 API）。
 - 降级：官方群成员列表内邀不可用，`/api/members` 只返回与机器人互动过且无课表的成员，并在页面提示。
 - 验收：浏览器可增删改课程并持久化；并发保存出现 409 提示。
 
@@ -606,7 +607,7 @@ web/    管理台前端
 
 1. 可执行二进制 + systemd unit + 示例 `config.json` + `deploy/deploy.sh`。
 2. 数据库 schema（`internal/store/store.go`，`metadata.schema_version=2`）。
-3. 管理台前端（`web/`，内嵌二进制）。
+3. 管理台前端（`web/`，Vue 3 + Element Plus，构建产物内嵌二进制）。
 4. 本计划、[DEV-GUIDE.md](DEV-GUIDE.md)、[CONNECT.md](CONNECT.md)、`deploy/README.md`。
 5. Go 测试套件（`go test ./...` 覆盖领域逻辑、存储、渲染、指令、面板、管理台、验签）。
 
@@ -618,7 +619,7 @@ web/    管理台前端
 | --- | --- | --- |
 | D1 | 渲染方案 | **已定**：`gg` 纯 Go 最快方案，彩色 emoji 不做 |
 | D2 | 图片发送 | **已定**：部署后公网 URL 直接上传（图床），不实现分片上传 |
-| D3 | Web 管理台路径与鉴权 | **已定并实现**：`/admin` + `/api/*`，`admin_password` Basic Auth；未设密码仅回环可访问；公网不放行 |
+| D3 | Web 管理台路径与鉴权 | **已定并实现**：`/admin` + `/api/*`，`/login` 登录页 + HttpOnly 会话 Cookie（2026-10-06 替换 Basic Auth）；未设密码仅回环可访问；回调与管理台同一域名公开，管理台靠会话保护 |
 | D4 | AI 工具 | **已定**：不做；查询/编辑保留为内部服务层 |
 | D5 | 是否需要历史数据迁移/绑定流程？ | 不做自动迁移，提供"重新导入 ICS"路径 |
 | D6 | ~~定时推送的默认策略~~ | **已废弃（2026-09-29）**：主动推送功能整体移除 |
