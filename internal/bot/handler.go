@@ -248,6 +248,21 @@ func (h *Handler) HandleCallback(ctx context.Context, cb *Callback) {
 		if err := h.env.SendCard(ctx, in, r, card, keyboard); err != nil {
 			slog.Error("按钮卡片发送失败", "err", err)
 		}
+	case "dayrich":
+		day, err := time.ParseInLocation("2006-01-02", param, schedule.LocalTZ)
+		if err != nil {
+			return
+		}
+		text, found, err := h.env.RenderDayMarkdown(in, day)
+		if err != nil || !found {
+			_ = r.Reply(ctx, "当前会话还没有可展示的课程表。")
+			return
+		}
+		text = scheduleParseResult(day) + text
+		keyboard := dayNavigationKeyboard(day.Format("2006-01-02"), cb.UserOpenID)
+		if err := h.env.SendDayMarkdownWithKeyboard(ctx, in, r, text, keyboard); err != nil {
+			slog.Error("按钮课表发送失败", "err", err)
+		}
 	case "rank":
 		period := map[string]string{"thisweek": "本周", "lastweek": "上周", "thismonth": "本月"}[param]
 		if period == "" {

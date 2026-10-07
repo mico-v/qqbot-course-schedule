@@ -177,7 +177,7 @@ func (h *Handler) handleScheduleCommand(ctx context.Context, in *Inbound, r *Rep
 	if day == nil {
 		return handleDayCard(ctx, h.env, in, r, nil)
 	}
-	return handleDayCard(ctx, h.env, in, r, day)
+	return handleDayMarkdown(ctx, h.env, in, r, *day)
 }
 
 func (h *Handler) handleImportCommand(ctx context.Context, in *Inbound, r *Replier) error {
@@ -430,6 +430,28 @@ func handleDayCard(ctx context.Context, env *Env, in *Inbound, r *Replier, day *
 	}
 	keyboard := cardKeyboardForDay(target.Format("2006-01-02"), env.now().Format("2006-01-02"), in.UserOpenID)
 	return env.SendCard(ctx, in, r, card, keyboard)
+}
+
+// handleDayMarkdown sends the rich text response for a parameterized /课表
+// command and adds controls for the adjacent days.
+func handleDayMarkdown(ctx context.Context, env *Env, in *Inbound, r *Replier, day time.Time) error {
+	if env == nil {
+		return r.Reply(ctx, "课表功能未初始化。")
+	}
+	text, ok, err := env.RenderDayMarkdown(in, day)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return r.Reply(ctx, "当前会话还没有可展示的课程表。请先发送 /导入课表 并附加 .ics 文件。")
+	}
+	return env.SendDayMarkdownWithKeyboard(ctx, in, r, scheduleParseResult(day)+text, dayNavigationKeyboard(day.Format("2006-01-02"), in.UserOpenID))
+}
+
+func scheduleParseResult(day time.Time) string {
+	weekdayNames := []string{"一", "二", "三", "四", "五", "六", "日"}
+	weekday := weekdayNames[(int(day.Weekday())+6)%7]
+	return fmt.Sprintf("**日期解析结果：%s（周%s）**\n\n", day.Format("2006-01-02"), weekday)
 }
 
 func toScheduleMentions(mentions []Mention) []schedule.Mention {

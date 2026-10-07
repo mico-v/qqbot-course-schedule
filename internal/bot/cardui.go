@@ -7,13 +7,24 @@ import (
 	"github.com/mico-v/qqbot-course-schedule/internal/schedule"
 )
 
-// cardKeyboardForDay builds 前一天 / 今天 / 后一天 callback buttons.
+// cardKeyboardForDay builds 上一天 / 今天 / 下一天 callback buttons.
 func cardKeyboardForDay(selected, today string, userOpenID string) *qqapi.Keyboard {
 	return &qqapi.Keyboard{Content: qqapi.KeyboardContent{Rows: []qqapi.KeyboardRow{{
 		Buttons: []qqapi.KeyboardButton{
-			callbackButton("prev", "前一天", "day:"+shiftDay(selected, -1), userOpenID),
+			callbackButton("prev", "上一天", "day:"+shiftDay(selected, -1), userOpenID),
 			callbackButton("today", "今天", "day:"+today, userOpenID),
-			callbackButton("next", "后一天", "day:"+shiftDay(selected, 1), userOpenID),
+			callbackButton("next", "下一天", "day:"+shiftDay(selected, 1), userOpenID),
+		},
+	}}}}
+}
+
+// dayNavigationKeyboard builds the two navigation buttons used by the
+// parameterized /课表 response.
+func dayNavigationKeyboard(selected, userOpenID string) *qqapi.Keyboard {
+	return &qqapi.Keyboard{Content: qqapi.KeyboardContent{Rows: []qqapi.KeyboardRow{{
+		Buttons: []qqapi.KeyboardButton{
+			callbackButton("prev", "上一天", "dayrich:"+shiftDay(selected, -1), userOpenID),
+			callbackButton("next", "下一天", "dayrich:"+shiftDay(selected, 1), userOpenID),
 		},
 	}}}}
 }

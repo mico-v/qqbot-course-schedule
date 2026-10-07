@@ -264,9 +264,26 @@ func (e *Env) RenderDayMarkdown(in *Inbound, day time.Time) (string, bool, error
 // SendDayMarkdown sends the markdown list and falls back to plain text when
 // the platform rejects markdown messages.
 func (e *Env) SendDayMarkdown(ctx context.Context, in *Inbound, r *Replier, markdown string) error {
-	err := r.ReplyMarkdown(ctx, markdown)
+	return e.SendDayMarkdownWithKeyboard(ctx, in, r, markdown, nil)
+}
+
+// SendDayMarkdownWithKeyboard sends a markdown day list with an optional
+// inline keyboard and falls back to plain text when the platform rejects it.
+func (e *Env) SendDayMarkdownWithKeyboard(ctx context.Context, in *Inbound, r *Replier, markdown string, keyboard *qqapi.Keyboard) error {
+	if !e.Buttons {
+		keyboard = nil
+	}
+	err := r.ReplyMarkdownWithKeyboard(ctx, markdown, keyboard)
 	if err == nil {
 		return nil
+	}
+	if keyboard != nil {
+		slog.Warn("带按钮的 markdown 课表发送失败，重试纯 markdown", "err", err)
+		if retryErr := r.ReplyMarkdown(ctx, markdown); retryErr == nil {
+			return nil
+		} else {
+			err = retryErr
+		}
 	}
 	slog.Warn("markdown 课表发送失败，回退为文本", "err", err)
 	return r.Reply(ctx, strings.ReplaceAll(markdown, "**", ""))

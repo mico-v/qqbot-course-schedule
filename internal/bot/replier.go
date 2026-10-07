@@ -235,6 +235,13 @@ func (r *Replier) Reply(ctx context.Context, text string) error {
 // reply slots. A failed attempt is not recorded, so a caller that falls back
 // to plain text files the final stage instead.
 func (r *Replier) ReplyMarkdown(ctx context.Context, content string) error {
+	return r.ReplyMarkdownWithKeyboard(ctx, content, nil)
+}
+
+// ReplyMarkdownWithKeyboard sends a passive markdown reply with an optional
+// inline keyboard. A failed attempt is not recorded, so a caller that falls
+// back to plain text files the final stage instead.
+func (r *Replier) ReplyMarkdownWithKeyboard(ctx context.Context, content string, keyboard *qqapi.Keyboard) error {
 	seq, err := r.NextSeq()
 	if err != nil {
 		return err
@@ -247,19 +254,19 @@ func (r *Replier) ReplyMarkdown(ctx context.Context, content string) error {
 			return errors.New("群消息缺少 group_openid")
 		}
 		if in.MsgID == "" && in.EventID != "" {
-			err = r.Client.SendGroupMarkdownEvent(ctx, in.GroupOpenID, content, nil, in.EventID)
+			err = r.Client.SendGroupMarkdownEvent(ctx, in.GroupOpenID, content, keyboard, in.EventID)
 			break
 		}
-		err = r.Client.SendGroupMarkdown(ctx, in.GroupOpenID, content, nil, in.MsgID, seq)
+		err = r.Client.SendGroupMarkdown(ctx, in.GroupOpenID, content, keyboard, in.MsgID, seq)
 	case OriginPrivate:
 		if in.UserOpenID == "" {
 			return errors.New("单聊消息缺少 user_openid")
 		}
 		if in.MsgID == "" && in.EventID != "" {
-			err = r.Client.SendC2CMarkdownEvent(ctx, in.UserOpenID, content, nil, in.EventID)
+			err = r.Client.SendC2CMarkdownEvent(ctx, in.UserOpenID, content, keyboard, in.EventID)
 			break
 		}
-		err = r.Client.SendC2CMarkdown(ctx, in.UserOpenID, content, nil, in.MsgID, seq)
+		err = r.Client.SendC2CMarkdown(ctx, in.UserOpenID, content, keyboard, in.MsgID, seq)
 	default:
 		return fmt.Errorf("未知消息来源 %q", in.Origin)
 	}
