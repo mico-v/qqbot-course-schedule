@@ -1,6 +1,7 @@
 package schedule
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -66,6 +67,76 @@ func TestParseWakeUpShareEvents(t *testing.T) {
 	bound := start.AddDate(0, 0, 16*7)
 	if occurrences := ExpandEventOccurrences(math, start.AddDate(0, 0, -1), bound); len(occurrences) != 16 {
 		t.Errorf("math occurrences = %d, want 16", len(occurrences))
+	}
+}
+
+// wakeUpRealShareSample mirrors the current app payload: a time-table object,
+// a node array, a course-table object, then a definition array and an
+// occurrence array. Names live in the definition array and occurrences
+// reference them by table-scoped id; type marks odd/even weeks.
+const wakeUpRealShareSample = `{"courseLen":50,"id":1,"name":"默认","sameBreakLen":false,"sameLen":false,"theBreakLen":10}
+[{"endTime":"08:45","node":1,"startTime":"08:00","timeTable":1},{"endTime":"09:40","node":2,"startTime":"08:55","timeTable":1},{"endTime":"10:40","node":3,"startTime":"09:55","timeTable":1},{"endTime":"11:35","node":4,"startTime":"10:50","timeTable":1},{"endTime":"12:30","node":5,"startTime":"11:45","timeTable":1}]
+{"id":5,"maxWeek":20,"nodes":5,"school":"测试大学","startDate":"2026-8-31","tableName":"大二上","timeTable":1}
+[{"color":"#ffff1744","courseName":"数据结构","id":0,"tableId":5},{"color":"#ffff9100","courseName":"物理实验B","id":5,"tableId":5}]
+[{"day":3,"endWeek":16,"id":0,"room":"C4-207","startNode":1,"startWeek":1,"step":2,"tableId":5,"teacher":"华泽","type":0},{"day":4,"endWeek":16,"id":5,"room":"A325","startNode":3,"startWeek":2,"step":3,"tableId":5,"teacher":"罗宏","type":2},{"day":2,"endWeek":8,"id":5,"ownTime":true,"room":"7-501","startNode":5,"startWeek":1,"step":1,"tableId":5,"teacher":"王飞","type":0,"startTime":"18:00","endTime":"20:00"}]`
+
+func TestParseWakeUpRealPayload(t *testing.T) {
+	share, err := ParseWakeUpShare(wakeUpRealShareSample)
+	if err != nil {
+		t.Fatalf("ParseWakeUpShare: %v", err)
+	}
+	if len(share.Nodes) != 5 {
+		t.Fatalf("nodes = %d, want 5 (definition/occurrence arrays must not be read as nodes)", len(share.Nodes))
+	}
+	if len(share.Courses) != 3 {
+		t.Fatalf("courses = %d, want 3", len(share.Courses))
+	}
+
+	events, _, err := ParseWakeUpEventsAndSchedule(wakeUpRealShareSample)
+	if err != nil {
+		t.Fatalf("ParseWakeUpEventsAndSchedule: %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("events = %d, want 3", len(events))
+	}
+
+	var data, lab, ownTime Event
+	for _, event := range events {
+		name := event["SUMMARY"]
+		switch {
+		case name == "数据结构":
+			data = event
+		case name == "物理实验B" && strings.Contains(event["RRULE"], "INTERVAL=2"):
+			lab = event
+		case name == "物理实验B":
+			ownTime = event
+		}
+	}
+	if data == nil || lab == nil || ownTime == nil {
+		t.Fatalf("data=%v lab=%v ownTime=%v, want all three events", data, lab, ownTime)
+	}
+
+	if data["LOCATION"] != "C4-207" || data["DESCRIPTION"] != "华泽" {
+		t.Errorf("数据结构 event = %+v", data)
+	}
+	if data["RRULE"] != "FREQ=WEEKLY;COUNT=16;WKST=MO" {
+		t.Errorf("数据结构 RRULE = %q", data["RRULE"])
+	}
+	if start, _, ok := EventDatetimes(data); !ok || start.Format("2006-01-02 15:04") != "2026-09-02 08:00" {
+		t.Errorf("数据结构 start = %v %v, want 2026-09-02 08:00", start, ok)
+	}
+
+	// type=2 is 双周: startWeek 2 stays, occurrences advance two weeks.
+	if lab["RRULE"] != "FREQ=WEEKLY;INTERVAL=2;COUNT=8;WKST=MO" {
+		t.Errorf("物理实验B RRULE = %q", lab["RRULE"])
+	}
+	if labStart, labEnd, ok := EventDatetimes(lab); !ok || labStart.Format("2006-01-02 15:04") != "2026-09-10 09:55" || labEnd.Format("15:04") != "12:30" {
+		t.Errorf("物理实验B datetimes = %v %v %v", labStart, labEnd, ok)
+	}
+
+	// ownTime row keeps its custom clock instead of walking periods.
+	if start, end, ok := EventDatetimes(ownTime); !ok || start.Format("2006-01-02 15:04") != "2026-09-01 18:00" || end.Format("15:04") != "20:00" {
+		t.Errorf("ownTime datetimes = %v %v %v", start, end, ok)
 	}
 }
 
