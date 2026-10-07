@@ -11,7 +11,6 @@ import (
 var menuItems = []qqapi.MenuItem{
 	{Name: "课表", Type: "send_message", SendMessage: "/课表"},
 	{Name: "上课时长榜", Type: "send_message", SendMessage: "/上课时长榜"},
-	{Name: "导入课表", Type: "send_message", SendMessage: "/导入课表"},
 	{Name: "帮助", Type: "send_message", SendMessage: "/help"},
 }
 

@@ -49,7 +49,7 @@ func TestDispatchAutoImportsWakeUpShare(t *testing.T) {
 	}
 }
 
-func TestImportCommandAcceptsWakeUpCode(t *testing.T) {
+func TestWakeUpCommandAcceptsCode(t *testing.T) {
 	fake := newFakeQQ()
 	apiServer := httptest.NewServer(fake.handler())
 	t.Cleanup(apiServer.Close)
@@ -59,7 +59,7 @@ func TestImportCommandAcceptsWakeUpCode(t *testing.T) {
 	env.WakeUp = stub
 	handler := NewDefaultHandler(env)
 
-	message.Content = "/导入课表 aBc123"
+	message.Content = "/wakeup aBc123"
 	dispatch(context.Background(), env, handler, message)
 
 	reply := waitMessage(t, fake)
@@ -69,25 +69,6 @@ func TestImportCommandAcceptsWakeUpCode(t *testing.T) {
 	}
 	if stub.gotCode != "aBc123" {
 		t.Fatalf("fetched code = %q, want aBc123", stub.gotCode)
-	}
-}
-
-func TestImportCommandWithoutCodePrompts(t *testing.T) {
-	fake := newFakeQQ()
-	apiServer := httptest.NewServer(fake.handler())
-	t.Cleanup(apiServer.Close)
-
-	env, message := newTestEnv(t, fake, apiServer.URL)
-	env.WakeUp = &stubWakeUp{}
-	handler := NewDefaultHandler(env)
-
-	message.Content = "/导入课表"
-	dispatch(context.Background(), env, handler, message)
-
-	reply := waitMessage(t, fake)
-	content, _ := reply["content"].(string)
-	if !strings.Contains(content, "未检测到") {
-		t.Fatalf("reply = %v", reply)
 	}
 }
 
@@ -156,7 +137,7 @@ func TestAutoImportIgnoresPlainSharePhrase(t *testing.T) {
 	}
 }
 
-func TestImportCommandReportsFetchFailure(t *testing.T) {
+func TestWakeUpCommandReportsFetchFailure(t *testing.T) {
 	fake := newFakeQQ()
 	apiServer := httptest.NewServer(fake.handler())
 	t.Cleanup(apiServer.Close)
@@ -165,7 +146,7 @@ func TestImportCommandReportsFetchFailure(t *testing.T) {
 	env.WakeUp = &stubWakeUp{err: errors.New("boom")}
 	handler := NewDefaultHandler(env)
 
-	message.Content = "/导入课表 aBc123"
+	message.Content = "/wakeup aBc123"
 	dispatch(context.Background(), env, handler, message)
 
 	reply := waitMessage(t, fake)
@@ -175,7 +156,7 @@ func TestImportCommandReportsFetchFailure(t *testing.T) {
 	}
 }
 
-func TestImportCommandReportsExpiredCode(t *testing.T) {
+func TestWakeUpCommandReportsExpiredCode(t *testing.T) {
 	fake := newFakeQQ()
 	apiServer := httptest.NewServer(fake.handler())
 	t.Cleanup(apiServer.Close)
@@ -184,7 +165,7 @@ func TestImportCommandReportsExpiredCode(t *testing.T) {
 	env.WakeUp = &stubWakeUp{}
 	handler := NewDefaultHandler(env)
 
-	message.Content = "/导入课表 aBc123"
+	message.Content = "/wakeup aBc123"
 	dispatch(context.Background(), env, handler, message)
 
 	reply := waitMessage(t, fake)

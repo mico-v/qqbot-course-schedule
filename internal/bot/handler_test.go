@@ -119,9 +119,9 @@ func TestAdminRoles(t *testing.T) {
 func TestDefaultHandlerRegistersCommands(t *testing.T) {
 	handler := NewDefaultHandler(nil)
 	expected := []string{
-		"/ping", "/help", "/课表", "/导入课表", "/wakeup", "/修改课程表", "/导出课表",
+		"/ping", "/help", "/课表", "/wakeup", "/修改课程表",
 		"/上课时长榜", "/休假", "/调休", "/销假", "/假期",
-		"/同步面板", "/设置", "/nikname",
+		"/同步面板", "/设置", "/nickname",
 		"/绑定QQ", "/解绑QQ",
 		"/签到", "/积分",
 	}

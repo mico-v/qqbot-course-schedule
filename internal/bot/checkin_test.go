@@ -74,7 +74,7 @@ func TestPointsWithoutCheckin(t *testing.T) {
 	}
 }
 
-func TestNicknameCommand(t *testing.T) {
+func TestNicknameCommandSetsOwnName(t *testing.T) {
 	fake := newFakeQQ()
 	apiServer := httptest.NewServer(fake.handler())
 	t.Cleanup(apiServer.Close)
@@ -82,44 +82,35 @@ func TestNicknameCommand(t *testing.T) {
 	env, base := newTestEnv(t, fake, apiServer.URL)
 	handler := NewDefaultHandler(env)
 	ctx := context.Background()
+	scope := env.Scope(base)
 
-	// A plain member cannot rename the bot.
+	// A plain member sets their own nickname, which is not the bot name.
 	member := freshMessage(base)
 	member.Content = "/nikname 张三"
 	dispatch(ctx, env, handler, member)
 	reply := waitMessage(t, fake)
-	if content, _ := reply["content"].(string); !strings.Contains(content, "只有群管理员") {
-		t.Fatalf("member reply = %q", content)
-	}
-
-	admin := freshMessage(base)
-	admin.MemberRole = "admin"
-	admin.Content = "/nickname 课表小助手"
-	dispatch(ctx, env, handler, admin)
-	reply = waitMessage(t, fake)
-	if content, _ := reply["content"].(string); !strings.Contains(content, "课表小助手") {
+	if content, _ := reply["content"].(string); !strings.Contains(content, "已将你的昵称设置为「张三」") {
 		t.Fatalf("set reply = %q", content)
 	}
-	settings, err := env.Service.BotSettings()
+	members, err := env.Service.ScopeMembers(scope)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if settings.Nickname != "课表小助手" {
-		t.Fatalf("nickname = %q", settings.Nickname)
+	if got := members["U1"].Name; got != "张三" {
+		t.Fatalf("member name = %q, want 张三", got)
 	}
 
-	// Bare /nikname reports the current name and the usage.
+	// Bare /nickname reports the current name and the usage.
 	query := freshMessage(base)
-	query.Content = "/nikname"
+	query.Content = "/nickname"
 	dispatch(ctx, env, handler, query)
 	reply = waitMessage(t, fake)
-	if content, _ := reply["content"].(string); !strings.Contains(content, "当前机器人昵称：课表小助手") {
+	if content, _ := reply["content"].(string); !strings.Contains(content, "你当前的昵称：张三") {
 		t.Fatalf("query reply = %q", content)
 	}
 
 	tooLong := freshMessage(base)
-	tooLong.MemberRole = "admin"
-	tooLong.Content = "/nikname " + strings.Repeat("长", schedule.MaxBotNicknameLength+1)
+	tooLong.Content = "/nickname " + strings.Repeat("长", schedule.MaxMemberNicknameLength+1)
 	dispatch(ctx, env, handler, tooLong)
 	reply = waitMessage(t, fake)
 	if content, _ := reply["content"].(string); !strings.Contains(content, "昵称不能超过") {
@@ -127,41 +118,17 @@ func TestNicknameCommand(t *testing.T) {
 	}
 
 	clear := freshMessage(base)
-	clear.MemberRole = "admin"
-	clear.Content = "/nikname 清空"
+	clear.Content = "/nickname 清空"
 	dispatch(ctx, env, handler, clear)
 	reply = waitMessage(t, fake)
-	if content, _ := reply["content"].(string); !strings.Contains(content, "已清空机器人昵称") {
+	if content, _ := reply["content"].(string); !strings.Contains(content, "已清空你的昵称") {
 		t.Fatalf("clear reply = %q", content)
 	}
-	settings, err = env.Service.BotSettings()
+	members, err = env.Service.ScopeMembers(scope)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if settings.Nickname != "" {
-		t.Fatalf("nickname after clear = %q", settings.Nickname)
-	}
-}
-
-func TestNicknameCommandWorksWhileBotOff(t *testing.T) {
-	fake := newFakeQQ()
-	apiServer := httptest.NewServer(fake.handler())
-	t.Cleanup(apiServer.Close)
-
-	env, base := newTestEnv(t, fake, apiServer.URL)
-	handler := NewDefaultHandler(env)
-	off := schedule.DefaultSettings()
-	off.Enabled = false
-	if err := env.Service.SaveBotSettings(off); err != nil {
-		t.Fatal(err)
-	}
-
-	admin := freshMessage(base)
-	admin.MemberRole = "owner"
-	admin.Content = "/nikname 值班机器人"
-	dispatch(context.Background(), env, handler, admin)
-	reply := waitMessage(t, fake)
-	if content, _ := reply["content"].(string); !strings.Contains(content, "值班机器人") {
-		t.Fatalf("reply = %q", content)
+	if got := members["U1"].Name; got != "" {
+		t.Fatalf("member name after clear = %q", got)
 	}
 }

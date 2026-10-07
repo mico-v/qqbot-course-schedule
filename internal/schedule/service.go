@@ -95,35 +95,30 @@ func (s *Service) saveEvents(scopeID, userID, name string, events []Event, icsTe
 	}, nil
 }
 
-// EnsureMember creates an empty schedule for a member if none exists yet and
-// refreshes the stored nickname when the platform reports a new one.
+// EnsureMember creates an empty schedule for a member if none exists yet. An
+// existing member is left untouched so a self-chosen /nickname is never
+// overwritten by the platform-provided name.
 func (s *Service) EnsureMember(scopeID, userID, name string) error {
 	member, found, err := s.store.GetMember(scopeID, userID)
 	if err != nil {
 		return err
 	}
-	if !found || member == nil {
-		created := &Member{
-			UserID:     userID,
-			Name:       firstNonEmpty(name, userID),
-			Events:     nil,
-			Source:     "manual",
-			UpdatedAt:  NowISO(),
-			EventCount: 0,
-		}
-		zero := int64(0)
-		if err := s.store.PutMember(scopeID, userID, created, &zero); err != nil && err != ErrConflict {
-			return err
-		}
+	if found && member != nil {
 		return nil
 	}
-	name = strings.TrimSpace(name)
-	if name == "" || member.Name == name || len([]rune(name)) > MaxMemberNameLength {
-		return nil
+	created := &Member{
+		UserID:     userID,
+		Name:       firstNonEmpty(name, userID),
+		Events:     nil,
+		Source:     "manual",
+		UpdatedAt:  NowISO(),
+		EventCount: 0,
 	}
-	member.Name = name
-	expected := member.Revision
-	return s.store.PutMember(scopeID, userID, member, &expected)
+	zero := int64(0)
+	if err := s.store.PutMember(scopeID, userID, created, &zero); err != nil && err != ErrConflict {
+		return err
+	}
+	return nil
 }
 
 // DayCard is everything the renderer needs for one day view.

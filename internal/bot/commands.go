@@ -37,12 +37,6 @@ func NewDefaultHandler(env *Env) *Handler {
 		Handle:      h.handleScheduleCommand,
 	})
 	h.Register(&Command{
-		Prefix:      "/导入课表",
-		Description: "导入 .ics 课表文件或 WakeUp 分享口令",
-		Ready:       true,
-		Handle:      h.handleImportCommand,
-	})
-	h.Register(&Command{
 		Prefix:      "/wakeup",
 		Description: "通过 WakeUp 分享链接或口令导入课表",
 		Ready:       true,
@@ -94,12 +88,6 @@ func NewDefaultHandler(env *Env) *Handler {
 		Handle:      h.handleDayOffListCommand,
 	})
 	h.Register(&Command{
-		Prefix:      "/导出课表",
-		Description: "导出当前课表为 .ics 文件",
-		Ready:       true,
-		Handle:      h.handleExportCommand,
-	})
-	h.Register(&Command{
 		Prefix:      "/绑定QQ",
 		Description: "绑定你的 QQ 号以显示真实头像",
 		Aliases:     []string{"/绑定qq"},
@@ -122,8 +110,8 @@ func NewDefaultHandler(env *Env) *Handler {
 	})
 	h.Register(&Command{
 		Prefix:      nicknameCommandPrefix,
-		Aliases:     []string{"/nickname", "/昵称"},
-		Description: "设置机器人昵称（管理员）",
+		Aliases:     []string{"/昵称", "/nikname"},
+		Description: "设置你自己的昵称（渲染课表时显示）",
 		Ready:       true,
 		Handle:      h.handleNickname,
 	})
@@ -352,7 +340,7 @@ func (h *Handler) handleBindQQ(ctx context.Context, in *Inbound, r *Replier) err
 	}
 	member, ok := members[in.UserOpenID]
 	if !ok || member == nil {
-		return r.Reply(ctx, "你还没有课表，请先发送 /导入课表 导入，或让管理员在管理台创建。")
+		return r.Reply(ctx, "你还没有课表，请先通过 /wakeup 导入，或让管理员在管理台创建。")
 	}
 	argument := strings.TrimSpace(in.Args)
 	if argument == "" {
@@ -417,7 +405,7 @@ func handleDayCard(ctx context.Context, env *Env, in *Inbound, r *Replier, day *
 			return err
 		}
 		if !ok {
-			return r.Reply(ctx, "当前会话还没有可展示的课程表。请先发送 /导入课表 并附加 .ics 文件。")
+			return r.Reply(ctx, "当前会话还没有可展示的课程表。请先让成员导入课表，或在管理后台添加。")
 		}
 		return env.SendDayMarkdown(ctx, in, r, text)
 	}
@@ -426,7 +414,7 @@ func handleDayCard(ctx context.Context, env *Env, in *Inbound, r *Replier, day *
 		return err
 	}
 	if !ok {
-		return r.Reply(ctx, "当前会话还没有可展示的课程表。请先发送 /导入课表 并附加 .ics 文件。")
+		return r.Reply(ctx, "当前会话还没有可展示的课程表。请先让成员导入课表，或在管理后台添加。")
 	}
 	keyboard := cardKeyboardForDay(target.Format("2006-01-02"), env.now().Format("2006-01-02"), in.UserOpenID)
 	return env.SendCard(ctx, in, r, card, keyboard)
@@ -443,7 +431,7 @@ func handleDayMarkdown(ctx context.Context, env *Env, in *Inbound, r *Replier, d
 		return err
 	}
 	if !ok {
-		return r.Reply(ctx, "当前会话还没有可展示的课程表。请先发送 /导入课表 并附加 .ics 文件。")
+		return r.Reply(ctx, "当前会话还没有可展示的课程表。请先让成员导入课表，或在管理后台添加。")
 	}
 	return env.SendDayMarkdownWithKeyboard(ctx, in, r, scheduleParseResult(day)+text, dayNavigationKeyboard(day.Format("2006-01-02"), in.UserOpenID))
 }

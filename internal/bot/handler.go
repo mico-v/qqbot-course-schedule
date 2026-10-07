@@ -188,13 +188,13 @@ func (h *Handler) Dispatch(ctx context.Context, in *Inbound, r *Replier) {
 }
 
 // managesBotSettings reports whether a command may run while the bot is off.
-// Administrators keep access to the settings and nickname commands so they can
-// fix the configuration from chat.
+// Administrators keep access to the settings command so they can turn the bot
+// back on from chat.
 func managesBotSettings(cmd *Command, in *Inbound) bool {
 	if cmd == nil || !canManageSettings(in) {
 		return false
 	}
-	return cmd.Prefix == settingsCommandPrefix || cmd.Prefix == nicknameCommandPrefix
+	return cmd.Prefix == settingsCommandPrefix
 }
 
 // Callback is one button press delivered as an INTERACTION_CREATE event.
