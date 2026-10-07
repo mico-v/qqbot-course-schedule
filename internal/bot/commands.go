@@ -163,9 +163,9 @@ func (h *Handler) handleScheduleCommand(ctx context.Context, in *Inbound, r *Rep
 		return r.Reply(ctx, message)
 	}
 	if day == nil {
-		return handleDayCard(ctx, h.env, in, r, nil)
+		return sendDayView(ctx, h.env, in, r, h.env.now(), false)
 	}
-	return handleDayCard(ctx, h.env, in, r, day)
+	return sendDayView(ctx, h.env, in, r, *day, true)
 }
 
 func (h *Handler) handleImportCommand(ctx context.Context, in *Inbound, r *Replier) error {
@@ -391,34 +391,35 @@ func (h *Handler) handleSyncPanelCommand(ctx context.Context, in *Inbound, r *Re
 	return r.Reply(ctx, fmt.Sprintf("指令面板已同步：新建 %d 个，更新 %d 个。", created, updated))
 }
 
-func handleDayCard(ctx context.Context, env *Env, in *Inbound, r *Replier, day *time.Time) error {
+// sendDayView sends one day's schedule in the configured format. withCaption
+// adds the "YYYY-MM-DD 的课表：" line above the image/markdown list; the
+// previous/next day navigation buttons are always attached.
+func sendDayView(ctx context.Context, env *Env, in *Inbound, r *Replier, day time.Time, withCaption bool) error {
 	if env == nil {
 		return r.Reply(ctx, "课表功能未初始化。")
 	}
-	target := env.now()
 	caption := ""
-	if day != nil {
-		target = *day
-		caption = dayCaption(target)
+	if withCaption {
+		caption = dayCaption(day)
 	}
+	keyboard := dayNavigationKeyboard(day.Format("2006-01-02"), in.UserOpenID)
 	if env.currentSettings().SendFormat == schedule.SendFormatMarkdown {
-		text, ok, err := env.RenderDayMarkdown(in, target)
+		text, ok, err := env.RenderDayMarkdown(in, day)
 		if err != nil {
 			return err
 		}
 		if !ok {
 			return r.Reply(ctx, "当前会话还没有可展示的课程表。请先让成员导入课表，或在管理后台添加。")
 		}
-		return env.SendDayMarkdownWithKeyboard(ctx, in, r, caption+text, dayNavigationKeyboard(target.Format("2006-01-02"), in.UserOpenID))
+		return env.SendDayMarkdownWithKeyboard(ctx, in, r, caption+text, keyboard)
 	}
-	card, ok, err := env.RenderDayCard(ctx, in, r, target)
+	card, ok, err := env.RenderDayCard(ctx, in, r, day)
 	if err != nil {
 		return err
 	}
 	if !ok {
 		return r.Reply(ctx, "当前会话还没有可展示的课程表。请先让成员导入课表，或在管理后台添加。")
 	}
-	keyboard := cardKeyboardForDay(target.Format("2006-01-02"), env.now().Format("2006-01-02"), in.UserOpenID)
 	return env.SendCardWithText(ctx, in, r, card, keyboard, caption)
 }
 

@@ -9,13 +9,13 @@ import (
 )
 
 func TestCardKeyboards(t *testing.T) {
-	dayKeyboard := cardKeyboardForDay("2026-09-17", "2026-09-17", "U1")
+	dayKeyboard := dayNavigationKeyboard("2026-09-17", "U1")
 	buttons := dayKeyboard.Content.Rows[0].Buttons
-	if len(buttons) != 3 {
+	if len(buttons) != 2 {
 		t.Fatalf("buttons = %d", len(buttons))
 	}
-	if buttons[0].Action.Data != "day:2026-09-16" || buttons[2].Action.Data != "day:2026-09-18" {
-		t.Fatalf("day data = %q %q", buttons[0].Action.Data, buttons[2].Action.Data)
+	if buttons[0].Action.Data != "day:2026-09-16" || buttons[1].Action.Data != "day:2026-09-18" {
+		t.Fatalf("day data = %q %q", buttons[0].Action.Data, buttons[1].Action.Data)
 	}
 	if buttons[0].Action.Permission == nil || len(buttons[0].Action.Permission.SpecifyUserIDs) != 1 ||
 		buttons[0].Action.Permission.SpecifyUserIDs[0] != "U1" {
