@@ -234,7 +234,8 @@ func (h *Handler) HandleCallback(ctx context.Context, cb *Callback) {
 				_ = r.Reply(ctx, "当前会话还没有可展示的课程表。")
 				return
 			}
-			if err := h.env.SendDayMarkdown(ctx, in, r, text); err != nil {
+			keyboard := dayNavigationKeyboard(day.Format("2006-01-02"), cb.UserOpenID)
+			if err := h.env.SendDayMarkdownWithKeyboard(ctx, in, r, dayCaption(day)+text, keyboard); err != nil {
 				slog.Error("按钮课表发送失败", "err", err)
 			}
 			return
@@ -245,8 +246,8 @@ func (h *Handler) HandleCallback(ctx context.Context, cb *Callback) {
 			return
 		}
 		keyboard := cardKeyboardForDay(day.Format("2006-01-02"), h.env.now().Format("2006-01-02"), cb.UserOpenID)
-		if err := h.env.SendCard(ctx, in, r, card, keyboard); err != nil {
-			slog.Error("按钮卡片发送失败", "err", err)
+		if err := h.env.SendCardWithText(ctx, in, r, card, keyboard, dayCaption(day)); err != nil {
+			slog.Error("按钮课表发送失败", "err", err)
 		}
 	case "dayrich":
 		day, err := time.ParseInLocation("2006-01-02", param, schedule.LocalTZ)
@@ -258,7 +259,7 @@ func (h *Handler) HandleCallback(ctx context.Context, cb *Callback) {
 			_ = r.Reply(ctx, "当前会话还没有可展示的课程表。")
 			return
 		}
-		text = scheduleParseResult(day) + text
+		text = dayCaption(day) + text
 		keyboard := dayNavigationKeyboard(day.Format("2006-01-02"), cb.UserOpenID)
 		if err := h.env.SendDayMarkdownWithKeyboard(ctx, in, r, text, keyboard); err != nil {
 			slog.Error("按钮课表发送失败", "err", err)

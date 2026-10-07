@@ -215,27 +215,27 @@ func (e *Env) RenderDayCard(ctx context.Context, in *Inbound, r *Replier, day ti
 // message (the only message type that renders keyboards) and falls back to a
 // media message when the platform rejects the keyboard.
 func (e *Env) SendCard(ctx context.Context, in *Inbound, r *Replier, card RenderedCard, keyboard *qqapi.Keyboard) error {
+	return e.SendCardWithText(ctx, in, r, card, keyboard, "")
+}
+
+// SendCardWithText sends an optional markdown caption above the card image.
+// A caption forces the markdown path even without buttons, because the media
+// message type cannot carry text. When buttons are enabled the image also
+// carries the inline keyboard; both fall back to a plain media message when
+// the platform rejects markdown.
+func (e *Env) SendCardWithText(ctx context.Context, in *Inbound, r *Replier, card RenderedCard, keyboard *qqapi.Keyboard, caption string) error {
 	start := time.Now()
-	if e.Buttons && keyboard != nil {
+	caption = strings.TrimSpace(caption)
+	useKeyboard := e.Buttons && keyboard != nil
+	if useKeyboard || caption != "" {
 		content := fmt.Sprintf("![课程表 #%dpx #%dpx](%s)", card.Width, card.Height, card.URL)
-		var err error
-		if in.MsgID == "" && in.EventID != "" {
-			if in.Origin == OriginGroup {
-				err = e.Client.SendGroupMarkdownEvent(ctx, in.GroupOpenID, content, keyboard, in.EventID)
-			} else {
-				err = e.Client.SendC2CMarkdownEvent(ctx, in.UserOpenID, content, keyboard, in.EventID)
-			}
-		} else {
-			seq, seqErr := r.NextSeq()
-			if seqErr != nil {
-				return seqErr
-			}
-			if in.Origin == OriginGroup {
-				err = e.Client.SendGroupMarkdown(ctx, in.GroupOpenID, content, keyboard, in.MsgID, seq)
-			} else {
-				err = e.Client.SendC2CMarkdown(ctx, in.UserOpenID, content, keyboard, in.MsgID, seq)
-			}
+		if caption != "" {
+			content = caption + "\n" + content
 		}
+		if !useKeyboard {
+			keyboard = nil
+		}
+		err := e.sendCardMarkdown(ctx, in, r, content, keyboard)
 		if err == nil {
 			r.markSend(start, r.renderDone)
 			e.recordStats(ctx, in, r, schedule.StatsStageCard, nil)
@@ -249,6 +249,25 @@ func (e *Env) SendCard(ctx context.Context, in *Inbound, r *Replier, card Render
 	err := r.ReplyImage(ctx, card.URL)
 	e.recordStats(ctx, in, r, schedule.StatsStageCard, err)
 	return err
+}
+
+// sendCardMarkdown sends one markdown message to the inbound's scope,
+// replying to the originating message or interaction event.
+func (e *Env) sendCardMarkdown(ctx context.Context, in *Inbound, r *Replier, content string, keyboard *qqapi.Keyboard) error {
+	if in.MsgID == "" && in.EventID != "" {
+		if in.Origin == OriginGroup {
+			return e.Client.SendGroupMarkdownEvent(ctx, in.GroupOpenID, content, keyboard, in.EventID)
+		}
+		return e.Client.SendC2CMarkdownEvent(ctx, in.UserOpenID, content, keyboard, in.EventID)
+	}
+	seq, err := r.NextSeq()
+	if err != nil {
+		return err
+	}
+	if in.Origin == OriginGroup {
+		return e.Client.SendGroupMarkdown(ctx, in.GroupOpenID, content, keyboard, in.MsgID, seq)
+	}
+	return e.Client.SendC2CMarkdown(ctx, in.UserOpenID, content, keyboard, in.MsgID, seq)
 }
 
 // RenderDayMarkdown builds the day schedule as a markdown list. ok is false

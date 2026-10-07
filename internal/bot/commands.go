@@ -165,7 +165,7 @@ func (h *Handler) handleScheduleCommand(ctx context.Context, in *Inbound, r *Rep
 	if day == nil {
 		return handleDayCard(ctx, h.env, in, r, nil)
 	}
-	return handleDayMarkdown(ctx, h.env, in, r, *day)
+	return handleDayCard(ctx, h.env, in, r, day)
 }
 
 func (h *Handler) handleImportCommand(ctx context.Context, in *Inbound, r *Replier) error {
@@ -396,8 +396,10 @@ func handleDayCard(ctx context.Context, env *Env, in *Inbound, r *Replier, day *
 		return r.Reply(ctx, "课表功能未初始化。")
 	}
 	target := env.now()
+	caption := ""
 	if day != nil {
 		target = *day
+		caption = dayCaption(target)
 	}
 	if env.currentSettings().SendFormat == schedule.SendFormatMarkdown {
 		text, ok, err := env.RenderDayMarkdown(in, target)
@@ -407,7 +409,7 @@ func handleDayCard(ctx context.Context, env *Env, in *Inbound, r *Replier, day *
 		if !ok {
 			return r.Reply(ctx, "当前会话还没有可展示的课程表。请先让成员导入课表，或在管理后台添加。")
 		}
-		return env.SendDayMarkdown(ctx, in, r, text)
+		return env.SendDayMarkdownWithKeyboard(ctx, in, r, caption+text, dayNavigationKeyboard(target.Format("2006-01-02"), in.UserOpenID))
 	}
 	card, ok, err := env.RenderDayCard(ctx, in, r, target)
 	if err != nil {
@@ -417,29 +419,13 @@ func handleDayCard(ctx context.Context, env *Env, in *Inbound, r *Replier, day *
 		return r.Reply(ctx, "当前会话还没有可展示的课程表。请先让成员导入课表，或在管理后台添加。")
 	}
 	keyboard := cardKeyboardForDay(target.Format("2006-01-02"), env.now().Format("2006-01-02"), in.UserOpenID)
-	return env.SendCard(ctx, in, r, card, keyboard)
+	return env.SendCardWithText(ctx, in, r, card, keyboard, caption)
 }
 
-// handleDayMarkdown sends the rich text response for a parameterized /课表
-// command and adds controls for the adjacent days.
-func handleDayMarkdown(ctx context.Context, env *Env, in *Inbound, r *Replier, day time.Time) error {
-	if env == nil {
-		return r.Reply(ctx, "课表功能未初始化。")
-	}
-	text, ok, err := env.RenderDayMarkdown(in, day)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return r.Reply(ctx, "当前会话还没有可展示的课程表。请先让成员导入课表，或在管理后台添加。")
-	}
-	return env.SendDayMarkdownWithKeyboard(ctx, in, r, scheduleParseResult(day)+text, dayNavigationKeyboard(day.Format("2006-01-02"), in.UserOpenID))
-}
-
-func scheduleParseResult(day time.Time) string {
-	weekdayNames := []string{"一", "二", "三", "四", "五", "六", "日"}
-	weekday := weekdayNames[(int(day.Weekday())+6)%7]
-	return fmt.Sprintf("**日期解析结果：%s（周%s）**\n\n", day.Format("2006-01-02"), weekday)
+// dayCaption is the markdown caption shown above a day schedule, e.g.
+// "2026-10-08 的课表：".
+func dayCaption(day time.Time) string {
+	return day.Format("2006-01-02") + " 的课表："
 }
 
 func toScheduleMentions(mentions []Mention) []schedule.Mention {

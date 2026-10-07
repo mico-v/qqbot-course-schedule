@@ -265,6 +265,30 @@ func TestInteractionIsAcknowledged(t *testing.T) {
 	}
 }
 
+func TestInteractionAcknowledgesInnerID(t *testing.T) {
+	router, fake := newTestRouter(t)
+
+	// The ack endpoint takes d.id, which differs from the envelope id used for
+	// passive replies.
+	postSigned(t, router, `{
+		"id": "ENVELOPE-1", "op": 0, "t": "INTERACTION_CREATE",
+		"d": {
+			"id": "INNER-1", "type": 11, "scene": "c2c",
+			"user_openid": "U1",
+			"data": {"resolved": {"button_id": "next", "button_data": "day:2026-09-18"}}
+		}
+	}`)
+
+	select {
+	case path := <-fake.ackCh:
+		if !strings.HasSuffix(path, "/interactions/INNER-1") {
+			t.Fatalf("acked path = %q", path)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for interaction ack")
+	}
+}
+
 func TestValidationOpcodeRespondsWithSignature(t *testing.T) {
 	router, _ := newTestRouter(t)
 
