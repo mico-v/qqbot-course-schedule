@@ -138,8 +138,8 @@ func (d *Dispatcher) process(payload Payload) {
 		defer ackCancel()
 		var data InteractionData
 		_ = json.Unmarshal(payload.D, &data)
-		// The interaction id lives in d.id (not the envelope id); the ack only
-		// accepts the interaction id while passive replies use the envelope id.
+		// d.id is the interaction id and is also the event id used for passive
+		// replies; PUT /interactions/{id} only accepts this id.
 		interactionID := firstNonEmpty(strings.TrimPrefix(data.ID, "INTERACTION_CREATE:"), payload.ID)
 		if err := d.client.AckInteraction(ackCtx, interactionID); err != nil {
 			slog.Error("互动事件应答失败", "id", shortID(interactionID), "err", err)
@@ -150,7 +150,7 @@ func (d *Dispatcher) process(payload Payload) {
 		defer callbackCancel()
 		d.handler.HandleCallback(callbackCtx, &bot.Callback{
 			Data:        data.Data.Resolved.ButtonData,
-			EventID:     payload.ID,
+			EventID:     interactionID,
 			GroupOpenID: data.GroupOpenID,
 			UserOpenID:  firstNonEmpty(data.GroupMemberOpenID, data.UserOpenID),
 		})
