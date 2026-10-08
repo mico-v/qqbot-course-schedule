@@ -107,3 +107,35 @@ func TestScheduleCommandWithDateSendsImageWithButtons(t *testing.T) {
 		t.Fatalf("reply must carry a keyboard: %+v", reply)
 	}
 }
+
+func TestScheduleCommandWithoutDateSendsImageOnly(t *testing.T) {
+	fake := newFakeQQ()
+	apiServer := httptest.NewServer(fake.handler())
+	t.Cleanup(apiServer.Close)
+	icsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(testICS))
+	}))
+	t.Cleanup(icsServer.Close)
+
+	env, base := newTestEnv(t, fake, apiServer.URL)
+	env.Buttons = true
+	handler := NewDefaultHandler(env)
+	ctx := context.Background()
+	freshImport := freshMessage(base)
+	if err := env.ImportICS(ctx, freshImport, NewReplier(freshImport, env.Client), Attachment{URL: icsServer.URL + "/s.ics", Filename: "s.ics"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = waitMessage(t, fake)
+
+	message := freshMessage(base)
+	message.Content = "/课表"
+	dispatch(ctx, env, handler, message)
+
+	reply := waitMessage(t, fake)
+	if msgType, _ := reply["msg_type"].(float64); msgType != 7 {
+		t.Fatalf("reply = %+v, want a plain media image", reply)
+	}
+	if keyboard, _ := reply["keyboard"].(map[string]any); keyboard != nil {
+		t.Fatalf("today's image must not carry buttons: %+v", reply)
+	}
+}

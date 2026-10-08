@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mico-v/qqbot-course-schedule/internal/qqapi"
 	"github.com/mico-v/qqbot-course-schedule/internal/schedule"
 	"github.com/mico-v/qqbot-course-schedule/internal/wakeup"
 )
@@ -163,9 +164,9 @@ func (h *Handler) handleScheduleCommand(ctx context.Context, in *Inbound, r *Rep
 		return r.Reply(ctx, message)
 	}
 	if day == nil {
-		return sendDayView(ctx, h.env, in, r, h.env.now(), false)
+		return sendDayView(ctx, h.env, in, r, h.env.now(), false, false)
 	}
-	return sendDayView(ctx, h.env, in, r, *day, true)
+	return sendDayView(ctx, h.env, in, r, *day, true, true)
 }
 
 func (h *Handler) handleImportCommand(ctx context.Context, in *Inbound, r *Replier) error {
@@ -392,9 +393,9 @@ func (h *Handler) handleSyncPanelCommand(ctx context.Context, in *Inbound, r *Re
 }
 
 // sendDayView sends one day's schedule in the configured format. withCaption
-// adds the "YYYY-MM-DD 的课表：" line above the image/markdown list; the
-// previous/next day navigation buttons are always attached.
-func sendDayView(ctx context.Context, env *Env, in *Inbound, r *Replier, day time.Time, withCaption bool) error {
+// adds the "YYYY-MM-DD 的课表：" line above the image/markdown list, and
+// withButtons attaches the previous/next day navigation buttons.
+func sendDayView(ctx context.Context, env *Env, in *Inbound, r *Replier, day time.Time, withCaption, withButtons bool) error {
 	if env == nil {
 		return r.Reply(ctx, "课表功能未初始化。")
 	}
@@ -402,7 +403,10 @@ func sendDayView(ctx context.Context, env *Env, in *Inbound, r *Replier, day tim
 	if withCaption {
 		caption = dayCaption(day)
 	}
-	keyboard := dayNavigationKeyboard(day.Format("2006-01-02"), in.UserOpenID)
+	var keyboard *qqapi.Keyboard
+	if withButtons {
+		keyboard = dayNavigationKeyboard(day.Format("2006-01-02"), in.UserOpenID)
+	}
 	if env.currentSettings().SendFormat == schedule.SendFormatMarkdown {
 		text, ok, err := env.RenderDayMarkdown(in, day)
 		if err != nil {

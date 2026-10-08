@@ -228,7 +228,7 @@ func (h *Handler) HandleCallback(ctx context.Context, cb *Callback) {
 		if err != nil {
 			return
 		}
-		if err := sendDayView(ctx, h.env, in, r, day, true); err != nil {
+		if err := sendDayView(ctx, h.env, in, r, day, true, true); err != nil {
 			slog.Error("按钮课表发送失败", "err", err)
 		}
 	case "rank":
