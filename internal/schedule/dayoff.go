@@ -8,16 +8,7 @@ import (
 	"time"
 )
 
-// Roll controls how a year-less date is resolved.
-type Roll int
-
-const (
-	// RollForward always points ahead (used when marking future days).
-	RollForward Roll = iota
-	// RollNearest picks the closest occurrence in either direction.
-	RollNearest
-)
-
+// relativeDays maps relative day words to their offset from today.
 var relativeDays = map[string]int{
 	"今天": 0, "今日": 0, "today": 0, "now": 0,
 	"明天": 1, "明日": 1, "tomorrow": 1,
@@ -31,7 +22,7 @@ var dayDeltaText = map[int]string{
 }
 
 // DayHint is the shared "how to write a date" help text.
-const DayHint = "支持 2026-09-17、9.17、9月17日、今天、明天、后天、昨天 等写法。"
+const DayHint = "支持 2026-09-17、9.17、9月17日、今天、明天、后天、昨天 等写法；未写年份时按学期解析（8 月 1 日为学期分界）。"
 
 var fillerTokens = map[string]bool{
 	"上": true, "按": true, "补": true, "调": true, "换": true,
@@ -53,8 +44,6 @@ var (
 	trailingParticleRe = regexp.MustCompile(`(?:的(?:课|课程|课程表)?|课|课程)+$`)
 )
 
-const yearSearchSpan = 4
-
 func dayAt(year int, month time.Month, day int) (time.Time, bool) {
 	value := time.Date(year, month, day, 0, 0, 0, 0, LocalTZ)
 	if value.Year() != year || value.Month() != month || value.Day() != day {
@@ -63,53 +52,10 @@ func dayAt(year int, month time.Month, day int) (time.Time, bool) {
 	return value, true
 }
 
-func yearCandidates(month time.Month, day int, today time.Time) []time.Time {
-	var candidates []time.Time
-	for offset := -yearSearchSpan; offset <= yearSearchSpan; offset++ {
-		if candidate, ok := dayAt(today.Year()+offset, month, day); ok {
-			candidates = append(candidates, candidate)
-		}
-	}
-	return candidates
-}
-
-func pickYear(candidates []time.Time, today time.Time, roll Roll) (time.Time, bool) {
-	if len(candidates) == 0 {
-		return time.Time{}, false
-	}
-	if roll == RollNearest {
-		best := candidates[0]
-		bestScore := absInt(int(best.Sub(today).Hours() / 24))
-		for _, candidate := range candidates[1:] {
-			score := absInt(int(candidate.Sub(today).Hours() / 24))
-			if score < bestScore || (score == bestScore && candidate.After(best)) {
-				best, bestScore = candidate, score
-			}
-		}
-		return best, true
-	}
-	var ahead []time.Time
-	for _, candidate := range candidates {
-		if !candidate.Before(today) {
-			ahead = append(ahead, candidate)
-		}
-	}
-	if len(ahead) > 0 {
-		sort.Slice(ahead, func(i, j int) bool { return ahead[i].Before(ahead[j]) })
-		return ahead[0], true
-	}
-	latest := candidates[0]
-	for _, candidate := range candidates[1:] {
-		if candidate.After(latest) {
-			latest = candidate
-		}
-	}
-	return latest, true
-}
-
 // ParseDayToken parses one token as a day. found is false when the token is not
 // date-shaped at all; err is set when it is date-shaped but invalid.
-func ParseDayToken(value string, today time.Time, roll Roll) (day time.Time, found bool, err error) {
+// A year-less date resolves inside today's academic year (Aug 1 boundary).
+func ParseDayToken(value string, today time.Time) (day time.Time, found bool, err error) {
 	raw := strings.TrimSpace(value)
 	if raw == "" {
 		return time.Time{}, false, nil
@@ -127,7 +73,7 @@ func ParseDayToken(value string, today time.Time, roll Roll) (day time.Time, fou
 	}
 	if matched := monthDayRe.FindStringSubmatch(raw); matched != nil {
 		month, dayOfMonth := atoi(matched[1]), atoi(matched[2])
-		parsed, ok := pickYear(yearCandidates(time.Month(month), dayOfMonth, today), beginningOfDay(today), roll)
+		parsed, ok := resolveAcademicYear(time.Month(month), dayOfMonth, beginningOfDay(today))
 		if !ok {
 			return time.Time{}, false, fmt.Errorf("日期“%s”不存在，请检查后重试。", raw)
 		}
@@ -136,8 +82,8 @@ func ParseDayToken(value string, today time.Time, roll Roll) (day time.Time, fou
 	return time.Time{}, false, nil
 }
 
-func looseDay(value string, today time.Time, roll Roll) (time.Time, bool) {
-	if parsed, found, err := ParseDayToken(value, today, roll); err == nil && found {
+func looseDay(value string, today time.Time) (time.Time, bool) {
+	if parsed, found, err := ParseDayToken(value, today); err == nil && found {
 		return parsed, true
 	}
 	trimmed := strings.TrimSpace(value)
@@ -145,19 +91,19 @@ func looseDay(value string, today time.Time, roll Roll) (time.Time, bool) {
 	if cleaned == "" || cleaned == trimmed {
 		return time.Time{}, false
 	}
-	if parsed, found, err := ParseDayToken(cleaned, today, roll); err == nil && found {
+	if parsed, found, err := ParseDayToken(cleaned, today); err == nil && found {
 		return parsed, true
 	}
 	return time.Time{}, false
 }
 
-func rangeDays(value string, today time.Time, roll Roll) ([]time.Time, bool, error) {
+func rangeDays(value string, today time.Time) ([]time.Time, bool, error) {
 	parts := splitNonEmpty(rangeSplitRe.Split(value, -1))
 	if len(parts) != 2 {
 		return nil, false, nil
 	}
-	start, startOK := looseDay(parts[0], today, roll)
-	end, endOK := looseDay(parts[1], today, roll)
+	start, startOK := looseDay(parts[0], today)
+	end, endOK := looseDay(parts[1], today)
 	if !startOK || !endOK {
 		return nil, false, nil
 	}
@@ -176,26 +122,7 @@ func rangeDays(value string, today time.Time, roll Roll) ([]time.Time, bool, err
 }
 
 // SplitDayOverrideArgs splits a command tail into days and remaining words.
-func SplitDayOverrideArgs(value string, today time.Time, roll Roll) ([]time.Time, []string, error) {
-	return splitDayOverrideArgs(value, today, func(int) Roll { return roll })
-}
-
-// SplitShiftArgs splits a /调休 tail into days and remaining words. The first
-// date (the day being overridden) rolls forward like a future marker, while
-// later dates (the source day) roll to the nearest occurrence, so "10-7"
-// entered on 10-08 means the 10-07 that just passed instead of next year's.
-func SplitShiftArgs(value string, today time.Time) ([]time.Time, []string, error) {
-	return splitDayOverrideArgs(value, today, func(index int) Roll {
-		if index == 0 {
-			return RollForward
-		}
-		return RollNearest
-	})
-}
-
-// splitDayOverrideArgs parses date tokens with a per-date roll mode, so a
-// command can mix a forward-looking target with a nearest-looking source.
-func splitDayOverrideArgs(value string, today time.Time, rollAt func(index int) Roll) ([]time.Time, []string, error) {
+func SplitDayOverrideArgs(value string, today time.Time) ([]time.Time, []string, error) {
 	var days []time.Time
 	var rest []string
 	joined := rangeJoinRe.ReplaceAllString(value, "$1")
@@ -204,8 +131,7 @@ func splitDayOverrideArgs(value string, today time.Time, rollAt func(index int) 
 		if token == "" || fillerTokens[token] {
 			continue
 		}
-		roll := rollAt(len(days))
-		ranged, isRange, err := rangeDays(token, today, roll)
+		ranged, isRange, err := rangeDays(token, today)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -213,13 +139,13 @@ func splitDayOverrideArgs(value string, today time.Time, rollAt func(index int) 
 			days = append(days, ranged...)
 			continue
 		}
-		if parsed, found, err := ParseDayToken(token, today, roll); err != nil {
+		if parsed, found, err := ParseDayToken(token, today); err != nil {
 			return nil, nil, err
 		} else if found {
 			days = append(days, parsed)
 			continue
 		}
-		if parsed, found := looseDay(token, today, roll); found {
+		if parsed, found := looseDay(token, today); found {
 			days = append(days, parsed)
 			continue
 		}
@@ -236,7 +162,7 @@ func splitDayOverrideArgs(value string, today time.Time, rollAt func(index int) 
 
 // SingleDayQuery resolves the /课表 argument to at most one day.
 func SingleDayQuery(value string, today time.Time) (day *time.Time, message string) {
-	days, rest, err := SplitDayOverrideArgs(value, today, RollNearest)
+	days, rest, err := SplitDayOverrideArgs(value, today)
 	if err != nil {
 		return nil, err.Error()
 	}
@@ -330,11 +256,4 @@ func atoi(value string) int {
 		result = result*10 + int(value[i]-'0')
 	}
 	return result
-}
-
-func absInt(value int) int {
-	if value < 0 {
-		return -value
-	}
-	return value
 }

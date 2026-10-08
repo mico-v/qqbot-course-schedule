@@ -19,7 +19,7 @@ func TestParseDayTokenRelativeAndAbsolute(t *testing.T) {
 		"9月1日":       "2026-09-01",
 	}
 	for input, want := range cases {
-		day, found, err := ParseDayToken(input, today, RollNearest)
+		day, found, err := ParseDayToken(input, today)
 		if err != nil || !found {
 			t.Errorf("ParseDayToken(%q) found=%v err=%v", input, found, err)
 			continue
@@ -30,35 +30,66 @@ func TestParseDayTokenRelativeAndAbsolute(t *testing.T) {
 	}
 }
 
-func TestParseDayTokenNearestRollsToClosestYear(t *testing.T) {
-	today := mustTime(t, "2006-01-02", "2026-09-17")
-	day, _, err := ParseDayToken("1.3", today, RollNearest)
-	if err != nil {
-		t.Fatalf("ParseDayToken: %v", err)
+func TestParseDayTokenResolvesWithinAcademicYear(t *testing.T) {
+	// Aug 1 is the academic-year boundary, so a year-less date lands in the
+	// academic year that contains today.
+	sept := mustTime(t, "2006-01-02", "2026-09-17")
+	for input, want := range map[string]string{
+		"1.3":  "2027-01-03",
+		"9.1":  "2026-09-01",
+		"8.1":  "2026-08-01",
+		"7.31": "2027-07-31",
+	} {
+		day, _, err := ParseDayToken(input, sept)
+		if err != nil {
+			t.Fatalf("ParseDayToken(%q): %v", input, err)
+		}
+		if got := day.Format("2006-01-02"); got != want {
+			t.Errorf("ParseDayToken(%q) = %s, want %s", input, got, want)
+		}
 	}
-	if got := day.Format("2006-01-02"); got != "2027-01-03" {
-		t.Errorf("1.3 nearest = %s, want 2027-01-03", got)
-	}
-	forward, _, _ := ParseDayToken("9.1", today, RollForward)
-	if got := forward.Format("2006-01-02"); got != "2027-09-01" {
-		t.Errorf("9.1 forward = %s, want 2027-09-01", got)
-	}
-	nearest, _, _ := ParseDayToken("9.1", today, RollNearest)
-	if got := nearest.Format("2006-01-02"); got != "2026-09-01" {
-		t.Errorf("9.1 nearest = %s, want 2026-09-01", got)
+
+	// In spring the same semester still covers the previous autumn.
+	spring := mustTime(t, "2006-01-02", "2027-03-15")
+	for input, want := range map[string]string{
+		"10-07": "2026-10-07",
+		"9.1":   "2026-09-01",
+		"3.20":  "2027-03-20",
+	} {
+		day, _, err := ParseDayToken(input, spring)
+		if err != nil {
+			t.Fatalf("ParseDayToken(%q): %v", input, err)
+		}
+		if got := day.Format("2006-01-02"); got != want {
+			t.Errorf("ParseDayToken(%q) = %s, want %s", input, got, want)
+		}
 	}
 }
 
 func TestParseDayTokenRejectsInvalidDate(t *testing.T) {
 	today := mustTime(t, "2006-01-02", "2026-09-17")
-	if _, _, err := ParseDayToken("2月30日", today, RollForward); err == nil {
+	if _, _, err := ParseDayToken("2月30日", today); err == nil {
 		t.Fatal("2月30日 should fail")
+	}
+}
+
+func TestAcademicYearHelpers(t *testing.T) {
+	aug := mustTime(t, "2006-01-02", "2026-08-01")
+	jul := mustTime(t, "2006-01-02", "2027-07-31")
+	if !SameAcademicYear(aug, jul) {
+		t.Fatal("2026-08-01 and 2027-07-31 should share an academic year")
+	}
+	if SameAcademicYear(jul, mustTime(t, "2006-01-02", "2027-08-01")) {
+		t.Fatal("2027-08-01 should start a new academic year")
+	}
+	if got := AcademicYearLabel(aug); got != "2026-2027" {
+		t.Errorf("label = %s", got)
 	}
 }
 
 func TestSplitDayOverrideArgs(t *testing.T) {
 	today := mustTime(t, "2006-01-02", "2026-09-17")
-	days, rest, err := SplitDayOverrideArgs("2026-10-01 @小明", today, RollForward)
+	days, rest, err := SplitDayOverrideArgs("2026-10-01 @小明", today)
 	if err != nil {
 		t.Fatalf("split: %v", err)
 	}
@@ -69,7 +100,7 @@ func TestSplitDayOverrideArgs(t *testing.T) {
 		t.Errorf("rest = %v", rest)
 	}
 
-	days, _, err = SplitDayOverrideArgs("10月1日至10月8日", today, RollForward)
+	days, _, err = SplitDayOverrideArgs("10月1日至10月8日", today)
 	if err != nil {
 		t.Fatalf("range: %v", err)
 	}
@@ -77,7 +108,7 @@ func TestSplitDayOverrideArgs(t *testing.T) {
 		t.Errorf("range days = %d, want 8", len(days))
 	}
 
-	days, _, err = SplitDayOverrideArgs("10月11日 上 10月8日 的课", today, RollForward)
+	days, _, err = SplitDayOverrideArgs("10月11日 上 10月8日 的课", today)
 	if err != nil {
 		t.Fatalf("particles: %v", err)
 	}
@@ -86,9 +117,9 @@ func TestSplitDayOverrideArgs(t *testing.T) {
 	}
 }
 
-func TestSplitShiftArgsRollsSourceNearest(t *testing.T) {
+func TestSplitDayOverrideArgsResolvesShiftInSemester(t *testing.T) {
 	today := mustTime(t, "2006-01-02", "2026-10-08")
-	days, rest, err := SplitShiftArgs("10-10 10-7", today)
+	days, rest, err := SplitDayOverrideArgs("10-10 10-7", today)
 	if err != nil {
 		t.Fatalf("shift args: %v", err)
 	}

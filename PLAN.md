@@ -135,7 +135,7 @@ schedule_day_overrides(scope_id, user_id, day, kind,
 | `MAX_MEMBERS_PER_CREATE` | 200 | 批量建课表上限 |
 | `MAX_DAY_OVERRIDES_PER_SCOPE` | 1000 | 单会话标记总数 |
 | `MAX_DAY_OVERRIDE_RANGE_DAYS` | 180 | 单次 `/休假` 可标记天数 |
-| `MAX_DAY_OVERRIDE_SPAN_DAYS` | 366 | 调休来源日与目标日最大间隔 |
+| 学期分界 | 8 月 1 日 | 未写年份的日期解析到参考日期所在学期；调休来源/目标必须在同一学期 |
 | 文本长度 | course/location/name ≤200，description ≤2000，rrule ≤500 | 创建/修改/WebUI 统一校验 |
 
 #### F1.5 时间规则
@@ -146,6 +146,7 @@ schedule_day_overrides(scope_id, user_id, day, kind,
 | 事件内部格式 | `DTSTART/DTEND` 归一化为 `YYYYMMDDTHHMMSS`，另存 `*_TZID` |
 | 时间戳字段 | `updated_at` 等记账字段用 UTC ISO（`_now_iso`） |
 | 日期解析入口 | **只有两个**：`day_off`（按天，支持相对词/范围）与 `time_range`（区间表达式），不得新增第三个 |
+| 学期制度 | 以本地 8 月 1 日为分界；不带年份的日期解析到参考日期所在学期（`AcademicYearStart`/`SameAcademicYear`） |
 
 ### F2 成员与课程事件管理
 
@@ -203,7 +204,7 @@ schedule_day_overrides(scope_id, user_id, day, kind,
 | `/课表 [日期]` | 指定日期卡片；不带参数等于今天 |
 
 日期写法：`2026-09-17`、`2026/9/17`、`2026年9月17日`、`9.17`、`9月17日`、`前天/昨天/今天/明天/后天/大后天`，带虚词（"明天的课"）也可。
-规则：不带年份取离今天最近的一次；一次只能查一天；日期范围或多个日期报错并提示单日写法。
+规则：不带年份的日期按学期（8 月 1 日分界）解析到参考日期所在学期，不再取“离今天最近”或“向后滚”；一次只能查一天；日期范围或多个日期报错并提示单日写法。
 
 #### F3.2 成员状态机（`daily_member_rows`）
 

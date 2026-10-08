@@ -214,21 +214,14 @@ func (h *Handler) handleOverrideSet(ctx context.Context, in *Inbound, r *Replier
 		return r.Reply(ctx, "课表功能未初始化。")
 	}
 	today := env.now()
-	var days []time.Time
-	var rest []string
-	var err error
-	if kind == schedule.DayOverrideShift {
-		days, rest, err = schedule.SplitShiftArgs(in.Args, today)
-	} else {
-		days, rest, err = schedule.SplitDayOverrideArgs(in.Args, today, schedule.RollForward)
-	}
+	days, rest, err := schedule.SplitDayOverrideArgs(in.Args, today)
 	if err != nil {
 		return r.Reply(ctx, err.Error())
 	}
 	person := strings.Join(rest, " ")
 	if len(days) == 0 {
 		if kind == schedule.DayOverrideShift {
-			return r.Reply(ctx, "请提供两个日期：/调休 <被覆盖的日期> <来源日期> [成员]，例如 /调休 2026-10-11 2026-10-08 表示 10 月 11 日按 10 月 8 日的课程上课。")
+			return r.Reply(ctx, "请提供两个日期：/调休 <被覆盖的日期> <来源日期> [成员]，例如 /调休 2026-10-11 2026-10-08 表示 10 月 11 日按 10 月 8 日的课程上课（两个日期需在同一学期内）。")
 		}
 		return r.Reply(ctx, "请提供日期：/休假 <日期> [成员]，例如 /休假 2026-10-01，也可以使用 今天、明天 或 10月1日至10月8日。")
 	}
@@ -264,7 +257,7 @@ func (h *Handler) handleCancelDayOffCommand(ctx context.Context, in *Inbound, r 
 	if env == nil {
 		return r.Reply(ctx, "课表功能未初始化。")
 	}
-	days, rest, err := schedule.SplitDayOverrideArgs(in.Args, env.now(), schedule.RollForward)
+	days, rest, err := schedule.SplitDayOverrideArgs(in.Args, env.now())
 	if err != nil {
 		return r.Reply(ctx, err.Error())
 	}

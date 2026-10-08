@@ -516,8 +516,8 @@ func (s *Service) SetWebDayOverride(scopeID, userID, day, kind, sourceDay, actor
 		if sameDay(parsed, target) {
 			return fmt.Errorf("调休的来源日期不能和调休日期相同。")
 		}
-		if absInt(int(parsed.Sub(target).Hours()/24)) > schedule.MaxDayOverrideSpanDays {
-			return fmt.Errorf("调休的来源日期与目标日期相差不能超过 %d 天。", schedule.MaxDayOverrideSpanDays)
+		if !schedule.SameAcademicYear(parsed, target) {
+			return fmt.Errorf("调休只能在同一个学期内进行（8 月 1 日为学期分界）。")
 		}
 		source = &parsed
 	}
@@ -610,11 +610,4 @@ func sameDay(left, right time.Time) bool {
 	left = left.In(schedule.LocalTZ)
 	right = right.In(schedule.LocalTZ)
 	return left.Year() == right.Year() && left.YearDay() == right.YearDay()
-}
-
-func absInt(value int) int {
-	if value < 0 {
-		return -value
-	}
-	return value
 }

@@ -174,9 +174,9 @@ func (s *Service) SetDayOverrides(scopeID string, targets []string, days []time.
 			if sameDay(day, *sourceDay) {
 				return "", fmt.Errorf("调休的来源日期不能和调休日期相同。")
 			}
-		}
-		if absInt(int(sourceDay.Sub(days[0]).Hours()/24)) > MaxDayOverrideSpanDays {
-			return "", fmt.Errorf("调休的来源日期与目标日期相差不能超过 %d 天。", MaxDayOverrideSpanDays)
+			if !SameAcademicYear(day, *sourceDay) {
+				return "", fmt.Errorf("调休只能在同一个学期内进行（8 月 1 日为学期分界，当前学期 %s）。", AcademicYearLabel(day))
+			}
 		}
 	}
 

@@ -99,6 +99,7 @@ qqbot-course-schedule/
 │   │   ├── encoding.go          #   UTF-8/UTF-16/GBK 解码与内容嗅探
 │   │   ├── occurrence.go        #   RRULE/RDATE/EXDATE 展开 + 休假调休
 │   │   ├── dayoff.go            #   中文日期/范围解析
+│   │   ├── academicyear.go      #   学期（8/1 分界）计算与同季判断
 │   │   ├── timerange.go         #   区间表达式解析
 │   │   ├── daycard.go           #   每日状态行、收纳拆分、区间合并
 │   │   ├── rank.go              #   时长榜口径
@@ -436,6 +437,7 @@ JSON 键名沿用，便于对照与手工排查。签到记录是 Go 版新增�
 
 - **时区**：`schedule.LocalTZ = Asia/Shanghai`，全项目唯一；日界 = 本地 00:00（`[start, end)`）。
 - **日期解析只有两个入口**：`dayoff`（天/范围，含相对词）与 `timerange`（区间表达式）；新需求必须扩展这两个，不得新写解析器。
+- **学期制度**：以本地 8 月 1 日为分界（`academicyear.go`）；不带年份的日期解析到参考日期所在学期，调休的来源/目标必须 `SameAcademicYear`。
 - **ICS**：解析保留 `RAW_ICAL` 与未知属性；序列化时复用原文件非 VEVENT 部分。
 - **occurrence**：展开使用 `rrule.Between(start, end, true)` 有界展开；应用覆盖后再返回；跨天事件在统计与展示时都按窗口裁剪。
 - **course_id**：位置索引，任何写入前必须重排并按 DTSTART 顺序；对外接口只保证"查询结果里的 id 在最近一次写入前有效"。

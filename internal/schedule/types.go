@@ -25,7 +25,6 @@ const (
 	MaxMembersPerCreate     = 200
 	MaxDayOverridesPerScope = 1000
 	MaxDayOverrideRangeDays = 180
-	MaxDayOverrideSpanDays  = 366
 	MaxCourseNameLength     = 200
 	MaxDescriptionLength    = 2000
 	MaxRRuleLength          = 500
