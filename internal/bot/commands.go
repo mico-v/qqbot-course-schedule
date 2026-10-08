@@ -214,7 +214,14 @@ func (h *Handler) handleOverrideSet(ctx context.Context, in *Inbound, r *Replier
 		return r.Reply(ctx, "课表功能未初始化。")
 	}
 	today := env.now()
-	days, rest, err := schedule.SplitDayOverrideArgs(in.Args, today, schedule.RollForward)
+	var days []time.Time
+	var rest []string
+	var err error
+	if kind == schedule.DayOverrideShift {
+		days, rest, err = schedule.SplitShiftArgs(in.Args, today)
+	} else {
+		days, rest, err = schedule.SplitDayOverrideArgs(in.Args, today, schedule.RollForward)
+	}
 	if err != nil {
 		return r.Reply(ctx, err.Error())
 	}

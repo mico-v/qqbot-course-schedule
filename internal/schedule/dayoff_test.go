@@ -86,6 +86,23 @@ func TestSplitDayOverrideArgs(t *testing.T) {
 	}
 }
 
+func TestSplitShiftArgsRollsSourceNearest(t *testing.T) {
+	today := mustTime(t, "2006-01-02", "2026-10-08")
+	days, rest, err := SplitShiftArgs("10-10 10-7", today)
+	if err != nil {
+		t.Fatalf("shift args: %v", err)
+	}
+	if len(days) != 2 || len(rest) != 0 {
+		t.Fatalf("days = %v rest = %v", days, rest)
+	}
+	if got := days[0].Format("2006-01-02"); got != "2026-10-10" {
+		t.Errorf("target = %s, want 2026-10-10", got)
+	}
+	if got := days[1].Format("2006-01-02"); got != "2026-10-07" {
+		t.Errorf("source = %s, want 2026-10-07", got)
+	}
+}
+
 func TestSingleDayQuery(t *testing.T) {
 	today := mustTime(t, "2006-01-02", "2026-09-17")
 	day, message := SingleDayQuery("", today)

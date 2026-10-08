@@ -177,6 +177,25 @@ func rangeDays(value string, today time.Time, roll Roll) ([]time.Time, bool, err
 
 // SplitDayOverrideArgs splits a command tail into days and remaining words.
 func SplitDayOverrideArgs(value string, today time.Time, roll Roll) ([]time.Time, []string, error) {
+	return splitDayOverrideArgs(value, today, func(int) Roll { return roll })
+}
+
+// SplitShiftArgs splits a /调休 tail into days and remaining words. The first
+// date (the day being overridden) rolls forward like a future marker, while
+// later dates (the source day) roll to the nearest occurrence, so "10-7"
+// entered on 10-08 means the 10-07 that just passed instead of next year's.
+func SplitShiftArgs(value string, today time.Time) ([]time.Time, []string, error) {
+	return splitDayOverrideArgs(value, today, func(index int) Roll {
+		if index == 0 {
+			return RollForward
+		}
+		return RollNearest
+	})
+}
+
+// splitDayOverrideArgs parses date tokens with a per-date roll mode, so a
+// command can mix a forward-looking target with a nearest-looking source.
+func splitDayOverrideArgs(value string, today time.Time, rollAt func(index int) Roll) ([]time.Time, []string, error) {
 	var days []time.Time
 	var rest []string
 	joined := rangeJoinRe.ReplaceAllString(value, "$1")
@@ -185,6 +204,7 @@ func SplitDayOverrideArgs(value string, today time.Time, roll Roll) ([]time.Time
 		if token == "" || fillerTokens[token] {
 			continue
 		}
+		roll := rollAt(len(days))
 		ranged, isRange, err := rangeDays(token, today, roll)
 		if err != nil {
 			return nil, nil, err
