@@ -170,3 +170,25 @@ func TestEventDatetimesFallback(t *testing.T) {
 		t.Errorf("all-day duration = %v, ok=%v", end.Sub(start), ok)
 	}
 }
+
+func TestSortEventsTieBreaksByEnd(t *testing.T) {
+	long := Event{"SUMMARY": "长", "DTSTART": "20260901T080000", "DTEND": "20260901T100000"}
+	short := Event{"SUMMARY": "短", "DTSTART": "20260901T080000", "DTEND": "20260901T090000"}
+	events := []Event{long, short}
+	SortEvents(events)
+	if events[0]["SUMMARY"] != "短" || events[1]["SUMMARY"] != "长" {
+		t.Errorf("order = %q, %q; want 短, 长", events[0]["SUMMARY"], events[1]["SUMMARY"])
+	}
+}
+
+func TestSortEventsComparesInstants(t *testing.T) {
+	// 2026-09-01T23:00Z is 2026-09-02 07:00 in Asia/Shanghai, so it must sort
+	// after the local 06:00 class even though its raw DTSTART string is smaller.
+	utfLate := Event{"SUMMARY": "UTC晚", "DTSTART": "20260901T230000Z", "DTEND": "20260902T000000Z"}
+	localEarly := Event{"SUMMARY": "本地早", "DTSTART": "20260902T060000", "DTEND": "20260902T070000"}
+	events := []Event{utfLate, localEarly}
+	SortEvents(events)
+	if events[0]["SUMMARY"] != "本地早" || events[1]["SUMMARY"] != "UTC晚" {
+		t.Errorf("order = %q, %q; want 本地早, UTC晚", events[0]["SUMMARY"], events[1]["SUMMARY"])
+	}
+}

@@ -17,6 +17,14 @@ type Occurrence struct {
 	ShiftedFrom string // source day "2006-01-02" when produced by a 调休 marker
 }
 
+// lessOccurrence orders occurrences by start time first, then by end time.
+func lessOccurrence(left, right Occurrence) bool {
+	if !left.Start.Equal(right.Start) {
+		return left.Start.Before(right.Start)
+	}
+	return left.End.Before(right.End)
+}
+
 // EventDatetimes returns the event start and end in local time.
 func EventDatetimes(event Event) (time.Time, time.Time, bool) {
 	start, ok := ParseICSTime(event["DTSTART"], event["DTSTART_TZID"])
@@ -79,7 +87,7 @@ func ExpandEventOccurrences(event Event, startBound, endBound time.Time) []Occur
 			result = append(result, Occurrence{Event: event, Start: occurrenceStart, End: occurrenceEnd})
 		}
 	}
-	sort.SliceStable(result, func(i, j int) bool { return result[i].Start.Before(result[j].Start) })
+	sort.SliceStable(result, func(i, j int) bool { return lessOccurrence(result[i], result[j]) })
 	return result
 }
 
@@ -150,12 +158,7 @@ func ExpandIndexedOccurrences(events []Event, overrides map[string]DayOverride, 
 		}
 	}
 
-	sort.SliceStable(indexed, func(i, j int) bool {
-		if indexed[i].Start.Equal(indexed[j].Start) {
-			return indexed[i].End.Before(indexed[j].End)
-		}
-		return indexed[i].Start.Before(indexed[j].Start)
-	})
+	sort.SliceStable(indexed, func(i, j int) bool { return lessOccurrence(indexed[i], indexed[j]) })
 	return indexed
 }
 

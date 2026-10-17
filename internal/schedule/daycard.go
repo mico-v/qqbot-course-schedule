@@ -54,7 +54,7 @@ func DailyMemberRows(members map[string]*Member, target time.Time, now time.Time
 			continue
 		}
 		occurrences := ExpandMemberOccurrences(member, startBound, endBound)
-		sort.SliceStable(occurrences, func(i, j int) bool { return occurrences[i].Start.Before(occurrences[j].Start) })
+		sort.SliceStable(occurrences, func(i, j int) bool { return lessOccurrence(occurrences[i], occurrences[j]) })
 
 		override := member.DayOverrides[target.Format("2006-01-02")]
 		holiday := override.Kind == DayOverrideHoliday
@@ -233,7 +233,7 @@ func MarkdownDayList(members map[string]*Member, selected, now time.Time) string
 			folded = append(folded, name)
 			continue
 		}
-		sort.SliceStable(occurrences, func(i, j int) bool { return occurrences[i].Start.Before(occurrences[j].Start) })
+		sort.SliceStable(occurrences, func(i, j int) bool { return lessOccurrence(occurrences[i], occurrences[j]) })
 
 		header := "**" + name + "**"
 		if override.Kind == DayOverrideShift && override.SourceDay != "" {

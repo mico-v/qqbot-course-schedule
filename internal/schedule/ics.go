@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -345,17 +346,44 @@ func componentToEvent(component icsComponent) Event {
 	return event
 }
 
-// SortEvents orders events by start time and end time.
+// SortEvents orders events by start time first, then by end time. Times are
+// compared as parsed instants so events carrying different TZIDs or DATE-only
+// values still come out in true chronological order.
 func SortEvents(events []Event) {
-	for i := 1; i < len(events); i++ {
-		for j := i; j > 0; j-- {
-			left, right := events[j-1], events[j]
-			if left["DTSTART"] < right["DTSTART"] ||
-				(left["DTSTART"] == right["DTSTART"] && left["DTEND"] <= right["DTEND"]) {
-				break
-			}
-			events[j-1], events[j] = events[j], events[j-1]
+	type sortKey struct {
+		event   Event
+		start   time.Time
+		end     time.Time
+		hasTime bool
+	}
+	keys := make([]sortKey, len(events))
+	for index, event := range events {
+		key := sortKey{event: event}
+		if start, end, ok := EventDatetimes(event); ok {
+			key.start, key.end, key.hasTime = start, end, true
 		}
+		keys[index] = key
+	}
+	sort.SliceStable(keys, func(i, j int) bool {
+		left, right := keys[i], keys[j]
+		if left.hasTime && right.hasTime {
+			if !left.start.Equal(right.start) {
+				return left.start.Before(right.start)
+			}
+			return left.end.Before(right.end)
+		}
+		if left.hasTime != right.hasTime {
+			// Keep events without a usable start time at the end.
+			return left.hasTime
+		}
+		// Neither side parses; fall back to a deterministic string order.
+		if left.event["DTSTART"] != right.event["DTSTART"] {
+			return left.event["DTSTART"] < right.event["DTSTART"]
+		}
+		return left.event["DTEND"] < right.event["DTEND"]
+	})
+	for index := range keys {
+		events[index] = keys[index].event
 	}
 }
 
