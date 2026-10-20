@@ -28,12 +28,13 @@ if grep -q 'internal/store' <<<"$admin_deps"; then
 	fail "架构边界违规：admin 只能依赖 Storage 端口，不得依赖 store 适配器"
 fi
 
-for pkg in $(go list ./internal/...); do
-	deps="$(go list -deps "$pkg")"
-	if grep -q 'gin-gonic' <<<"$deps" && grep -q 'modernc.org/sqlite$' <<<"$deps"; then
+# One go list call returns "pkg dep dep ..." per package. The old per-package
+# loop ran `go list -deps` 11 times and dominated this script's runtime.
+while read -r pkg deps; do
+	if [[ " $deps " == *"gin-gonic"* && " $deps " == *" modernc.org/sqlite "* ]]; then
 		fail "架构边界违规：$pkg 同时依赖 gin 与 sqlite"
 	fi
-done
+done < <(go list -f '{{.ImportPath}} {{join .Deps " "}}' ./internal/...)
 
 server_deps="$(go list -deps ./internal/server)"
 if grep -q 'internal/webhook' <<<"$server_deps"; then

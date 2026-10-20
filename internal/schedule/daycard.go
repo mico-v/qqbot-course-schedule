@@ -28,6 +28,7 @@ type DayRow struct {
 	OverrideNote    string
 	SortPriority    int
 	SortTime        float64
+	SortEnd         float64
 }
 
 // DailyMemberRows builds one status row per member on the selected day.
@@ -99,6 +100,7 @@ func DailyMemberRows(members map[string]*Member, target time.Time, now time.Time
 			row.Countdown = "当天课程全部取消"
 			row.SortPriority = 3
 			row.SortTime = math.Inf(1)
+			row.SortEnd = math.Inf(1)
 		case active != nil:
 			featured = active
 			row.StatusKey = "active"
@@ -108,6 +110,7 @@ func DailyMemberRows(members map[string]*Member, target time.Time, now time.Time
 			row.Progress = clamp01(current.Sub(active.Start).Seconds() / math.Max(1, active.End.Sub(active.Start).Seconds()))
 			row.SortPriority = 0
 			row.SortTime = float64(active.Start.UnixNano()) / 1e9
+			row.SortEnd = float64(active.End.UnixNano()) / 1e9
 		case upcoming != nil:
 			featured = upcoming
 			row.StatusKey = "upcoming"
@@ -116,6 +119,7 @@ func DailyMemberRows(members map[string]*Member, target time.Time, now time.Time
 			row.Countdown = FormatRemaining(upcoming.Start.Sub(current))
 			row.SortPriority = 1
 			row.SortTime = float64(upcoming.Start.UnixNano()) / 1e9
+			row.SortEnd = float64(upcoming.End.UnixNano()) / 1e9
 		case len(occurrences) > 0 && !target.After(beginningOfDay(current)):
 			featured = &occurrences[len(occurrences)-1]
 			row.StatusKey = "finished"
@@ -124,7 +128,8 @@ func DailyMemberRows(members map[string]*Member, target time.Time, now time.Time
 			row.Countdown = pickText(isToday, "今天的课程都上完啦", "这一天的课程都上完啦")
 			row.Progress = 1
 			row.SortPriority = 2
-			row.SortTime = -float64(featured.End.UnixNano()) / 1e9
+			row.SortTime = float64(featured.Start.UnixNano()) / 1e9
+			row.SortEnd = float64(featured.End.UnixNano()) / 1e9
 		case len(occurrences) > 0:
 			featured = &occurrences[0]
 			row.StatusKey = "upcoming"
@@ -133,6 +138,7 @@ func DailyMemberRows(members map[string]*Member, target time.Time, now time.Time
 			row.Countdown = FormatRemaining(featured.Start.Sub(current))
 			row.SortPriority = 1
 			row.SortTime = float64(featured.Start.UnixNano()) / 1e9
+			row.SortEnd = float64(featured.End.UnixNano()) / 1e9
 		default:
 			row.StatusKey = "none"
 			row.Status = pickText(isToday, "今日无课", "当天无课")
@@ -140,6 +146,7 @@ func DailyMemberRows(members map[string]*Member, target time.Time, now time.Time
 			row.Countdown = "休息日，安排得明明白白"
 			row.SortPriority = 3
 			row.SortTime = math.Inf(1)
+			row.SortEnd = math.Inf(1)
 		}
 
 		switch {
@@ -173,6 +180,9 @@ func DailyMemberRows(members map[string]*Member, target time.Time, now time.Time
 		}
 		if left.SortTime != right.SortTime {
 			return left.SortTime < right.SortTime
+		}
+		if left.SortEnd != right.SortEnd {
+			return left.SortEnd < right.SortEnd
 		}
 		if leftName, rightName := strings.ToLower(left.Name), strings.ToLower(right.Name); leftName != rightName {
 			return leftName < rightName

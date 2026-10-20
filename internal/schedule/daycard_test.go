@@ -85,6 +85,24 @@ func TestDailyMemberRowsFinishedAndFolded(t *testing.T) {
 	}
 }
 
+func TestDailyMemberRowsOrdersByStartThenEnd(t *testing.T) {
+	day := "2026-09-17"
+	now := mustTime(t, "2006-01-02 15:04", day+" 10:00")
+	members := map[string]*Member{
+		"late-start": memberWithEvents(t, "late-start", "晚开", eventOn(t, day, "09:30", "11:00", "晚开")),
+		"long":       memberWithEvents(t, "long", "长课", eventOn(t, day, "09:00", "12:00", "长课")),
+		"short":      memberWithEvents(t, "short", "短课", eventOn(t, day, "09:00", "10:30", "短课")),
+	}
+	rows := DailyMemberRows(members, mustTime(t, "2006-01-02", day), now, nil)
+	got := []string{rows[0].UserID, rows[1].UserID, rows[2].UserID}
+	want := []string{"short", "long", "late-start"}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("order = %v, want %v", got, want)
+		}
+	}
+}
+
 func TestMergeIntervals(t *testing.T) {
 	base := mustTime(t, "2006-01-02 15:04", "2026-09-17 08:00")
 	intervals := [][2]time.Time{
