@@ -343,10 +343,6 @@ msg.Keyboard(kb)
     `POST /api/overrides/delete`（`scope_id`/`user_id`/`day`）
   - 服务端复用 `admin.Service.SetWebDayOverride`/`DeleteWebDayOverride`，与机器人指令共享同一张表与校验
     （类型、来源日期、上限），`created_by` 记为 `webui`
-- 签到记录（`internal/server/checkins.go`）：
-  - `GET /api/checkins?scope_id=` 返回该会话每人总分/天数与最近记录（带成员显示名）
-  - `POST /api/checkins/delete`（`scope_id`/`user_id`/`day`）删除某天记录，积分随之扣回；
-    服务端复用 `admin.Service.WebCheckinBoard`/`DeleteWebCheckin`，与 `/签到` `/积分` 共享服务层
 - 机器人设置面板含「机器人昵称」：写入 `settings/bot` 的 `nickname`，渲染时由
   `render.DayCardData.BotName` 画在卡片右上角（空值只显示头像）
 - 批量导入/导出（`internal/server/transfer.go`）：
@@ -384,20 +380,19 @@ created, updated, err := bot.SyncPanels(ctx, env, handler)
 ### 7.1 表结构
 
 见 [PLAN.md F1.2](PLAN.md#f12-数据表照搬原插件-schema语义等价)。Go 版字段与 Python 版保持一致，
-JSON 键名沿用，便于对照与手工排查。签到记录是 Go 版新增表 `checkin_records`
-（`scope_id` + `user_id` + `day` 主键，`points`/`created_at`）。
+JSON 键名沿用，便于对照与手工排查。
 
 ### 7.2 写入语义
 
 - `PutMember`：`begin immediate` → 更新成员行（revision CAS）→ 删除旧事件 → 批量插入新事件 → 提交。
 - 派生字段（`ics/schedule/event_count/updated_at/...`）由服务层计算后一并写入。
 - 覆盖标记读取顺序：先取 `*` 行，再用成员行覆盖同 `day`。
-- 签到写入用 `INSERT OR IGNORE`：同一天重复签到返回已有记录（`Already=true`），不会重复加分。
 
 ### 7.3 迁移策略
 
 - `metadata.schema_version` 从 2 起（对齐 Python 版），每次升级递增。
 - 提供 `store.Migrate()`，启动时执行；迁移必须幂等。
+- schema v5 删除已下线的 `checkin_records` 表。
 - **不做** Python 数据自动迁移：OpenID 与 QQ 号无法对应，用户重新导入 ICS 即可。
 
 ---

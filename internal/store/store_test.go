@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -16,6 +17,50 @@ func newTestStore(t *testing.T) *Store {
 	}
 	t.Cleanup(func() { store.Close() })
 	return store
+}
+
+func TestOpenDropsLegacyCheckinTable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE checkin_records (
+		scope_id TEXT NOT NULL,
+		user_id TEXT NOT NULL,
+		day TEXT NOT NULL,
+		PRIMARY KEY (scope_id, user_id, day)
+	)`); err != nil {
+		db.Close()
+		t.Fatalf("create legacy table: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close legacy database: %v", err)
+	}
+
+	store, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	var table string
+	err = store.db.QueryRow(
+		`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'checkin_records'`,
+	).Scan(&table)
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("legacy check-in table still exists: name=%q err=%v", table, err)
+	}
+
+	var version string
+	if err := store.db.QueryRow(
+		`SELECT value FROM metadata WHERE key = 'schema_version'`,
+	).Scan(&version); err != nil {
+		t.Fatalf("read schema version: %v", err)
+	}
+	if version != "5" {
+		t.Fatalf("schema version = %q, want 5", version)
+	}
 }
 
 func TestPutMemberRevisionLifecycle(t *testing.T) {

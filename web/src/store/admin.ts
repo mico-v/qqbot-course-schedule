@@ -3,9 +3,6 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { ApiError, apiGet, apiPost, downloadFile } from "../api";
 import type {
   BotSettings,
-  CheckinBoard,
-  CheckinRecord,
-  CheckinTotal,
   DayOverrideRow,
   ImportResult,
   PageSchedule,
@@ -22,8 +19,6 @@ export const state = reactive({
   selectedUserId: "",
   schedule: null as PageSchedule | null,
   overrides: [] as DayOverrideRow[],
-  checkinTotals: [] as CheckinTotal[],
-  checkinRecords: [] as CheckinRecord[],
   dirty: false,
   calendarWeekStart: startOfWeek(new Date()),
   search: "",
@@ -101,8 +96,6 @@ export function selectScope(scope: Scope): void {
   state.selectedUserId = "";
   state.schedule = null;
   state.overrides = [];
-  state.checkinTotals = [];
-  state.checkinRecords = [];
   state.dirty = false;
 }
 
@@ -122,7 +115,7 @@ export async function selectMember(scopeId: string, userId: string): Promise<voi
     state.selectedUserId = userId;
     state.calendarWeekStart = initialWeekStart(schedule.events || []);
     state.dirty = false;
-    await Promise.all([loadOverrides(scopeId), loadCheckins(scopeId)]);
+    await loadOverrides(scopeId);
   } catch (error) {
     ElMessage.error(errorMessage(error));
   }
@@ -146,7 +139,7 @@ export async function refresh(): Promise<void> {
     await loadScopes();
     if (state.selectedScopeId && state.selectedUserId) {
       await reloadSelectedMember();
-      await Promise.all([loadOverrides(state.selectedScopeId), loadCheckins(state.selectedScopeId)]);
+      await loadOverrides(state.selectedScopeId);
     }
   } catch (error) {
     ElMessage.error(errorMessage(error));
@@ -259,45 +252,6 @@ export async function deleteOverride(row: DayOverrideRow): Promise<void> {
     });
     ElMessage.success(`已删除 ${row.day} 的标记。`);
     await loadOverrides(scopeId);
-  } catch (error) {
-    ElMessage.error(errorMessage(error));
-  }
-}
-
-export async function loadCheckins(scopeId: string): Promise<void> {
-  try {
-    const data = await apiGet<CheckinBoard>("/api/checkins", { scope_id: scopeId });
-    if (state.selectedScopeId !== scopeId) return;
-    state.checkinTotals = data.totals || [];
-    state.checkinRecords = data.records || [];
-  } catch (error) {
-    if (state.selectedScopeId !== scopeId) return;
-    state.checkinTotals = [];
-    state.checkinRecords = [];
-    ElMessage.error(errorMessage(error));
-  }
-}
-
-export async function deleteCheckin(row: CheckinRecord): Promise<void> {
-  const scopeId = state.selectedScopeId;
-  if (!scopeId) return;
-  try {
-    await ElMessageBox.confirm(
-      `删除 ${row.name || row.user_id} 在 ${row.day} 的签到记录（-${row.points} 分）？`,
-      "删除签到记录",
-      { type: "warning", confirmButtonText: "删除", cancelButtonText: "取消" },
-    );
-  } catch {
-    return;
-  }
-  try {
-    await apiPost("/api/checkins/delete", {
-      scope_id: scopeId,
-      user_id: row.user_id,
-      day: row.day,
-    });
-    ElMessage.success(`已删除 ${row.day} 的签到记录。`);
-    await loadCheckins(scopeId);
   } catch (error) {
     ElMessage.error(errorMessage(error));
   }

@@ -19,7 +19,6 @@ import {
 import type { ImportResult } from "../types";
 import CourseDialog from "./CourseDialog.vue";
 import OverridePanel from "./OverridePanel.vue";
-import CheckinPanel from "./CheckinPanel.vue";
 import WeekCalendar from "./WeekCalendar.vue";
 
 const saving = ref(false);
@@ -161,10 +160,7 @@ function onCalendarAdd(defaults: { date: string; startTime: string; endTime: str
       @edit="openEditCourse"
     />
 
-    <div class="bottom-grid">
-      <OverridePanel />
-      <CheckinPanel />
-    </div>
+    <OverridePanel />
 
     <CourseDialog
       v-model:visible="courseDialogVisible"
@@ -267,12 +263,6 @@ function onCalendarAdd(defaults: { date: string; startTime: string; endTime: str
 
 .file-input {
   display: none;
-}
-
-.bottom-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
-  gap: 16px;
 }
 
 @media (max-width: 720px) {

@@ -123,7 +123,6 @@ func TestDefaultHandlerRegistersCommands(t *testing.T) {
 		"/上课时长榜", "/休假", "/调休", "/销假", "/假期",
 		"/同步面板", "/nickname",
 		"/绑定QQ", "/解绑QQ",
-		"/签到", "/积分",
 	}
 	for _, prefix := range expected {
 		if _, ok := handler.Command(prefix); !ok {

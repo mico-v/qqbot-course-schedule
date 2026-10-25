@@ -67,7 +67,7 @@ func TestGlobalStorageSharesScheduleByUnionOpenID(t *testing.T) {
 	}
 }
 
-func TestGlobalOverridesAndCheckinsKeepScopeBoundaries(t *testing.T) {
+func TestGlobalOverridesKeepScopeBoundaries(t *testing.T) {
 	service, _ := newService(t)
 	enableGlobalStorage(t, service)
 	groupOne := schedule.ScopeGroup("G1")
@@ -125,16 +125,6 @@ func TestGlobalOverridesAndCheckinsKeepScopeBoundaries(t *testing.T) {
 		t.Fatalf("scope-wide clear text = %q", text)
 	}
 
-	if _, err := service.Checkin(groupOne, "U1", "小明", two, 5); err != nil {
-		t.Fatal(err)
-	}
-	otherStatus, err := service.CheckinStatus(groupTwo, "U1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if otherStatus.Total != 0 || otherStatus.Days != 0 {
-		t.Fatalf("check-in leaked across groups: %+v", otherStatus)
-	}
 }
 
 func TestStorageModeNormalizationAndIdentityMap(t *testing.T) {

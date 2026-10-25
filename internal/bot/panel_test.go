@@ -152,7 +152,7 @@ func TestSyncPanelsCreatesBothScopes(t *testing.T) {
 			"/休假", "/调休", "/销假", "/假期",
 			"/绑定QQ", "/解绑QQ",
 			"/help",
-			"/nickname", "/wakeup", "/修改课程表", "/积分", "/签到",
+			"/nickname", "/wakeup", "/修改课程表",
 		}
 		if strings.Join(names, ",") != strings.Join(expected, ",") {
 			t.Errorf("%s items = %v, want %v", scope, names, expected)

@@ -46,27 +46,6 @@ export interface DayOverrideRow {
   created_at?: string;
 }
 
-export interface CheckinTotal {
-  user_id: string;
-  name: string;
-  points: number;
-  days: number;
-}
-
-export interface CheckinRecord {
-  user_id: string;
-  name: string;
-  day: string;
-  points: number;
-  created_at?: string;
-}
-
-export interface CheckinBoard {
-  scope_id: string;
-  totals: CheckinTotal[];
-  records: CheckinRecord[];
-}
-
 export interface BotSettings {
   enabled: boolean;
   reply_plain: boolean;
