@@ -30,6 +30,11 @@ func registerSettingsRoutes(api *gin.RouterGroup, service *admin.Service) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"ok": true, "settings": payload})
+		settings, err := service.BotSettings()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"ok": true, "settings": settings})
 	})
 }

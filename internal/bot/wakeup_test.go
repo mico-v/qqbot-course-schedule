@@ -72,6 +72,29 @@ func TestWakeUpCommandAcceptsCode(t *testing.T) {
 	}
 }
 
+func TestWakeUpExtractsBracketedCode(t *testing.T) {
+	fake := newFakeQQ()
+	apiServer := httptest.NewServer(fake.handler())
+	t.Cleanup(apiServer.Close)
+
+	env, message := newTestEnv(t, fake, apiServer.URL)
+	stub := &stubWakeUp{shareData: botWakeUpShare}
+	env.WakeUp = stub
+	handler := NewDefaultHandler(env)
+
+	message.Content = "/wakeup [aBc123]（课表）"
+	dispatch(context.Background(), env, handler, message)
+
+	reply := waitMessage(t, fake)
+	content, _ := reply["content"].(string)
+	if !strings.Contains(content, "已创建 小明 的课表") {
+		t.Fatalf("reply = %v", reply)
+	}
+	if stub.gotCode != "aBc123" {
+		t.Fatalf("fetched code = %q, want aBc123", stub.gotCode)
+	}
+}
+
 func TestWakeUpCommandAcceptsShareLink(t *testing.T) {
 	fake := newFakeQQ()
 	apiServer := httptest.NewServer(fake.handler())

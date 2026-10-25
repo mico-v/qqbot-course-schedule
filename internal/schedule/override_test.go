@@ -30,11 +30,12 @@ func TestResolveOverrideTargets(t *testing.T) {
 		want      []string
 		errSubstr string
 	}{
-		{name: "admin defaults to everyone", person: "", sender: "A", isGroup: true, isAdmin: true, want: []string{DayOverrideAll}},
+		{name: "admin defaults to self", person: "", sender: "A", isGroup: true, isAdmin: true, want: []string{"A"}},
 		{name: "member defaults to self", person: "", sender: "A", isGroup: true, want: []string{"A"}},
 		{name: "private defaults to self", person: "", sender: "A", isGroup: false, want: []string{"A"}},
 		{name: "own words", person: "我", sender: "A", isGroup: true, want: []string{"A"}},
 		{name: "everyone as admin", person: "全体", sender: "A", isGroup: true, isAdmin: true, want: []string{DayOverrideAll}},
+		{name: "all people as admin", person: "所有人", sender: "A", isGroup: true, isAdmin: true, want: []string{DayOverrideAll}},
 		{name: "everyone as member", person: "全体", sender: "A", isGroup: true, errSubstr: "只有管理员"},
 		{name: "own nickname", person: "小明", sender: "A", isGroup: true, want: []string{"A"}},
 		{name: "other nickname as member", person: "小红", sender: "A", isGroup: true, errSubstr: "普通成员只能标记自己"},

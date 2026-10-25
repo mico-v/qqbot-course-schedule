@@ -13,6 +13,14 @@ type Mention struct {
 	Name string
 }
 
+// DayOverrideTarget identifies one storage target for a holiday/shift marker.
+// DisplayID is the local member ID used in replies and permission checks.
+type DayOverrideTarget struct {
+	ScopeID   string
+	UserID    string
+	DisplayID string
+}
+
 func isOwnQuery(query string) bool {
 	switch strings.ToLower(strings.TrimSpace(query)) {
 	case "自己", "我", "本人", "me", "my", "self":
@@ -27,16 +35,13 @@ func isOwnQuery(query string) bool {
 func ResolveOverrideTargets(members map[string]*Member, senderID string, isGroup, isAdmin bool, person string, mentions []Mention) ([]string, string) {
 	query := strings.TrimSpace(person)
 	if query == "" || isOwnQuery(query) {
-		if isAdmin && isGroup {
-			return []string{DayOverrideAll}, ""
-		}
 		return []string{senderID}, ""
 	}
 	if !isGroup {
 		return nil, "私聊只能标记自己的假期。"
 	}
 	switch strings.ToLower(query) {
-	case "all", "全部", "所有", "大家", "全体", "全群":
+	case "all", "全部", "所有", "所有人", "大家", "全体", "全群":
 		if isAdmin {
 			return []string{DayOverrideAll}, ""
 		}
@@ -157,6 +162,16 @@ func OverrideLabel(members map[string]*Member, targetID string) string {
 
 // SetDayOverrides writes holiday/shift markers and returns the user-facing reply.
 func (s *Service) SetDayOverrides(scopeID string, targets []string, days []time.Time, kind string, sourceDay *time.Time, actor string, members map[string]*Member, today time.Time) (string, error) {
+	overrideTargets := make([]DayOverrideTarget, 0, len(targets))
+	for _, target := range targets {
+		overrideTargets = append(overrideTargets, DayOverrideTarget{ScopeID: scopeID, UserID: target, DisplayID: target})
+	}
+	return s.SetDayOverridesForTargets(overrideTargets, days, kind, sourceDay, actor, members, today)
+}
+
+// SetDayOverridesForTargets writes markers for explicitly resolved storage
+// coordinates while keeping reply labels tied to the current conversation.
+func (s *Service) SetDayOverridesForTargets(targets []DayOverrideTarget, days []time.Time, kind string, sourceDay *time.Time, actor string, members map[string]*Member, today time.Time) (string, error) {
 	if len(days) == 0 {
 		return "", fmt.Errorf("请提供要标记的日期，例如 /休假 2026-10-01。")
 	}
@@ -180,24 +195,59 @@ func (s *Service) SetDayOverrides(scopeID string, targets []string, days []time.
 		}
 	}
 
-	existing, err := s.store.ListDayOverrides(scopeID)
-	if err != nil {
-		return "", err
+	type normalizedTarget struct {
+		DayOverrideTarget
+		key string
 	}
-	existingKeys := make(map[string]DayOverrideRow, len(existing))
-	for _, row := range existing {
-		existingKeys[row.UserID+":"+row.Day] = row
-	}
-	added := 0
+	normalized := make([]normalizedTarget, 0, len(targets))
+	seenTargets := make(map[string]bool)
 	for _, target := range targets {
+		target.ScopeID = strings.TrimSpace(target.ScopeID)
+		target.UserID = strings.TrimSpace(target.UserID)
+		target.DisplayID = strings.TrimSpace(target.DisplayID)
+		if target.ScopeID == "" || target.UserID == "" {
+			return "", fmt.Errorf("没有确定要标记的成员。")
+		}
+		if target.DisplayID == "" {
+			target.DisplayID = target.UserID
+		}
+		key := target.ScopeID + "\x00" + target.UserID + "\x00" + target.DisplayID
+		if seenTargets[key] {
+			continue
+		}
+		seenTargets[key] = true
+		normalized = append(normalized, normalizedTarget{DayOverrideTarget: target, key: key})
+	}
+
+	rowsByScope := make(map[string][]DayOverrideRow)
+	existingKeys := make(map[string]DayOverrideRow)
+	for _, target := range normalized {
+		existing, ok := rowsByScope[target.ScopeID]
+		if !ok {
+			var err error
+			existing, err = s.store.ListDayOverrides(target.ScopeID)
+			if err != nil {
+				return "", err
+			}
+			rowsByScope[target.ScopeID] = existing
+		}
+		for _, row := range existing {
+			existingKeys[target.ScopeID+"\x00"+row.UserID+"\x00"+row.Day] = row
+		}
+	}
+	addedByScope := make(map[string]int)
+	for _, target := range normalized {
 		for _, day := range days {
-			if _, ok := existingKeys[target+":"+day.Format("2006-01-02")]; !ok {
-				added++
+			key := target.ScopeID + "\x00" + target.UserID + "\x00" + day.Format("2006-01-02")
+			if _, ok := existingKeys[key]; !ok {
+				addedByScope[target.ScopeID]++
 			}
 		}
 	}
-	if len(existing)+added > MaxDayOverridesPerScope {
-		return "", fmt.Errorf("本会话的休假/调休标记已达上限 %d 条，请先取消一些标记。", MaxDayOverridesPerScope)
+	for scopeID, added := range addedByScope {
+		if len(rowsByScope[scopeID])+added > MaxDayOverridesPerScope {
+			return "", fmt.Errorf("本会话的休假/调休标记已达上限 %d 条，请先取消一些标记。", MaxDayOverridesPerScope)
+		}
 	}
 
 	sourceText := ""
@@ -206,22 +256,23 @@ func (s *Service) SetDayOverrides(scopeID string, targets []string, days []time.
 	}
 	nowISO := NowISO()
 	replaced := false
-	for _, target := range targets {
+	for _, target := range normalized {
 		for _, day := range days {
 			dayText := day.Format("2006-01-02")
-			if row, ok := existingKeys[target+":"+dayText]; ok && row.Kind != kind {
+			key := target.ScopeID + "\x00" + target.UserID + "\x00" + dayText
+			if row, ok := existingKeys[key]; ok && row.Kind != kind {
 				replaced = true
 			}
 			override := DayOverride{Kind: kind, SourceDay: sourceText}
-			if err := s.store.SetDayOverride(scopeID, target, dayText, override, actor, nowISO); err != nil {
+			if err := s.store.SetDayOverride(target.ScopeID, target.UserID, dayText, override, actor, nowISO); err != nil {
 				return "", err
 			}
 		}
 	}
 
-	labels := make([]string, 0, len(targets))
-	for _, target := range targets {
-		labels = append(labels, OverrideLabel(members, target))
+	labels := make([]string, 0, len(normalized))
+	for _, target := range normalized {
+		labels = append(labels, OverrideLabel(members, target.DisplayID))
 	}
 	label := strings.Join(labels, "、") + DayCountText(days)
 	dayText := FormatDayList(days)
@@ -246,37 +297,99 @@ func (s *Service) SetDayOverrides(scopeID string, targets []string, days []time.
 
 // ClearDayOverrides removes markers and returns the user-facing reply.
 func (s *Service) ClearDayOverrides(scopeID string, targets []string, days []time.Time, members map[string]*Member) (string, error) {
+	overrideTargets := make([]DayOverrideTarget, 0, len(targets))
+	for _, target := range targets {
+		overrideTargets = append(overrideTargets, DayOverrideTarget{ScopeID: scopeID, UserID: target, DisplayID: target})
+	}
+	return s.ClearDayOverridesForTargets(scopeID, overrideTargets, days, members)
+}
+
+// ClearDayOverridesForTargets removes markers from explicitly resolved storage
+// coordinates while retaining local display labels in the response. The
+// displayScopeID is used to detect whole-conversation markers, which stay on
+// the conversation scope even when personal storage is global.
+func (s *Service) ClearDayOverridesForTargets(displayScopeID string, targets []DayOverrideTarget, days []time.Time, members map[string]*Member) (string, error) {
 	if len(days) == 0 {
 		return "", fmt.Errorf("请提供要取消标记的日期，例如 /销假 2026-10-01。")
 	}
 	if len(targets) == 0 {
 		return "", fmt.Errorf("没有确定要取消标记的成员。")
 	}
-	existing, err := s.store.ListDayOverrides(scopeID)
-	if err != nil {
+	displayScopeID = strings.TrimSpace(displayScopeID)
+	type normalizedTarget struct {
+		DayOverrideTarget
+		key string
+	}
+	normalized := make([]normalizedTarget, 0, len(targets))
+	seenTargets := make(map[string]bool)
+	for _, target := range targets {
+		target.ScopeID = strings.TrimSpace(target.ScopeID)
+		target.UserID = strings.TrimSpace(target.UserID)
+		target.DisplayID = strings.TrimSpace(target.DisplayID)
+		if target.ScopeID == "" || target.UserID == "" {
+			return "", fmt.Errorf("没有确定要取消标记的成员。")
+		}
+		if target.DisplayID == "" {
+			target.DisplayID = target.UserID
+		}
+		key := target.ScopeID + "\x00" + target.UserID + "\x00" + target.DisplayID
+		if seenTargets[key] {
+			continue
+		}
+		seenTargets[key] = true
+		normalized = append(normalized, normalizedTarget{DayOverrideTarget: target, key: key})
+	}
+
+	existingKeys := make(map[string]DayOverrideRow)
+	loadedScopes := make(map[string]bool)
+	loadScope := func(scopeID string) error {
+		if scopeID == "" || loadedScopes[scopeID] {
+			return nil
+		}
+		existing, err := s.store.ListDayOverrides(scopeID)
+		if err != nil {
+			return err
+		}
+		loadedScopes[scopeID] = true
+		for _, row := range existing {
+			existingKeys[scopeID+"\x00"+row.UserID+"\x00"+row.Day] = row
+		}
+		return nil
+	}
+	if err := loadScope(displayScopeID); err != nil {
 		return "", err
 	}
-	existingKeys := make(map[string]DayOverrideRow, len(existing))
-	for _, row := range existing {
-		existingKeys[row.UserID+":"+row.Day] = row
+	for _, target := range normalized {
+		if err := loadScope(target.ScopeID); err != nil {
+			return "", err
+		}
 	}
 
 	var removed []time.Time
 	removedKinds := make(map[string]bool)
 	var scopeWide []time.Time
-	for _, target := range targets {
+	scopeWideSeen := make(map[string]bool)
+	for _, target := range normalized {
 		for _, day := range days {
 			dayText := day.Format("2006-01-02")
-			row, ok := existingKeys[target+":"+dayText]
+			key := target.ScopeID + "\x00" + target.UserID + "\x00" + dayText
+			row, ok := existingKeys[key]
 			if !ok {
-				if target != DayOverrideAll {
-					if _, ok := existingKeys[DayOverrideAll+":"+dayText]; ok {
+				allScopeID := displayScopeID
+				if allScopeID == "" {
+					allScopeID = target.ScopeID
+				}
+				if target.UserID != DayOverrideAll {
+					allKey := allScopeID + "\x00" + DayOverrideAll + "\x00" + dayText
+					wideKey := allScopeID + "\x00" + dayText
+					if _, ok := existingKeys[allKey]; ok && !scopeWideSeen[wideKey] {
+						scopeWideSeen[wideKey] = true
 						scopeWide = append(scopeWide, day)
 					}
 				}
 				continue
 			}
-			deleted, err := s.store.DeleteDayOverride(scopeID, target, dayText)
+			deleted, err := s.store.DeleteDayOverride(target.ScopeID, target.UserID, dayText)
 			if err != nil {
 				return "", err
 			}
@@ -300,9 +413,9 @@ func (s *Service) ClearDayOverrides(scopeID string, targets []string, days []tim
 			}
 		}
 	}
-	labels := make([]string, 0, len(targets))
-	for _, target := range targets {
-		labels = append(labels, OverrideLabel(members, target))
+	labels := make([]string, 0, len(normalized))
+	for _, target := range normalized {
+		labels = append(labels, OverrideLabel(members, target.DisplayID))
 	}
 	displayDays := removed
 	if len(displayDays) == 0 {
@@ -325,10 +438,70 @@ func (s *Service) DayOverrideListText(scopeID string, members map[string]*Member
 	if err != nil {
 		return "", err
 	}
+	return dayOverrideListText(rows, members, today), nil
+}
+
+// DayOverrideListTextForTargets lists only markers attached to the supplied
+// visible members plus the current conversation's all-member markers.
+func (s *Service) DayOverrideListTextForTargets(targets []DayOverrideTarget, members map[string]*Member, today time.Time) (string, error) {
+	rows, err := s.DayOverrideRowsForTargets(targets)
+	if err != nil {
+		return "", err
+	}
+	return dayOverrideListText(rows, members, today), nil
+}
+
+// DayOverrideRowsForTargets loads markers from explicit storage targets and
+// projects member IDs back to the identifiers used by the display scope.
+func (s *Service) DayOverrideRowsForTargets(targets []DayOverrideTarget) ([]DayOverrideRow, error) {
+	type projectedKey struct {
+		scopeID string
+		userID  string
+		day     string
+	}
+	seen := make(map[projectedKey]bool)
+	var rows []DayOverrideRow
+	for _, target := range targets {
+		target.ScopeID = strings.TrimSpace(target.ScopeID)
+		target.UserID = strings.TrimSpace(target.UserID)
+		target.DisplayID = strings.TrimSpace(target.DisplayID)
+		if target.ScopeID == "" || target.UserID == "" {
+			continue
+		}
+		if target.DisplayID == "" {
+			target.DisplayID = target.UserID
+		}
+		stored, err := s.store.ListDayOverrides(target.ScopeID)
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range stored {
+			if row.UserID != target.UserID {
+				continue
+			}
+			key := projectedKey{scopeID: target.ScopeID, userID: target.UserID, day: row.Day}
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			row.UserID = target.DisplayID
+			rows = append(rows, row)
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Day != rows[j].Day {
+			return rows[i].Day < rows[j].Day
+		}
+		return rows[i].UserID < rows[j].UserID
+	})
+	return rows, nil
+}
+
+func dayOverrideListText(rows []DayOverrideRow, members map[string]*Member, today time.Time) string {
 	if len(rows) == 0 {
 		return "当前会话还没有休假/调休标记。\n" +
 			"/休假 <日期> [成员] 取消当天全部课程；" +
-			"/调休 <日期> <来源日期> [成员] 改为上来源日期的课程。", nil
+			"/调休 <日期> <来源日期> [成员] 改为上来源日期的课程。"
 	}
 	shown := rows
 	if len(shown) > 50 {
@@ -359,7 +532,7 @@ func (s *Service) DayOverrideListText(scopeID string, members map[string]*Member
 		lines = append(lines, fmt.Sprintf("共 %d 条，仅展示前 %d 条。", len(rows), len(shown)))
 	}
 	lines = append(lines, "取消标记：/销假 <日期> [成员]")
-	return strings.Join(lines, "\n"), nil
+	return strings.Join(lines, "\n")
 }
 
 func sameDay(left, right time.Time) bool {

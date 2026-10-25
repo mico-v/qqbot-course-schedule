@@ -1,6 +1,7 @@
 package schedule_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -13,7 +14,16 @@ func TestBotSettingsDefaultsWhenUnset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BotSettings: %v", err)
 	}
-	if settings != schedule.DefaultSettings() {
+	if !slices.Equal(settings.AdminOpenIDs, schedule.DefaultSettings().AdminOpenIDs) ||
+		settings.Enabled != schedule.DefaultSettings().Enabled ||
+		settings.ReplyPlain != schedule.DefaultSettings().ReplyPlain ||
+		settings.ReplySlash != schedule.DefaultSettings().ReplySlash ||
+		settings.ReplyMention != schedule.DefaultSettings().ReplyMention ||
+		settings.SendFormat != schedule.DefaultSettings().SendFormat ||
+		settings.Nickname != schedule.DefaultSettings().Nickname ||
+		settings.BaseURL != schedule.DefaultSettings().BaseURL ||
+		settings.ScheduleLinkTTLMinutes != schedule.DefaultSettings().ScheduleLinkTTLMinutes ||
+		settings.StorageMode != schedule.DefaultSettings().StorageMode {
 		t.Fatalf("settings = %+v, want defaults %+v", settings, schedule.DefaultSettings())
 	}
 	if !settings.Enabled || !settings.ReplyPlain || !settings.ReplySlash || !settings.ReplyMention {
@@ -27,6 +37,8 @@ func TestBotSettingsRoundTrip(t *testing.T) {
 		Enabled: false, ReplyPlain: true, ReplySlash: false, ReplyMention: true,
 		SendFormat: schedule.SendFormatMarkdown,
 		BaseURL:    "https://kb.example.com", ScheduleLinkTTLMinutes: 90,
+		StorageMode:  schedule.StorageModeGlobal,
+		AdminOpenIDs: []string{"ADMIN-LOCAL", "ADMIN-UNION"},
 	}
 	if err := service.SaveBotSettings(want); err != nil {
 		t.Fatalf("SaveBotSettings: %v", err)
@@ -35,8 +47,51 @@ func TestBotSettingsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BotSettings: %v", err)
 	}
-	if got != want {
+	if !slices.Equal(got.AdminOpenIDs, want.AdminOpenIDs) ||
+		got.Enabled != want.Enabled || got.ReplyPlain != want.ReplyPlain ||
+		got.ReplySlash != want.ReplySlash || got.ReplyMention != want.ReplyMention ||
+		got.SendFormat != want.SendFormat || got.Nickname != want.Nickname ||
+		got.BaseURL != want.BaseURL || got.ScheduleLinkTTLMinutes != want.ScheduleLinkTTLMinutes ||
+		got.StorageMode != want.StorageMode {
 		t.Fatalf("got %+v, want %+v", got, want)
+	}
+}
+
+func TestBotSettingsNormalizesAdminOpenIDs(t *testing.T) {
+	service, _ := newService(t)
+	settings := schedule.DefaultSettings()
+	settings.AdminOpenIDs = []string{" ADMIN-A ", "ADMIN-B, ADMIN-C", "ADMIN-A"}
+	if err := service.SaveBotSettings(settings); err != nil {
+		t.Fatalf("SaveBotSettings: %v", err)
+	}
+	got, err := service.BotSettings()
+	if err != nil {
+		t.Fatalf("BotSettings: %v", err)
+	}
+	want := []string{"ADMIN-A", "ADMIN-B", "ADMIN-C"}
+	if !slices.Equal(got.AdminOpenIDs, want) {
+		t.Fatalf("AdminOpenIDs = %v, want %v", got.AdminOpenIDs, want)
+	}
+}
+
+func TestSettingsAllowsAdmin(t *testing.T) {
+	settings := schedule.DefaultSettings()
+	if !settings.AllowsAdmin("MEMBER", "", true) {
+		t.Fatal("empty allowlist should preserve platform admin fallback")
+	}
+	if settings.AllowsAdmin("MEMBER", "", false) {
+		t.Fatal("empty allowlist should reject a normal member")
+	}
+
+	settings.AdminOpenIDs = []string{"LOCAL-ADMIN", "UNION-ADMIN"}
+	if !settings.AllowsAdmin("LOCAL-ADMIN", "", false) {
+		t.Fatal("local OpenID in allowlist should be accepted")
+	}
+	if !settings.AllowsAdmin("OTHER", "UNION-ADMIN", false) {
+		t.Fatal("global union OpenID in allowlist should be accepted")
+	}
+	if settings.AllowsAdmin("OWNER", "", true) {
+		t.Fatal("configured allowlist must override the platform role fallback")
 	}
 }
 

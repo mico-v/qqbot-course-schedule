@@ -9,6 +9,8 @@ const (
 	KVNamespaceSettings = "settings"
 	// KVNamespaceSeen stores members observed through incoming messages.
 	KVNamespaceSeen = "seen"
+	// KVNamespaceIdentity maps session-local OpenIDs to global union OpenIDs.
+	KVNamespaceIdentity = "identity"
 	// KVNamespacePanel stores command panel state managed by the bot.
 	KVNamespacePanel = "panel"
 	// KVNamespaceEditLinks stores hashed schedule edit-link tokens.

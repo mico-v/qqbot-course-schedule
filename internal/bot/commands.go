@@ -103,13 +103,6 @@ func NewDefaultHandler(env *Env) *Handler {
 		Handle:      h.handleUnbindQQ,
 	})
 	h.Register(&Command{
-		Prefix:      "/设置",
-		Description: "查看或修改机器人设置（管理员）",
-		Aliases:     []string{"/配置", "/settings"},
-		Ready:       true,
-		Handle:      h.handleSettings,
-	})
-	h.Register(&Command{
 		Prefix:      nicknameCommandPrefix,
 		Aliases:     []string{"/昵称", "/nikname"},
 		Description: "设置你自己的昵称（渲染课表时显示）",
@@ -236,16 +229,19 @@ func (h *Handler) handleOverrideSet(ctx context.Context, in *Inbound, r *Replier
 		sourceDay = &days[1]
 		days = days[:1]
 	}
-	scope := env.Scope(in)
-	members, err := env.Service.ScopeMembers(scope)
+	members, err := env.ScheduleMembers(ctx, in)
 	if err != nil {
 		return err
 	}
-	targets, errMsg := schedule.ResolveOverrideTargets(members, in.UserOpenID, in.Origin == OriginGroup, in.IsAdmin(), person, toScheduleMentions(in.Mentions))
+	targets, errMsg := schedule.ResolveOverrideTargets(members, in.UserOpenID, in.Origin == OriginGroup, h.isAdmin(in), person, toScheduleMentions(in.Mentions))
 	if errMsg != "" {
 		return r.Reply(ctx, errMsg)
 	}
-	text, err := env.Service.SetDayOverrides(scope, targets, days, kind, sourceDay, in.UserOpenID, members, today)
+	overrideTargets, err := env.OverrideTargets(ctx, in, targets)
+	if err != nil {
+		return r.Reply(ctx, err.Error())
+	}
+	text, err := env.Service.SetDayOverridesForTargets(overrideTargets, days, kind, sourceDay, in.UserOpenID, members, today)
 	if err != nil {
 		return r.Reply(ctx, err.Error())
 	}
@@ -265,16 +261,19 @@ func (h *Handler) handleCancelDayOffCommand(ctx context.Context, in *Inbound, r 
 		return r.Reply(ctx, "请提供日期：/销假 <日期> [成员]，例如 /销假 2026-10-01。")
 	}
 	person := strings.Join(rest, " ")
-	scope := env.Scope(in)
-	members, err := env.Service.ScopeMembers(scope)
+	members, err := env.ScheduleMembers(ctx, in)
 	if err != nil {
 		return err
 	}
-	targets, errMsg := schedule.ResolveOverrideTargets(members, in.UserOpenID, in.Origin == OriginGroup, in.IsAdmin(), person, toScheduleMentions(in.Mentions))
+	targets, errMsg := schedule.ResolveOverrideTargets(members, in.UserOpenID, in.Origin == OriginGroup, h.isAdmin(in), person, toScheduleMentions(in.Mentions))
 	if errMsg != "" {
 		return r.Reply(ctx, errMsg)
 	}
-	text, err := env.Service.ClearDayOverrides(scope, targets, days, members)
+	overrideTargets, err := env.OverrideTargets(ctx, in, targets)
+	if err != nil {
+		return r.Reply(ctx, err.Error())
+	}
+	text, err := env.Service.ClearDayOverridesForTargets(env.Scope(in), overrideTargets, days, members)
 	if err != nil {
 		return r.Reply(ctx, err.Error())
 	}
@@ -286,12 +285,20 @@ func (h *Handler) handleDayOffListCommand(ctx context.Context, in *Inbound, r *R
 	if env == nil {
 		return r.Reply(ctx, "课表功能未初始化。")
 	}
-	scope := env.Scope(in)
-	members, err := env.Service.ScopeMembers(scope)
+	members, err := env.ScheduleMembers(ctx, in)
 	if err != nil {
 		return err
 	}
-	text, err := env.Service.DayOverrideListText(scope, members, env.now())
+	localIDs := make([]string, 0, len(members)+1)
+	localIDs = append(localIDs, schedule.DayOverrideAll)
+	for localID := range members {
+		localIDs = append(localIDs, localID)
+	}
+	targets, err := env.OverrideTargets(ctx, in, localIDs)
+	if err != nil {
+		return err
+	}
+	text, err := env.Service.DayOverrideListTextForTargets(targets, members, env.now())
 	if err != nil {
 		return err
 	}
@@ -303,12 +310,11 @@ func (h *Handler) handleExportCommand(ctx context.Context, in *Inbound, r *Repli
 	if env == nil {
 		return r.Reply(ctx, "课表功能未初始化。")
 	}
-	scope := env.Scope(in)
-	members, err := env.Service.ScopeMembers(scope)
+	members, err := env.ScheduleMembers(ctx, in)
 	if err != nil {
 		return err
 	}
-	targetID, errMsg := schedule.ResolveMemberTarget(members, in.UserOpenID, in.Origin == OriginGroup, in.IsAdmin(), in.Args, toScheduleMentions(in.Mentions))
+	targetID, errMsg := schedule.ResolveMemberTarget(members, in.UserOpenID, in.Origin == OriginGroup, h.isAdmin(in), in.Args, toScheduleMentions(in.Mentions))
 	if errMsg != "" {
 		return r.Reply(ctx, errMsg)
 	}
@@ -334,8 +340,7 @@ func (h *Handler) handleBindQQ(ctx context.Context, in *Inbound, r *Replier) err
 	if h.env == nil {
 		return r.Reply(ctx, "课表功能未初始化。")
 	}
-	scope := h.env.Scope(in)
-	members, err := h.env.Service.ScopeMembers(scope)
+	members, err := h.env.ScheduleMembers(ctx, in)
 	if err != nil {
 		return r.Reply(ctx, "读取成员失败："+err.Error())
 	}
@@ -351,7 +356,11 @@ func (h *Handler) handleBindQQ(ctx context.Context, in *Inbound, r *Replier) err
 		}
 		return r.Reply(ctx, "你当前绑定的 QQ 号："+current+"。\n绑定：/绑定QQ 123456789（绑定后卡片会显示该 QQ 的头像）。")
 	}
-	qq, err := h.env.Service.SetMemberQQ(scope, in.UserOpenID, argument, in.UserOpenID)
+	target, err := h.env.ScheduleTarget(ctx, in, in.UserOpenID)
+	if err != nil {
+		return r.Reply(ctx, "绑定失败："+err.Error())
+	}
+	qq, err := h.env.Service.SetMemberQQ(target.ScopeID, target.UserID, argument, in.UserOpenID)
 	if err != nil {
 		return r.Reply(ctx, "绑定失败："+err.Error())
 	}
@@ -362,8 +371,7 @@ func (h *Handler) handleUnbindQQ(ctx context.Context, in *Inbound, r *Replier) e
 	if h.env == nil {
 		return r.Reply(ctx, "课表功能未初始化。")
 	}
-	scope := h.env.Scope(in)
-	members, err := h.env.Service.ScopeMembers(scope)
+	members, err := h.env.ScheduleMembers(ctx, in)
 	if err != nil {
 		return r.Reply(ctx, "读取成员失败："+err.Error())
 	}
@@ -372,7 +380,11 @@ func (h *Handler) handleUnbindQQ(ctx context.Context, in *Inbound, r *Replier) e
 	} else if member.QQ == "" {
 		return r.Reply(ctx, "你还没有绑定 QQ 号。")
 	}
-	if _, err := h.env.Service.SetMemberQQ(scope, in.UserOpenID, "", in.UserOpenID); err != nil {
+	target, err := h.env.ScheduleTarget(ctx, in, in.UserOpenID)
+	if err != nil {
+		return r.Reply(ctx, "解绑失败："+err.Error())
+	}
+	if _, err := h.env.Service.SetMemberQQ(target.ScopeID, target.UserID, "", in.UserOpenID); err != nil {
 		return r.Reply(ctx, "解绑失败："+err.Error())
 	}
 	return r.Reply(ctx, "已解除 QQ 绑定，卡片将恢复为昵称首字头像。")
@@ -382,7 +394,7 @@ func (h *Handler) handleSyncPanelCommand(ctx context.Context, in *Inbound, r *Re
 	if h.env == nil {
 		return r.Reply(ctx, "课表功能未初始化。")
 	}
-	if !in.IsAdmin() {
+	if !h.isAdmin(in) {
 		return r.Reply(ctx, "只有群管理员可以同步指令面板。")
 	}
 	created, updated, err := SyncPanels(ctx, h.env, h)
@@ -409,7 +421,7 @@ func sendDayView(ctx context.Context, env *Env, in *Inbound, r *Replier, day, at
 		keyboard = dayNavigationKeyboard(day.Format("2006-01-02"), at, in.UserOpenID)
 	}
 	if env.currentSettings().SendFormat == schedule.SendFormatMarkdown {
-		text, ok, err := env.RenderDayMarkdown(in, day)
+		text, ok, err := env.RenderDayMarkdown(ctx, in, day)
 		if err != nil {
 			return err
 		}

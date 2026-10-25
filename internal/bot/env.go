@@ -154,6 +154,141 @@ func (e *Env) Scope(in *Inbound) string {
 	return schedule.ScopeGroup(in.GroupOpenID)
 }
 
+// GlobalUserID resolves the union OpenID for the sender. Direct webhook data
+// wins, with the stored identity map serving callbacks and older messages.
+func (e *Env) GlobalUserID(ctx context.Context, in *Inbound) (string, error) {
+	if in == nil {
+		return "", fmt.Errorf("无法识别发送人，请稍后重试。")
+	}
+	return e.globalUserIDForMember(ctx, e.Scope(in), in.GroupOpenID, in.UserOpenID, in.GlobalUserOpenID)
+}
+
+func (e *Env) globalUserIDForMember(ctx context.Context, scopeID, groupOpenID, localUserID, knownGlobalUserID string) (string, error) {
+	localUserID = strings.TrimSpace(localUserID)
+	if localUserID == "" {
+		return "", fmt.Errorf("无法识别要操作的成员，请稍后重试。")
+	}
+	if globalID := strings.TrimSpace(knownGlobalUserID); globalID != "" {
+		if err := e.Service.RecordIdentity(scopeID, localUserID, globalID); err != nil {
+			return "", fmt.Errorf("保存全局用户身份失败：%w", err)
+		}
+		return globalID, nil
+	}
+	globalID, found, err := e.Service.ResolveIdentity(scopeID, localUserID)
+	if err != nil {
+		return "", fmt.Errorf("读取全局用户身份失败：%w", err)
+	}
+	if found {
+		return globalID, nil
+	}
+	if groupOpenID == "" || e.Client == nil {
+		return "", fmt.Errorf("无法识别该成员的全局用户身份：消息未返回 union_openid，且没有可补查的群成员身份。")
+	}
+	member, err := e.Client.GetGroupMember(ctx, groupOpenID, localUserID)
+	if err != nil {
+		if qqapi.ErrorCode(err) == 11253 {
+			return "", fmt.Errorf("无法获取 union_openid：机器人尚未获得群成员信息接口权限，请向 QQ 开放平台申请该能力。")
+		}
+		return "", fmt.Errorf("获取群成员全局身份失败：%w", err)
+	}
+	globalID = strings.TrimSpace(member.UnionOpenID)
+	if globalID == "" {
+		return "", fmt.Errorf("平台未返回 union_openid，无法使用全局课表；请确认已申请并配置该能力。")
+	}
+	if err := e.Service.RecordIdentity(scopeID, localUserID, globalID); err != nil {
+		return "", fmt.Errorf("保存全局用户身份失败：%w", err)
+	}
+	return globalID, nil
+}
+
+// ScheduleTarget resolves the storage coordinates for one member. In global
+// mode the local group member OpenID is projected onto union_openid.
+func (e *Env) ScheduleTarget(ctx context.Context, in *Inbound, localUserID string) (schedule.StorageTarget, error) {
+	localUserID = strings.TrimSpace(localUserID)
+	globalUserID := ""
+	groupOpenID := ""
+	if in != nil {
+		groupOpenID = in.GroupOpenID
+		if localUserID == in.UserOpenID {
+			globalUserID = strings.TrimSpace(in.GlobalUserOpenID)
+		}
+	}
+	scopeID := e.Scope(in)
+	settings, err := e.Service.BotSettings()
+	if err != nil {
+		return schedule.StorageTarget{}, fmt.Errorf("读取课表存储设置失败：%w", err)
+	}
+	if settings.StorageMode != schedule.StorageModeGlobal {
+		return schedule.StorageTarget{ScopeID: scopeID, UserID: localUserID, LocalUserID: localUserID}, nil
+	}
+	if localUserID == "" {
+		return schedule.StorageTarget{}, fmt.Errorf("无法识别要操作的成员，请稍后重试。")
+	}
+	globalUserID, err = e.globalUserIDForMember(ctx, scopeID, groupOpenID, localUserID, globalUserID)
+	if err != nil {
+		return schedule.StorageTarget{}, err
+	}
+	return schedule.StorageTarget{
+		ScopeID:     schedule.ScopeGlobalUser(globalUserID),
+		UserID:      globalUserID,
+		LocalUserID: localUserID,
+	}, nil
+}
+
+// ScheduleMembers returns the member view for the current conversation. In
+// global mode a group only shows members it has actually seen, projected back
+// onto local IDs so buttons and permission checks keep working.
+func (e *Env) ScheduleMembers(ctx context.Context, in *Inbound) (map[string]*schedule.Member, error) {
+	scopeID := e.Scope(in)
+	if e.currentSettings().StorageMode != schedule.StorageModeGlobal {
+		return e.Service.ScopeMembers(scopeID)
+	}
+	identities, err := e.Service.ScopeIdentities(scopeID)
+	if err != nil {
+		return nil, err
+	}
+	if in != nil && in.UserOpenID != "" {
+		globalUserID, err := e.GlobalUserID(ctx, in)
+		if err != nil {
+			return nil, err
+		}
+		identities[in.UserOpenID] = globalUserID
+	}
+	return e.Service.SharedUserMembers(scopeID, identities)
+}
+
+// OverrideTargets resolves local member IDs to the coordinates used for
+// personal holiday/shift markers. Whole-conversation markers always stay on
+// the current group or private-chat scope.
+func (e *Env) OverrideTargets(ctx context.Context, in *Inbound, localUserIDs []string) ([]schedule.DayOverrideTarget, error) {
+	scopeID := e.Scope(in)
+	targets := make([]schedule.DayOverrideTarget, 0, len(localUserIDs))
+	for _, localUserID := range localUserIDs {
+		localUserID = strings.TrimSpace(localUserID)
+		if localUserID == "" {
+			continue
+		}
+		if localUserID == schedule.DayOverrideAll {
+			targets = append(targets, schedule.DayOverrideTarget{
+				ScopeID:   scopeID,
+				UserID:    schedule.DayOverrideAll,
+				DisplayID: schedule.DayOverrideAll,
+			})
+			continue
+		}
+		target, err := e.ScheduleTarget(ctx, in, localUserID)
+		if err != nil {
+			return nil, err
+		}
+		targets = append(targets, schedule.DayOverrideTarget{
+			ScopeID:   target.ScopeID,
+			UserID:    target.UserID,
+			DisplayID: target.LocalUserID,
+		})
+	}
+	return targets, nil
+}
+
 // PublicImageURL builds the public URL of a generated card.
 func (e *Env) PublicImageURL(name string) string {
 	return e.PublicBaseURLForLinks() + "/images/" + name
@@ -180,7 +315,11 @@ func (e *Env) PublicBaseURLForLinks() string {
 func (e *Env) RenderDayCard(ctx context.Context, in *Inbound, r *Replier, day, at time.Time) (RenderedCard, bool, error) {
 	start := time.Now()
 	e.EnsureBotAvatar()
-	card, ok, err := e.Service.BuildDayCard(e.Scope(in), day, e.now(), at)
+	members, err := e.ScheduleMembers(ctx, in)
+	if err != nil {
+		return RenderedCard{}, false, err
+	}
+	card, ok, err := e.Service.BuildDayCardForMembers(members, day, e.now(), at)
 	if err != nil || !ok {
 		return RenderedCard{}, ok, err
 	}
@@ -193,7 +332,7 @@ func (e *Env) RenderDayCard(ctx context.Context, in *Inbound, r *Replier, day, a
 		Folded:        card.Folded,
 		BotAvatar:     e.BotAvatar(),
 		BotName:       e.currentSettings().Nickname,
-		Avatars:       e.MemberAvatars(ctx, e.Scope(in), rowUserIDs(card.Rows, card.Folded)),
+		Avatars:       e.memberAvatarsForMembers(ctx, members, rowUserIDs(card.Rows, card.Folded)),
 		DurationLabel: "本节持续",
 		FooterSince:   renderStart(in, start),
 	})
@@ -273,8 +412,12 @@ func (e *Env) sendCardMarkdown(ctx context.Context, in *Inbound, r *Replier, con
 
 // RenderDayMarkdown builds the day schedule as a markdown list. ok is false
 // when the scope has no saved schedules at all.
-func (e *Env) RenderDayMarkdown(in *Inbound, day time.Time) (string, bool, error) {
-	text, ok, err := e.Service.BuildDayMarkdown(e.Scope(in), day, e.now())
+func (e *Env) RenderDayMarkdown(ctx context.Context, in *Inbound, day time.Time) (string, bool, error) {
+	members, err := e.ScheduleMembers(ctx, in)
+	if err != nil {
+		return "", false, err
+	}
+	text, ok, err := e.Service.BuildDayMarkdownForMembers(members, day, e.now())
 	if err != nil || !ok {
 		return "", ok, err
 	}
@@ -315,7 +458,11 @@ func (e *Env) SendDayMarkdownWithKeyboard(ctx context.Context, in *Inbound, r *R
 func (e *Env) RenderRankCard(ctx context.Context, in *Inbound, r *Replier, period string) (RenderedCard, bool, error) {
 	start := time.Now()
 	e.EnsureBotAvatar()
-	rows, label, err := e.Service.RankBoardRows(e.Scope(in), period, e.now())
+	members, err := e.ScheduleMembers(ctx, in)
+	if err != nil {
+		return RenderedCard{}, false, err
+	}
+	rows, label, err := e.Service.RankBoardRowsForMembers(members, period, e.now())
 	if err != nil {
 		return RenderedCard{}, false, err
 	}
@@ -368,7 +515,7 @@ func (e *Env) RenderRankCard(ctx context.Context, in *Inbound, r *Replier, perio
 		Subtitle: fmt.Sprintf("%s · 共 %d 位成员 · 合计 %s", label, len(rows), schedule.FormatDurationMinutes(total)),
 		Footer:   footer,
 		Rows:     dayRows,
-		Avatars:  e.MemberAvatars(ctx, e.Scope(in), rowUserIDs(dayRows)),
+		Avatars:  e.memberAvatarsForMembers(ctx, members, rowUserIDs(dayRows)),
 		Legend: []render.LegendItem{
 			{Key: "none", Label: "同一时段冲突的课程只计一次"},
 			{Key: "none", Label: "全天日程不计入时长"},

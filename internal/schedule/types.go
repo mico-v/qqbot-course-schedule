@@ -122,7 +122,10 @@ func ScopeGroup(groupOpenID string) string { return "group:" + groupOpenID }
 // ScopePrivate builds the private-chat scope id.
 func ScopePrivate(userOpenID string) string { return "private:" + userOpenID }
 
-// ParseScope splits a scope id into its kind ("group"/"private") and id.
+// ScopeGlobalUser builds the shared personal-schedule scope id.
+func ScopeGlobalUser(globalUserOpenID string) string { return "global-user:" + globalUserOpenID }
+
+// ParseScope splits a scope id into its kind and id.
 func ParseScope(scopeID string) (kind, targetID string) {
 	if kind, targetID, ok := strings.Cut(scopeID, ":"); ok {
 		return kind, targetID

@@ -43,16 +43,41 @@ type ImportResult struct {
 	Skipped       []string `json:"skipped,omitempty"`
 }
 
-// ExportBackup snapshots a scope (members + day overrides).
+// ExportBackup snapshots a scope (members + day overrides). In global storage
+// mode, personal schedules and markers are read from global-user scopes while
+// whole-conversation markers remain attached to the displayed scope.
 func (s *Service) ExportBackup(scopeID string) (*BackupFile, error) {
-	members, err := s.storage.GetScopeMembers(scopeID)
+	settings, err := s.BotSettings()
 	if err != nil {
 		return nil, err
 	}
-	overrides, err := s.storage.ListDayOverrides(scopeID)
-	if err != nil {
-		return nil, err
+
+	var members map[string]*schedule.Member
+	var overrides []schedule.DayOverrideRow
+	if settings.StorageMode == schedule.StorageModeGlobal {
+		members, err = s.VisibleMembers(scopeID)
+		if err != nil {
+			return nil, err
+		}
+		targets, err := s.dayOverrideTargets(scopeID, members)
+		if err != nil {
+			return nil, err
+		}
+		overrides, err = s.DayOverrideRowsForTargets(targets)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		members, err = s.storage.GetScopeMembers(scopeID)
+		if err != nil {
+			return nil, err
+		}
+		overrides, err = s.storage.ListDayOverrides(scopeID)
+		if err != nil {
+			return nil, err
+		}
 	}
+
 	backup := &BackupFile{
 		Version:    1,
 		ScopeID:    scopeID,
@@ -78,8 +103,9 @@ func (s *Service) ExportBackup(scopeID string) (*BackupFile, error) {
 	return backup, nil
 }
 
-// ImportBackup restores a backup into a scope. Existing day overrides are
-// replaced by the backup's set, matching "完整还原" semantics.
+// ImportBackup restores a backup into a scope. Existing day overrides for the
+// schedules visible in that scope are replaced by the backup's set, matching
+// "完整还原" semantics.
 func (s *Service) ImportBackup(scopeID string, backup *BackupFile, actor string) (*ImportResult, error) {
 	if backup == nil {
 		return nil, fmt.Errorf("备份内容为空。")
@@ -90,26 +116,70 @@ func (s *Service) ImportBackup(scopeID string, backup *BackupFile, actor string)
 	if len(backup.Members) > MaxBackupMembers {
 		return nil, fmt.Errorf("备份包含 %d 位成员，超过上限 %d。", len(backup.Members), MaxBackupMembers)
 	}
-	result := &ImportResult{}
+	settings, err := s.BotSettings()
+	if err != nil {
+		return nil, err
+	}
+
+	type resolvedMember struct {
+		entry  BackupMember
+		target schedule.StorageTarget
+	}
+	resolvedMembers := make([]resolvedMember, 0, len(backup.Members))
 	for _, entry := range backup.Members {
-		userID := strings.TrimSpace(entry.UserID)
-		if userID == "" {
+		localUserID := strings.TrimSpace(entry.UserID)
+		if localUserID == "" {
 			continue
 		}
-		_, found, err := s.storage.GetMember(scopeID, userID)
+		target, err := s.ResolveStorageTarget(scopeID, localUserID, "")
+		if err != nil {
+			return nil, err
+		}
+		resolvedMembers = append(resolvedMembers, resolvedMember{entry: entry, target: target})
+	}
+
+	type resolvedOverride struct {
+		row    schedule.DayOverrideRow
+		target schedule.StorageTarget
+	}
+	resolvedOverrides := make([]resolvedOverride, 0, len(backup.Overrides))
+	for _, row := range backup.Overrides {
+		localUserID := strings.TrimSpace(row.UserID)
+		if row.Day == "" || row.Kind == "" || localUserID == "" {
+			continue
+		}
+		target := schedule.StorageTarget{
+			ScopeID:     scopeID,
+			UserID:      schedule.DayOverrideAll,
+			LocalUserID: schedule.DayOverrideAll,
+		}
+		if localUserID != schedule.DayOverrideAll {
+			target, err = s.ResolveStorageTarget(scopeID, localUserID, "")
+			if err != nil {
+				return nil, err
+			}
+		}
+		resolvedOverrides = append(resolvedOverrides, resolvedOverride{row: row, target: target})
+	}
+
+	result := &ImportResult{}
+	for _, resolved := range resolvedMembers {
+		entry := resolved.entry
+		target := resolved.target
+		_, found, err := s.storage.GetMember(target.ScopeID, target.UserID)
 		if err != nil {
 			return nil, err
 		}
 		name := strings.TrimSpace(entry.Name)
 		if name == "" {
-			name = userID
+			name = target.LocalUserID
 		}
 		qq, qqErr := schedule.NormalizeQQ(entry.QQ)
 		if qqErr != nil {
 			qq = ""
 		}
 		member := &schedule.Member{
-			UserID:            userID,
+			UserID:            target.UserID,
 			Name:              name,
 			QQ:                qq,
 			Events:            entry.Events,
@@ -122,7 +192,7 @@ func (s *Service) ImportBackup(scopeID string, backup *BackupFile, actor string)
 			LastModifiedBy:    actor,
 		}
 		member.Schedule = schedule.FormatICSSchedule(member.Events)
-		if err := s.storage.PutMember(scopeID, userID, member, nil); err != nil {
+		if err := s.storage.PutMember(target.ScopeID, target.UserID, member, nil); err != nil {
 			return nil, err
 		}
 		result.MemberCount++
@@ -134,20 +204,61 @@ func (s *Service) ImportBackup(scopeID string, backup *BackupFile, actor string)
 		result.EventCount += len(member.Events)
 	}
 
-	if err := s.storage.DeleteScopeDayOverrides(scopeID); err != nil {
+	if err := s.clearBackupOverrides(scopeID, settings); err != nil {
 		return nil, err
 	}
-	for _, override := range backup.Overrides {
-		if override.Day == "" || override.Kind == "" {
+	seenOverrides := make(map[string]bool)
+	for _, resolved := range resolvedOverrides {
+		override := resolved.row
+		target := resolved.target
+		key := target.ScopeID + "\x00" + target.UserID + "\x00" + override.Day
+		if seenOverrides[key] {
 			continue
 		}
+		seenOverrides[key] = true
 		createdBy := firstNonEmpty(override.CreatedBy, actor)
 		createdAt := firstNonEmpty(override.CreatedAt, schedule.NowISO())
-		if err := s.storage.SetDayOverride(scopeID, override.UserID, override.Day,
+		if err := s.storage.SetDayOverride(target.ScopeID, target.UserID, override.Day,
 			schedule.DayOverride{Kind: override.Kind, SourceDay: override.SourceDay}, createdBy, createdAt); err != nil {
 			return nil, err
 		}
 		result.OverrideCount++
 	}
 	return result, nil
+}
+
+func (s *Service) clearBackupOverrides(scopeID string, settings schedule.Settings) error {
+	if err := s.storage.DeleteScopeDayOverrides(scopeID); err != nil {
+		return err
+	}
+	if settings.StorageMode != schedule.StorageModeGlobal {
+		return nil
+	}
+
+	members, err := s.VisibleMembers(scopeID)
+	if err != nil {
+		return err
+	}
+	targets, err := s.dayOverrideTargets(scopeID, members)
+	if err != nil {
+		return err
+	}
+	for _, target := range targets {
+		if target.UserID == schedule.DayOverrideAll {
+			continue
+		}
+		rows, err := s.storage.ListDayOverrides(target.ScopeID)
+		if err != nil {
+			return err
+		}
+		for _, row := range rows {
+			if row.UserID != target.UserID {
+				continue
+			}
+			if _, err := s.storage.DeleteDayOverride(target.ScopeID, target.UserID, row.Day); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

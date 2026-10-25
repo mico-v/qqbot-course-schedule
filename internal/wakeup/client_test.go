@@ -23,10 +23,16 @@ func TestExtractShareCode(t *testing.T) {
 	}{
 		{"official message", "……分享口令为「aBc123_XyZ」请打开App", "aBc123_XyZ"},
 		{"bracket variant", "分享口令为【deadbeef】", "deadbeef"},
+		{"bracketed id", "/wakeup [aBc123]", "aBc123"},
+		{"chinese suffix", "aBc123（备注）", "aBc123"},
+		{"labeled in prose", "请用口令：aBc123，谢谢", "aBc123"},
+		{"bracketed in prose", "请从这里导入【aBc123】", "aBc123"},
+		{"url in prose", "请导入 https://example.com/share?code=abc123 谢谢", "abc123"},
 		{"bare code", "  a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6  ", "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"},
 		{"url query", "https://example.com/share?code=abc123", "abc123"},
 		{"url path", "https://example.com/share/abc123", "abc123"},
 		{"empty", "   ", ""},
+		{"plain prose", "请帮我导入课表，谢谢", ""},
 	}
 	for _, tc := range cases {
 		if got := ExtractShareCode(tc.in); got != tc.want {

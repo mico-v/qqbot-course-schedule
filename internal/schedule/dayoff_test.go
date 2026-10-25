@@ -17,6 +17,8 @@ func TestParseDayTokenRelativeAndAbsolute(t *testing.T) {
 		"2026年9月1日":  "2026-09-01",
 		"9.1":        "2026-09-01",
 		"9月1日":       "2026-09-01",
+		"9月1号":       "2026-09-01",
+		"[9/1]":      "2026-09-01",
 	}
 	for input, want := range cases {
 		day, found, err := ParseDayToken(input, today)
@@ -114,6 +116,27 @@ func TestSplitDayOverrideArgs(t *testing.T) {
 	}
 	if len(days) != 2 {
 		t.Errorf("particle days = %v", days)
+	}
+
+	ranges := []string{
+		"11/1-11/14 @小明",
+		"11月1日-11月14日 @小明",
+		"[11/1-11/14] 所有人",
+		"11/1 - 11/14 所有人",
+		"2026/11/1-11/14 所有人",
+	}
+	for _, input := range ranges {
+		days, rest, err := SplitDayOverrideArgs(input, today)
+		if err != nil {
+			t.Errorf("range %q: %v", input, err)
+			continue
+		}
+		if len(days) != 14 {
+			t.Errorf("range %q parsed %d days, want 14", input, len(days))
+		}
+		if len(rest) != 1 || rest[0] != "所有人" && rest[0] != "@小明" && rest[0] != "小明" {
+			t.Errorf("range %q rest = %v", input, rest)
+		}
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"unicode"
 )
 
 // Send formats accepted by Settings.SendFormat.
@@ -12,8 +13,13 @@ const (
 	SendFormatMarkdown = "markdown"
 )
 
-// Settings holds the bot-wide runtime switches edited from the WebUI and the
-// /设置 command.
+// StorageMode selects how personal schedules are partitioned.
+const (
+	StorageModeGroup  = "group"
+	StorageModeGlobal = "global"
+)
+
+// Settings holds the bot-wide runtime switches edited from the WebUI.
 type Settings struct {
 	// Enabled is the master switch: when false the bot ignores every message.
 	Enabled bool `json:"enabled"`
@@ -33,6 +39,12 @@ type Settings struct {
 	BaseURL string `json:"base_url"`
 	// ScheduleLinkTTLMinutes controls how long /修改课程表 links stay valid.
 	ScheduleLinkTTLMinutes int `json:"schedule_link_ttl_minutes"`
+	// StorageMode keeps personal schedules per group (default) or shares them
+	// globally by union_openid.
+	StorageMode string `json:"storage_mode"`
+	// AdminOpenIDs restricts chat administrator commands to these OpenIDs.
+	// Empty keeps the platform group owner/administrator fallback.
+	AdminOpenIDs []string `json:"admin_open_ids"`
 }
 
 const settingsKey = "bot"
@@ -54,6 +66,8 @@ func DefaultSettings() Settings {
 		Enabled: true, ReplyPlain: true, ReplySlash: true, ReplyMention: true,
 		SendFormat:             SendFormatImage,
 		ScheduleLinkTTLMinutes: DefaultScheduleLinkTTLMinutes,
+		StorageMode:            StorageModeGroup,
+		AdminOpenIDs:           []string{},
 	}
 }
 
@@ -68,6 +82,8 @@ func (s *Service) BotSettings() (Settings, error) {
 	settings.SendFormat = NormalizeSendFormat(settings.SendFormat)
 	settings.Nickname = NormalizeNickname(settings.Nickname)
 	settings.BaseURL = normalizeStoredBaseURL(settings.BaseURL)
+	settings.StorageMode = NormalizeStorageMode(settings.StorageMode)
+	settings.AdminOpenIDs = NormalizeAdminOpenIDs(settings.AdminOpenIDs)
 	if ttl, err := NormalizeScheduleLinkTTLMinutes(settings.ScheduleLinkTTLMinutes); err == nil {
 		settings.ScheduleLinkTTLMinutes = ttl
 	} else {
@@ -80,6 +96,8 @@ func (s *Service) BotSettings() (Settings, error) {
 func (s *Service) SaveBotSettings(settings Settings) error {
 	settings.SendFormat = NormalizeSendFormat(settings.SendFormat)
 	settings.Nickname = NormalizeNickname(settings.Nickname)
+	settings.StorageMode = NormalizeStorageMode(settings.StorageMode)
+	settings.AdminOpenIDs = NormalizeAdminOpenIDs(settings.AdminOpenIDs)
 	baseURL, err := NormalizeBaseURL(settings.BaseURL)
 	if err != nil {
 		return err
@@ -91,6 +109,53 @@ func (s *Service) SaveBotSettings(settings Settings) error {
 	settings.BaseURL = baseURL
 	settings.ScheduleLinkTTLMinutes = ttl
 	return s.store.SetKV(KVScopeGlobal, KVNamespaceSettings, settingsKey, settings)
+}
+
+// AllowsAdmin reports whether a sender may execute chat administrator
+// commands. A configured list is authoritative; an empty list preserves the
+// platform owner/administrator fallback for backward compatibility.
+func (s Settings) AllowsAdmin(localUserID, globalUserID string, platformAdmin bool) bool {
+	admins := NormalizeAdminOpenIDs(s.AdminOpenIDs)
+	if len(admins) == 0 {
+		return platformAdmin
+	}
+	localUserID = strings.TrimSpace(localUserID)
+	globalUserID = strings.TrimSpace(globalUserID)
+	for _, adminID := range admins {
+		if adminID == localUserID || (globalUserID != "" && adminID == globalUserID) {
+			return true
+		}
+	}
+	return false
+}
+
+// NormalizeAdminOpenIDs trims, splits pasted lists, and removes duplicates
+// while preserving the administrator's input order.
+func NormalizeAdminOpenIDs(values []string) []string {
+	result := make([]string, 0, len(values))
+	seen := make(map[string]bool, len(values))
+	for _, raw := range values {
+		fields := strings.FieldsFunc(raw, func(r rune) bool {
+			return r == ',' || r == ';' || unicode.IsSpace(r)
+		})
+		for _, value := range fields {
+			value = strings.TrimSpace(value)
+			if value == "" || seen[value] {
+				continue
+			}
+			seen[value] = true
+			result = append(result, value)
+		}
+	}
+	return result
+}
+
+// NormalizeStorageMode maps unknown or absent values to the per-group default.
+func NormalizeStorageMode(value string) string {
+	if value == StorageModeGlobal {
+		return StorageModeGlobal
+	}
+	return StorageModeGroup
 }
 
 // NormalizeSendFormat maps unknown or absent values to the image default so an

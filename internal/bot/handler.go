@@ -164,15 +164,12 @@ func (h *Handler) Dispatch(ctx context.Context, in *Inbound, r *Replier) {
 		return
 	}
 
-	// An administrator may always manage the switches, even while the bot is off,
-	// so it can be turned back on from chat.
-	managingSettings := managesBotSettings(cmd, in)
-	if !settings.Enabled && !managingSettings {
+	if !settings.Enabled {
 		slog.Debug("机器人已关闭，忽略指令", "prefix", prefix, "origin", in.Origin)
 		return
 	}
 	mode := classifyReplyMode(mentioned, strings.HasPrefix(prefix, "/"))
-	if !managingSettings && !allowsReply(settings, mode) {
+	if !allowsReply(settings, mode) {
 		slog.Debug("回复策略已关闭，忽略指令", "prefix", prefix, "mode", string(mode), "origin", in.Origin)
 		return
 	}
@@ -185,16 +182,6 @@ func (h *Handler) Dispatch(ctx context.Context, in *Inbound, r *Replier) {
 		slog.Error("指令执行失败", "prefix", prefix, "err", err)
 	}
 	dispatchErr = err
-}
-
-// managesBotSettings reports whether a command may run while the bot is off.
-// Administrators keep access to the settings command so they can turn the bot
-// back on from chat.
-func managesBotSettings(cmd *Command, in *Inbound) bool {
-	if cmd == nil || !canManageSettings(in) {
-		return false
-	}
-	return cmd.Prefix == settingsCommandPrefix
 }
 
 // Callback is one button press delivered as an INTERACTION_CREATE event.
@@ -261,8 +248,12 @@ func (h *Handler) recordSeen(in *Inbound) {
 	if h.env == nil || in.UserOpenID == "" {
 		return
 	}
-	if err := h.env.Service.RecordSeenMember(h.env.Scope(in), in.UserOpenID, in.Username); err != nil {
+	scopeID := h.env.Scope(in)
+	if err := h.env.Service.RecordSeenMember(scopeID, in.UserOpenID, in.Username); err != nil {
 		slog.Warn("记录成员失败", "err", err)
+	}
+	if err := h.env.Service.RecordIdentity(scopeID, in.UserOpenID, in.GlobalUserOpenID); err != nil {
+		slog.Warn("记录全局用户身份失败", "err", err)
 	}
 }
 

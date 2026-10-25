@@ -28,6 +28,8 @@ If `go build` hangs, set `go env -w GOPROXY=https://goproxy.cn,direct`.
 - Comments and logs are **English**; user-visible text and Go error messages are **Chinese**.
 - Keep `schedule` free of `gin`, `sqlite`, `gg`, and `cron`; use its `Storage` interface.
 - Follow existing names: packages lowercase, exported `CamelCase`, files `snake_case_test.go`.
+- Do not add, remove, rename, or expose bot commands unless explicitly requested. Bot-wide
+  configuration belongs in the WebUI and must not be exposed as a chat command by default.
 
 ## Testing Guidelines
 

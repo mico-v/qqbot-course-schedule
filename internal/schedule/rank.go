@@ -185,6 +185,12 @@ func (s *Service) RankBoardRows(scopeID, period string, now time.Time) ([]RankRo
 	if err != nil {
 		return nil, "", err
 	}
+	return s.RankBoardRowsForMembers(members, period, now)
+}
+
+// RankBoardRowsForMembers builds a leaderboard from an already resolved member
+// set, allowing global schedules to be projected onto local identities.
+func (s *Service) RankBoardRowsForMembers(members map[string]*Member, period string, now time.Time) ([]RankRow, string, error) {
 	if len(members) == 0 {
 		return nil, "", nil
 	}

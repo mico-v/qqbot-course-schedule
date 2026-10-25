@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mico-v/qqbot-course-schedule/internal/render"
+	"github.com/mico-v/qqbot-course-schedule/internal/schedule"
 )
 
 const (
@@ -39,6 +40,26 @@ func (e *Env) MemberAvatars(ctx context.Context, scopeID string, userIDs []strin
 	if err != nil || len(bindings) == 0 {
 		return nil
 	}
+	return e.memberAvatarsForBindings(ctx, bindings, userIDs)
+}
+
+func (e *Env) memberAvatarsForMembers(ctx context.Context, members map[string]*schedule.Member, userIDs []string) map[string]image.Image {
+	if len(members) == 0 || len(userIDs) == 0 {
+		return nil
+	}
+	bindings := make(map[string]string)
+	for userID, member := range members {
+		if member != nil && member.QQ != "" {
+			bindings[userID] = member.QQ
+		}
+	}
+	if len(bindings) == 0 {
+		return nil
+	}
+	return e.memberAvatarsForBindings(ctx, bindings, userIDs)
+}
+
+func (e *Env) memberAvatarsForBindings(ctx context.Context, bindings map[string]string, userIDs []string) map[string]image.Image {
 	qqForUser := make(map[string]string)
 	var qqs []string
 	seen := make(map[string]bool)

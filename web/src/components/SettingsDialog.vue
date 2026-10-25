@@ -12,21 +12,26 @@ const form = reactive<BotSettings>({
   reply_slash: true,
   reply_mention: true,
   send_format: "image",
+  storage_mode: "group",
   nickname: "",
   base_url: "",
   schedule_link_ttl_minutes: 60,
+  admin_open_ids: [],
 });
 
 const loading = ref(false);
 const saving = ref(false);
 const hint = ref("");
+const adminIDsText = ref("");
 
 watch(visible, async (open) => {
   if (!open) return;
   hint.value = "";
   loading.value = true;
   try {
-    Object.assign(form, await loadSettings());
+    const settings = await loadSettings();
+    Object.assign(form, settings);
+    adminIDsText.value = settings.admin_open_ids.join("\n");
   } catch (error) {
     ElMessage.error(errorMessage(error));
   } finally {
@@ -37,15 +42,25 @@ watch(visible, async (open) => {
 async function submit(): Promise<void> {
   saving.value = true;
   try {
+    const adminOpenIDs = Array.from(
+      new Set(
+        adminIDsText.value
+          .split(/[\s,，;；]+/)
+          .map((value) => value.trim())
+          .filter(Boolean),
+      ),
+    );
     await saveSettings({
       enabled: form.enabled,
       reply_plain: form.reply_plain,
       reply_slash: form.reply_slash,
       reply_mention: form.reply_mention,
       send_format: form.send_format,
+      storage_mode: form.storage_mode,
       nickname: form.nickname.trim(),
       base_url: form.base_url.trim(),
       schedule_link_ttl_minutes: form.schedule_link_ttl_minutes,
+      admin_open_ids: adminOpenIDs,
     });
     hint.value = "已保存，立即生效。";
     ElMessage.success("机器人设置已保存。");
@@ -78,6 +93,28 @@ async function submit(): Promise<void> {
             <el-radio value="markdown">Markdown 列表</el-radio>
           </el-radio-group>
           <span class="setting-hint muted">Markdown 会以文字列表发送当天的课程内容。</span>
+        </el-form-item>
+        <el-form-item label="课表存储方式">
+          <el-radio-group v-model="form.storage_mode">
+            <el-radio value="group">按群存储（默认）</el-radio>
+            <el-radio value="global">全局存储</el-radio>
+          </el-radio-group>
+          <span class="setting-hint muted">
+            按群存储时每个群的成员课表相互独立；全局存储时按 union_openid 跨群共享。全局模式需要平台提供该字段，群消息缺失时会尝试调用群成员信息接口，机器人需获得对应权限。切换模式不会迁移已有课表，原数据会保留。
+          </span>
+        </el-form-item>
+        <el-form-item label="管理员 OpenID 名单">
+          <el-input
+            v-model="adminIDsText"
+            type="textarea"
+            :rows="4"
+            resize="vertical"
+            placeholder="每行填写一个 OpenID，也可以粘贴 union_openid"
+          />
+          <span class="setting-hint muted">
+            名单内的成员可以执行管理员命令。填写后优先匹配消息里的用户
+            OpenID 和 union_openid；留空时沿用平台群主/管理员身份。
+          </span>
         </el-form-item>
         <el-form-item label="机器人昵称">
           <el-input

@@ -2,9 +2,7 @@ package bot
 
 import (
 	"context"
-	"net/http/httptest"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/mico-v/qqbot-course-schedule/internal/schedule"
@@ -56,92 +54,28 @@ func TestAllowsReply(t *testing.T) {
 	}
 }
 
-func TestParseOnOff(t *testing.T) {
-	for _, value := range []string{"开", "on", "TRUE", "1", "yes", "启用"} {
-		if got, ok := parseOnOff(value); !ok || !got {
-			t.Errorf("parseOnOff(%q) = %v,%v want true,true", value, got, ok)
+func TestHandlerAdminAllowlist(t *testing.T) {
+	env, handler := newSettingsEnv(t)
+	settings := schedule.DefaultSettings()
+	settings.AdminOpenIDs = []string{"LOCAL-ADMIN", "GLOBAL-ADMIN"}
+	if err := env.Service.SaveBotSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name string
+		in   *Inbound
+		want bool
+	}{
+		{"local openid", &Inbound{UserOpenID: "LOCAL-ADMIN"}, true},
+		{"union openid", &Inbound{UserOpenID: "LOCAL-MEMBER", GlobalUserOpenID: "GLOBAL-ADMIN"}, true},
+		{"platform owner absent from list", &Inbound{UserOpenID: "OWNER", MemberRole: "owner"}, false},
+		{"normal member", &Inbound{UserOpenID: "MEMBER", MemberRole: "member"}, false},
+	}
+	for _, testCase := range cases {
+		if got := handler.isAdmin(testCase.in); got != testCase.want {
+			t.Errorf("%s: isAdmin = %v, want %v", testCase.name, got, testCase.want)
 		}
-	}
-	for _, value := range []string{"关", "off", "false", "0", "no", "禁用"} {
-		if got, ok := parseOnOff(value); !ok || got {
-			t.Errorf("parseOnOff(%q) = %v,%v want false,true", value, got, ok)
-		}
-	}
-	if _, ok := parseOnOff("也许"); ok {
-		t.Error("parseOnOff accepted an invalid value")
-	}
-}
-
-func TestApplySettingArgs(t *testing.T) {
-	base := schedule.DefaultSettings()
-
-	updated, problem := applySettingArgs(base, []string{"机器人", "关"})
-	if problem != "" || updated.Enabled {
-		t.Fatalf("机器人 关 => %+v problem=%q", updated, problem)
-	}
-
-	updated, problem = applySettingArgs(base, []string{"关"})
-	if problem != "" || updated.Enabled {
-		t.Fatalf("关 => %+v problem=%q", updated, problem)
-	}
-
-	updated, problem = applySettingArgs(base, []string{"回复", "斜杠", "关"})
-	if problem != "" || updated.ReplySlash || !updated.ReplyPlain {
-		t.Fatalf("回复 斜杠 关 => %+v problem=%q", updated, problem)
-	}
-
-	updated, problem = applySettingArgs(base, []string{"回复", "全部", "关"})
-	if problem != "" || updated.ReplyPlain || updated.ReplySlash || updated.ReplyMention {
-		t.Fatalf("回复 全部 关 => %+v problem=%q", updated, problem)
-	}
-
-	updated, problem = applySettingArgs(base, []string{"格式", "markdown"})
-	if problem != "" || updated.SendFormat != schedule.SendFormatMarkdown {
-		t.Fatalf("格式 markdown => %+v problem=%q", updated, problem)
-	}
-
-	updated, problem = applySettingArgs(base, []string{"格式", "图片"})
-	if problem != "" || updated.SendFormat != schedule.SendFormatImage {
-		t.Fatalf("格式 图片 => %+v problem=%q", updated, problem)
-	}
-
-	updated, problem = applySettingArgs(base, []string{"昵称", "课表", "小助手"})
-	if problem != "" || updated.Nickname != "课表 小助手" {
-		t.Fatalf("昵称 课表 小助手 => %+v problem=%q", updated, problem)
-	}
-
-	updated, problem = applySettingArgs(base, []string{"昵称", "清空"})
-	if problem != "" || updated.Nickname != "" {
-		t.Fatalf("昵称 清空 => %+v problem=%q", updated, problem)
-	}
-
-	updated, problem = applySettingArgs(base, []string{"回调地址", "https://kb.example.com/"})
-	if problem != "" || updated.BaseURL != "https://kb.example.com" {
-		t.Fatalf("回调地址 => %+v problem=%q", updated, problem)
-	}
-
-	updated, problem = applySettingArgs(base, []string{"连接过期时间", "90"})
-	if problem != "" || updated.ScheduleLinkTTLMinutes != 90 {
-		t.Fatalf("连接过期时间 90 => %+v problem=%q", updated, problem)
-	}
-
-	if _, problem = applySettingArgs(base, []string{"回复", "斜杠"}); problem == "" {
-		t.Error("missing value should return usage")
-	}
-	if _, problem = applySettingArgs(base, []string{"格式", "乱写"}); problem == "" {
-		t.Error("unknown send format should return an error")
-	}
-	if _, problem = applySettingArgs(base, []string{"昵称"}); problem == "" {
-		t.Error("missing nickname should return usage")
-	}
-	if _, problem = applySettingArgs(base, []string{"乱写"}); problem == "" {
-		t.Error("unknown token should return usage")
-	}
-	if _, problem = applySettingArgs(base, []string{"回调地址", "kb.example.com"}); problem == "" {
-		t.Error("an invalid callback address should fail")
-	}
-	if _, problem = applySettingArgs(base, []string{"连接过期时间", "0"}); problem == "" {
-		t.Error("zero TTL should fail when set explicitly")
 	}
 }
 
@@ -193,106 +127,5 @@ func TestDispatchRespectsReplyPolicy(t *testing.T) {
 
 	if len(got) != 1 || got[0] != "/课表" {
 		t.Fatalf("got = %v, want a single mention call with content %q", got, "/课表")
-	}
-}
-
-func TestDispatchAdminSettingsBypassesDisabled(t *testing.T) {
-	env, handler := newSettingsEnv(t)
-	called := 0
-	handler.Register(&Command{Prefix: settingsCommandPrefix, Handle: func(context.Context, *Inbound, *Replier) error {
-		called++
-		return nil
-	}})
-
-	off := schedule.DefaultSettings()
-	off.Enabled = false
-	if err := env.Service.SaveBotSettings(off); err != nil {
-		t.Fatal(err)
-	}
-
-	dispatch(context.Background(), nil, handler, &Inbound{Content: "/设置", MemberRole: "member"})
-	if called != 0 {
-		t.Fatal("a plain member reached settings while the bot is off")
-	}
-	dispatch(context.Background(), nil, handler, &Inbound{Content: "/设置", MemberRole: "admin"})
-	if called != 1 {
-		t.Fatal("an admin must be able to manage settings while the bot is off")
-	}
-}
-
-func TestSettingsCommandUpdatesSwitches(t *testing.T) {
-	fake := newFakeQQ()
-	apiServer := httptest.NewServer(fake.handler())
-	t.Cleanup(apiServer.Close)
-
-	env, message := newTestEnv(t, fake, apiServer.URL)
-	message.MemberRole = "admin"
-	message.Args = "机器人 关"
-	handler := NewDefaultHandler(env)
-	if err := handler.handleSettings(context.Background(), message, NewReplier(message, env.Client)); err != nil {
-		t.Fatalf("handleSettings: %v", err)
-	}
-	settings, err := env.Service.BotSettings()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if settings.Enabled {
-		t.Fatalf("settings = %+v, want enabled=false", settings)
-	}
-}
-
-func TestSettingsTextShowsSendFormat(t *testing.T) {
-	if text := settingsText(schedule.DefaultSettings()); !strings.Contains(text, "发送格式：图片") {
-		t.Fatalf("default text = %q", text)
-	}
-	settings := schedule.DefaultSettings()
-	settings.SendFormat = schedule.SendFormatMarkdown
-	if text := settingsText(settings); !strings.Contains(text, "发送格式：markdown") {
-		t.Fatalf("markdown text = %q", text)
-	}
-}
-
-func TestSettingsTextShowsNickname(t *testing.T) {
-	if text := settingsText(schedule.DefaultSettings()); !strings.Contains(text, "机器人昵称：未设置") {
-		t.Fatalf("default text = %q", text)
-	}
-	settings := schedule.DefaultSettings()
-	settings.Nickname = "课表小助手"
-	if text := settingsText(settings); !strings.Contains(text, "机器人昵称：课表小助手") {
-		t.Fatalf("nickname text = %q", text)
-	}
-}
-
-func TestSettingsTextShowsPublicLinkSettings(t *testing.T) {
-	settings := schedule.DefaultSettings()
-	settings.BaseURL = "https://kb.example.com"
-	settings.ScheduleLinkTTLMinutes = 90
-	text := settingsText(settings)
-	if !strings.Contains(text, "回调地址：https://kb.example.com") {
-		t.Fatalf("base URL missing from %q", text)
-	}
-	if !strings.Contains(text, "课表连接过期时间：90 分钟") {
-		t.Fatalf("TTL missing from %q", text)
-	}
-}
-
-func TestSettingsCommandSetsSendFormat(t *testing.T) {
-	fake := newFakeQQ()
-	apiServer := httptest.NewServer(fake.handler())
-	t.Cleanup(apiServer.Close)
-
-	env, message := newTestEnv(t, fake, apiServer.URL)
-	message.MemberRole = "admin"
-	message.Args = "格式 markdown"
-	handler := NewDefaultHandler(env)
-	if err := handler.handleSettings(context.Background(), message, NewReplier(message, env.Client)); err != nil {
-		t.Fatalf("handleSettings: %v", err)
-	}
-	settings, err := env.Service.BotSettings()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if settings.SendFormat != schedule.SendFormatMarkdown {
-		t.Fatalf("settings = %+v, want send_format=markdown", settings)
 	}
 }

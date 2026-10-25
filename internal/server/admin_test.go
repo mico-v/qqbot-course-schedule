@@ -88,8 +88,14 @@ func adminRequest(router *gin.Engine, method, path string, body any, withAuth bo
 func TestAdminRequiresPassword(t *testing.T) {
 	router, _ := newAdminRouter(t, adminPassword)
 
+	// 网站根路径直接进入管理台，再由会话中间件引导到登录页。
+	recorder := adminRequest(router, http.MethodGet, "/", nil, false)
+	if recorder.Code != http.StatusFound || recorder.Header().Get("Location") != "/admin" {
+		t.Fatalf("root redirect = %d %q, want 302 /admin", recorder.Code, recorder.Header().Get("Location"))
+	}
+
 	// 登录页与登录接口本身无需会话。
-	recorder := adminRequest(router, http.MethodGet, "/login", nil, false)
+	recorder = adminRequest(router, http.MethodGet, "/login", nil, false)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("login page = %d, want 200", recorder.Code)
 	}

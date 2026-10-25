@@ -2,7 +2,6 @@ package schedule
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 )
@@ -13,8 +12,6 @@ type TimeRange struct {
 	End   time.Time
 	Label string
 }
-
-var timeRangeSplitRe = regexp.MustCompile(`(?i)\s*(?:\.\.|~|至|到|—|-{2,}|\bto\b)\s*`)
 
 var singleDayTokens = map[string]int{
 	"": 0, "today": 0, "今天": 0, "今日": 0,
@@ -57,14 +54,13 @@ func ParseTimeRange(value string, today time.Time) (TimeRange, error) {
 	case lastMonth[compact]:
 		startDate, endDate = monthBounds(today, -1)
 	default:
-		parts := splitNonEmpty(timeRangeSplitRe.Split(normalized, -1))
 		var err error
-		if len(parts) == 2 {
-			startDate, err = parseRangeDateToken(parts[0], today)
+		if startText, endText, ok := splitDateRange(normalized); ok {
+			startDate, err = parseRangeDateToken(startText, today)
 			if err != nil {
 				return TimeRange{}, err
 			}
-			endDate, err = parseRangeDateToken(parts[1], today)
+			endDate, err = parseRangeDateToken(endText, today)
 			if err != nil {
 				return TimeRange{}, err
 			}
@@ -92,15 +88,13 @@ func ParseTimeRange(value string, today time.Time) (TimeRange, error) {
 }
 
 func parseRangeDateToken(token string, today time.Time) (time.Time, error) {
-	normalized := strings.ToLower(strings.TrimSpace(token))
-	if delta, ok := singleDayTokens[normalized]; ok {
-		return beginningOfDay(today).AddDate(0, 0, delta), nil
+	normalized := strings.ToLower(trimDateWrappers(token))
+	if parsed, found, err := ParseDayToken(normalized, today); err != nil {
+		return time.Time{}, err
+	} else if found {
+		return parsed, nil
 	}
-	parsed, err := time.ParseInLocation("2006-01-02", normalized, LocalTZ)
-	if err != nil {
-		return time.Time{}, fmt.Errorf(timeRangeHint, token)
-	}
-	return parsed, nil
+	return time.Time{}, fmt.Errorf(timeRangeHint, token)
 }
 
 func weekBounds(today time.Time, offsetWeeks int) (time.Time, time.Time) {

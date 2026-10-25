@@ -2,6 +2,7 @@ package webhook
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -100,6 +101,11 @@ func (f *fakeQQ) sendCount() int {
 
 func newTestRouter(t *testing.T) (*gin.Engine, *fakeQQ) {
 	t.Helper()
+	return newTestRouterWithHandler(t, bot.NewDefaultHandler(nil))
+}
+
+func newTestRouterWithHandler(t *testing.T, handler *bot.Handler) (*gin.Engine, *fakeQQ) {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 
 	fake := newFakeQQ()
@@ -117,7 +123,7 @@ func newTestRouter(t *testing.T) (*gin.Engine, *fakeQQ) {
 		LogLevel:      "error",
 	}
 	client := qqapi.New(cfg)
-	dispatcher := NewDispatcher(client, cfg.Secret, bot.NewDefaultHandler(nil))
+	dispatcher := NewDispatcher(client, cfg.Secret, handler)
 	verify, err := Verify(cfg.Secret)
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
@@ -183,6 +189,40 @@ func TestGroupPingRepliesPong(t *testing.T) {
 	}
 	if message.Authorization != "QQBot test-token" {
 		t.Errorf("authorization = %q", message.Authorization)
+	}
+}
+
+func TestGroupMessageCarriesUnionOpenID(t *testing.T) {
+	handler := bot.NewHandler()
+	received := make(chan *bot.Inbound, 1)
+	handler.Register(&bot.Command{
+		Prefix: "/capture",
+		Handle: func(_ context.Context, in *bot.Inbound, _ *bot.Replier) error {
+			received <- in
+			return nil
+		},
+		Ready: true,
+	})
+	router, _ := newTestRouterWithHandler(t, handler)
+
+	postSigned(t, router, `{
+		"id": "evt-union", "op": 0, "t": "GROUP_AT_MESSAGE_CREATE",
+		"d": {
+			"id": "msg-union", "content": "/capture", "group_openid": "GROUP",
+			"author": {
+				"id": "U1", "member_openid": "LOCAL-U1", "union_openid": "UNION-U1",
+				"username": "小明", "member_role": "member", "bot": false
+			}
+		}
+	}`)
+
+	select {
+	case in := <-received:
+		if in.UserOpenID != "LOCAL-U1" || in.GlobalUserOpenID != "UNION-U1" {
+			t.Fatalf("inbound IDs = local %q, global %q", in.UserOpenID, in.GlobalUserOpenID)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for captured inbound message")
 	}
 }
 

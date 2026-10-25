@@ -24,6 +24,9 @@ import (
 func RegisterAdmin(router *gin.Engine, service *admin.Service, password string) {
 	auth := newAdminAuth(password)
 
+	router.GET("/", func(c *gin.Context) {
+		c.Redirect(http.StatusFound, "/admin")
+	})
 	router.GET("/login", serveAdminIndex)
 	router.GET("/schedule/edit", serveAdminIndex)
 	// Hashed build assets stay public: the login page itself loads them before

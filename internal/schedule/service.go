@@ -144,6 +144,12 @@ func (s *Service) BuildDayCard(scopeID string, selected, now, at time.Time) (*Da
 	if err != nil {
 		return nil, false, err
 	}
+	return s.BuildDayCardForMembers(members, selected, now, at)
+}
+
+// BuildDayCardForMembers builds one day view from an already resolved member
+// set, allowing callers to project global schedules onto local identities.
+func (s *Service) BuildDayCardForMembers(members map[string]*Member, selected, now, at time.Time) (*DayCard, bool, error) {
 	if len(members) == 0 {
 		return nil, false, nil
 	}
@@ -191,6 +197,11 @@ func (s *Service) BuildDayMarkdown(scopeID string, selected, now time.Time) (str
 	if err != nil {
 		return "", false, err
 	}
+	return s.BuildDayMarkdownForMembers(members, selected, now)
+}
+
+// BuildDayMarkdownForMembers renders a resolved member set as markdown.
+func (s *Service) BuildDayMarkdownForMembers(members map[string]*Member, selected, now time.Time) (string, bool, error) {
 	if len(members) == 0 {
 		return "", false, nil
 	}

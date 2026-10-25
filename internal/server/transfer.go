@@ -73,7 +73,7 @@ func registerTransferRoutes(api *gin.RouterGroup, service *admin.Service) {
 			writeAttachment(c, "application/json; charset=utf-8", "course-schedule-backup-"+safeToken(scopeID)+".json", payload)
 			return
 		}
-		members, err := service.ScopeMembers(scopeID)
+		members, err := service.VisibleMembers(scopeID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -247,7 +247,12 @@ func importICSArchive(service *admin.Service, scopeID string, data []byte) (*adm
 			result.Skipped = append(result.Skipped, base)
 			continue
 		}
-		saved, err := service.SaveICS(scopeID, target, entry.Name, string(raw), base, "webui")
+		storageTarget, err := service.ResolveStorageTarget(scopeID, target, "")
+		if err != nil {
+			result.Skipped = append(result.Skipped, base)
+			continue
+		}
+		saved, err := service.SaveICS(storageTarget.ScopeID, storageTarget.UserID, entry.Name, string(raw), base, "webui")
 		if err != nil {
 			result.Skipped = append(result.Skipped, base)
 			continue
@@ -276,7 +281,11 @@ func importSingleICS(service *admin.Service, scopeID, userID, filename string, d
 	if target == "" {
 		return nil, fmt.Errorf("请先在左侧选中成员，或把文件命名为 schedule<OpenID>.ics。")
 	}
-	saved, err := service.SaveICS(scopeID, target, "", string(data), filepath.Base(filename), "webui")
+	storageTarget, err := service.ResolveStorageTarget(scopeID, target, "")
+	if err != nil {
+		return nil, err
+	}
+	saved, err := service.SaveICS(storageTarget.ScopeID, storageTarget.UserID, "", string(data), filepath.Base(filename), "webui")
 	if err != nil {
 		return nil, err
 	}

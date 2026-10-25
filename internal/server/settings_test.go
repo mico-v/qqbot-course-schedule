@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"slices"
 	"testing"
 
 	"github.com/mico-v/qqbot-course-schedule/internal/schedule"
@@ -22,7 +23,16 @@ func TestSettingsAPI(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.Settings != schedule.DefaultSettings() {
+	if len(got.Settings.AdminOpenIDs) != 0 ||
+		got.Settings.Enabled != schedule.DefaultSettings().Enabled ||
+		got.Settings.ReplyPlain != schedule.DefaultSettings().ReplyPlain ||
+		got.Settings.ReplySlash != schedule.DefaultSettings().ReplySlash ||
+		got.Settings.ReplyMention != schedule.DefaultSettings().ReplyMention ||
+		got.Settings.SendFormat != schedule.DefaultSettings().SendFormat ||
+		got.Settings.Nickname != schedule.DefaultSettings().Nickname ||
+		got.Settings.BaseURL != schedule.DefaultSettings().BaseURL ||
+		got.Settings.ScheduleLinkTTLMinutes != schedule.DefaultSettings().ScheduleLinkTTLMinutes ||
+		got.Settings.StorageMode != schedule.DefaultSettings().StorageMode {
 		t.Fatalf("defaults = %+v", got.Settings)
 	}
 
@@ -31,6 +41,8 @@ func TestSettingsAPI(t *testing.T) {
 		Enabled: false, ReplyPlain: true, ReplySlash: false, ReplyMention: true,
 		SendFormat: schedule.SendFormatMarkdown, Nickname: "课表小助手",
 		BaseURL: "https://kb.example.com", ScheduleLinkTTLMinutes: 90,
+		StorageMode:  schedule.StorageModeGlobal,
+		AdminOpenIDs: []string{"ADMIN-1"},
 	}
 	if recorder := adminRequest(router, http.MethodPost, "/api/settings", want, true); recorder.Code != http.StatusOK {
 		t.Fatalf("post settings = %d (%s)", recorder.Code, recorder.Body.String())
@@ -39,7 +51,13 @@ func TestSettingsAPI(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.Settings != want {
+	if !slices.Equal(got.Settings.AdminOpenIDs, want.AdminOpenIDs) ||
+		got.Settings.Enabled != want.Enabled || got.Settings.ReplyPlain != want.ReplyPlain ||
+		got.Settings.ReplySlash != want.ReplySlash || got.Settings.ReplyMention != want.ReplyMention ||
+		got.Settings.SendFormat != want.SendFormat || got.Settings.Nickname != want.Nickname ||
+		got.Settings.BaseURL != want.BaseURL ||
+		got.Settings.ScheduleLinkTTLMinutes != want.ScheduleLinkTTLMinutes ||
+		got.Settings.StorageMode != want.StorageMode {
 		t.Fatalf("round-trip = %+v, want %+v", got.Settings, want)
 	}
 

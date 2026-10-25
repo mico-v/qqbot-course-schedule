@@ -35,13 +35,19 @@ var fillerTokens = map[string]bool{
 }
 
 var (
-	dateTextRe         = regexp.MustCompile(`^(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})日?$`)
-	monthDayRe         = regexp.MustCompile(`^(\d{1,2})[-/.月](\d{1,2})日?$`)
-	rangeSplitRe       = regexp.MustCompile(`\s*(?:\.\.|~|～|—|至|到)\s*`)
-	rangeJoinRe        = regexp.MustCompile(`\s*(\.\.|~|～|—)\s*`)
+	dateTextRe         = regexp.MustCompile(`^(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})[日号]?$`)
+	monthDayRe         = regexp.MustCompile(`^(\d{1,2})[-/.月](\d{1,2})[日号]?$`)
+	rangeSplitRe       = regexp.MustCompile(`(?i)\s*(?:\.\.|~|～|—|–|至|到|\bto\b)\s*`)
+	rangeJoinRe        = regexp.MustCompile(`\s*(\.\.|~|～|—|–)\s*`)
 	tokenSplitRe       = regexp.MustCompile(`[\s,，、;；]+`)
 	leadingParticleRe  = regexp.MustCompile(`^(?:上|按|补|调|到|从|把|给|为|在|换|改)+`)
 	trailingParticleRe = regexp.MustCompile(`(?:的(?:课|课程|课程表)?|课|课程)+$`)
+	dateTrailingNoteRe = regexp.MustCompile(`\s*[（(【\[][^）)】\]]*[）)】\]]\s*$`)
+
+	dateTokenPattern      = `(?:\d{4}[-/.年]\d{1,2}[-/.月]\d{1,2}[日号]?|\d{1,2}[-/.月]\d{1,2}[日号]?)`
+	dateRangeEndpointRe   = regexp.MustCompile(`^\s*(` + dateTokenPattern + `)\s*-\s*(` + dateTokenPattern + `)\s*$`)
+	dateRangeSpaceDashRe  = regexp.MustCompile(`(` + dateTokenPattern + `)\s+-\s+(` + dateTokenPattern + `)`)
+	dateWrapperCharacters = " \t\r\n[]【】()（）{}<>《》「」『』,，。;；:："
 )
 
 func dayAt(year int, month time.Month, day int) (time.Time, bool) {
@@ -56,7 +62,7 @@ func dayAt(year int, month time.Month, day int) (time.Time, bool) {
 // date-shaped at all; err is set when it is date-shaped but invalid.
 // A year-less date resolves inside today's academic year (Aug 1 boundary).
 func ParseDayToken(value string, today time.Time) (day time.Time, found bool, err error) {
-	raw := strings.TrimSpace(value)
+	raw := trimDateWrappers(value)
 	if raw == "" {
 		return time.Time{}, false, nil
 	}
@@ -86,7 +92,7 @@ func looseDay(value string, today time.Time) (time.Time, bool) {
 	if parsed, found, err := ParseDayToken(value, today); err == nil && found {
 		return parsed, true
 	}
-	trimmed := strings.TrimSpace(value)
+	trimmed := trimDateWrappers(value)
 	cleaned := trailingParticleRe.ReplaceAllString(leadingParticleRe.ReplaceAllString(trimmed, ""), "")
 	if cleaned == "" || cleaned == trimmed {
 		return time.Time{}, false
@@ -97,13 +103,38 @@ func looseDay(value string, today time.Time) (time.Time, bool) {
 	return time.Time{}, false
 }
 
+func trimDateWrappers(value string) string {
+	value = strings.TrimSpace(value)
+	for {
+		previous := value
+		value = strings.Trim(value, dateWrapperCharacters)
+		value = dateTrailingNoteRe.ReplaceAllString(value, "")
+		value = strings.TrimSpace(value)
+		if value == previous {
+			return value
+		}
+	}
+}
+
+func splitDateRange(value string) (string, string, bool) {
+	normalized := trimDateWrappers(value)
+	parts := splitNonEmpty(rangeSplitRe.Split(normalized, -1))
+	if len(parts) == 2 {
+		return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), true
+	}
+	if matched := dateRangeEndpointRe.FindStringSubmatch(normalized); matched != nil {
+		return matched[1], matched[2], true
+	}
+	return "", "", false
+}
+
 func rangeDays(value string, today time.Time) ([]time.Time, bool, error) {
-	parts := splitNonEmpty(rangeSplitRe.Split(value, -1))
-	if len(parts) != 2 {
+	startText, endText, ok := splitDateRange(value)
+	if !ok {
 		return nil, false, nil
 	}
-	start, startOK := looseDay(parts[0], today)
-	end, endOK := looseDay(parts[1], today)
+	start, startOK := looseDay(startText, today)
+	end, endOK := looseDay(endText, today)
 	if !startOK || !endOK {
 		return nil, false, nil
 	}
@@ -125,6 +156,7 @@ func rangeDays(value string, today time.Time) ([]time.Time, bool, error) {
 func SplitDayOverrideArgs(value string, today time.Time) ([]time.Time, []string, error) {
 	var days []time.Time
 	var rest []string
+	value = dateRangeSpaceDashRe.ReplaceAllString(value, "$1-$2")
 	joined := rangeJoinRe.ReplaceAllString(value, "$1")
 	for _, rawToken := range tokenSplitRe.Split(joined, -1) {
 		token := strings.TrimSpace(rawToken)

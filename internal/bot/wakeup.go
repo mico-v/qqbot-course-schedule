@@ -41,7 +41,11 @@ func (e *Env) ImportWakeUp(ctx context.Context, in *Inbound, r *Replier, text st
 	if strings.TrimSpace(shareData) == "" {
 		return r.Reply(ctx, "分享口令无效或已过期，请让分享者重新分享。")
 	}
-	result, err := e.Service.SaveWakeUpShare(e.Scope(in), in.UserOpenID, in.Username, shareData, "wakeup", in.UserOpenID)
+	target, err := e.ScheduleTarget(ctx, in, in.UserOpenID)
+	if err != nil {
+		return r.Reply(ctx, err.Error())
+	}
+	result, err := e.Service.SaveWakeUpShare(target.ScopeID, target.UserID, in.Username, shareData, "wakeup", in.UserOpenID)
 	if err != nil {
 		slog.Warn("导入 WakeUp 课表失败", "err", err)
 		return r.Reply(ctx, err.Error())

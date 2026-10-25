@@ -19,11 +19,11 @@ func (h *Handler) handleEditScheduleCommand(ctx context.Context, in *Inbound, r 
 	if in == nil || strings.TrimSpace(in.UserOpenID) == "" {
 		return r.Reply(ctx, "无法识别发送人，请稍后重试。")
 	}
-	scopeID := h.env.Scope(in)
-	if scopeID == "" {
-		return r.Reply(ctx, "无法识别当前会话，请稍后重试。")
+	target, err := h.env.ScheduleTarget(ctx, in, in.UserOpenID)
+	if err != nil {
+		return r.Reply(ctx, err.Error())
 	}
-	if err := h.env.Service.EnsureMember(scopeID, in.UserOpenID, in.Username); err != nil {
+	if err := h.env.Service.EnsureMember(target.ScopeID, target.UserID, in.Username); err != nil {
 		return r.Reply(ctx, "准备课表失败："+err.Error())
 	}
 
@@ -36,7 +36,7 @@ func (h *Handler) handleEditScheduleCommand(ctx context.Context, in *Inbound, r 
 		return r.Reply(ctx, "尚未配置服务回调地址，请联系管理员在设置中填写。")
 	}
 	ttl := time.Duration(settings.ScheduleLinkTTLMinutes) * time.Minute
-	token, expiresAt, err := h.env.Service.CreateScheduleEditLink(scopeID, in.UserOpenID, ttl, h.env.now())
+	token, expiresAt, err := h.env.Service.CreateScheduleEditLink(target.ScopeID, target.UserID, ttl, h.env.now())
 	if err != nil {
 		return r.Reply(ctx, "生成修改链接失败："+err.Error())
 	}

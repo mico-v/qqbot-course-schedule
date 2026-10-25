@@ -31,8 +31,12 @@ func (e *Env) ImportICS(ctx context.Context, in *Inbound, r *Replier, attachment
 		"origin", in.Origin,
 	)
 
+	target, err := e.ScheduleTarget(ctx, in, in.UserOpenID)
+	if err != nil {
+		return r.Reply(ctx, err.Error())
+	}
 	result, err := e.Service.SaveICS(
-		e.Scope(in), in.UserOpenID, in.Username,
+		target.ScopeID, target.UserID, in.Username,
 		content, attachment.Filename, in.UserOpenID,
 	)
 	if err != nil {

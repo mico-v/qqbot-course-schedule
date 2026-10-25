@@ -18,13 +18,9 @@ func (h *Handler) handleNickname(ctx context.Context, in *Inbound, r *Replier) e
 	if in == nil || strings.TrimSpace(in.UserOpenID) == "" {
 		return r.Reply(ctx, "无法识别发送人，请稍后重试。")
 	}
-	scopeID := h.env.Scope(in)
-	if scopeID == "" {
-		return r.Reply(ctx, "无法识别当前会话，请稍后重试。")
-	}
 	name := strings.TrimSpace(in.Args)
 	if name == "" {
-		members, err := h.env.Service.ScopeMembers(scopeID)
+		members, err := h.env.ScheduleMembers(ctx, in)
 		if err != nil {
 			return r.Reply(ctx, "读取昵称失败："+err.Error())
 		}
@@ -40,7 +36,11 @@ func (h *Handler) handleNickname(ctx context.Context, in *Inbound, r *Replier) e
 	if isClearNickname(name) {
 		name = ""
 	}
-	saved, err := h.env.Service.SetMemberName(scopeID, in.UserOpenID, name, in.UserOpenID)
+	target, err := h.env.ScheduleTarget(ctx, in, in.UserOpenID)
+	if err != nil {
+		return r.Reply(ctx, "保存昵称失败："+err.Error())
+	}
+	saved, err := h.env.Service.SetMemberName(target.ScopeID, target.UserID, name, in.UserOpenID)
 	if err != nil {
 		return r.Reply(ctx, "保存昵称失败："+err.Error())
 	}

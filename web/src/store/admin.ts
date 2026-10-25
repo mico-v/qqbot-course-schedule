@@ -335,6 +335,7 @@ export async function loadSettings(): Promise<BotSettings> {
     reply_slash: settings.reply_slash !== false,
     reply_mention: settings.reply_mention !== false,
     send_format: settings.send_format === "markdown" ? "markdown" : "image",
+    storage_mode: settings.storage_mode === "global" ? "global" : "group",
     nickname: settings.nickname || "",
     base_url: settings.base_url || "",
     schedule_link_ttl_minutes:
@@ -342,6 +343,9 @@ export async function loadSettings(): Promise<BotSettings> {
       settings.schedule_link_ttl_minutes > 0
         ? settings.schedule_link_ttl_minutes
         : 60,
+    admin_open_ids: Array.isArray(settings.admin_open_ids)
+      ? settings.admin_open_ids.filter((value) => typeof value === "string")
+      : [],
   };
 }
 

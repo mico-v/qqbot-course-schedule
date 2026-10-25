@@ -55,29 +55,76 @@ type ScopeSummary struct {
 // ScopeSummaries lists every scope that has saved schedules, plus scopes whose
 // members only interacted with the bot (so their first schedule can be created).
 func (s *Service) ScopeSummaries() ([]ScopeSummary, error) {
-	summaries, err := s.storage.ListScopeSummaries()
+	rawSummaries, err := s.storage.ListScopeSummaries()
 	if err != nil {
 		return nil, err
 	}
-	known := make(map[string]bool, len(summaries))
-	for _, summary := range summaries {
+	known := make(map[string]bool)
+	summaries := make(map[string]ScopeSummary)
+	for _, summary := range rawSummaries {
+		if !isDisplayScope(summary.ScopeID) {
+			continue
+		}
 		known[summary.ScopeID] = true
+		summaries[summary.ScopeID] = summary
 	}
-	entries, err := s.storage.ListKV(schedule.KVScopeGlobal, schedule.KVNamespaceSeen)
+	for _, namespace := range []string{schedule.KVNamespaceSeen, schedule.KVNamespaceIdentity} {
+		entries, err := s.storage.ListKV(schedule.KVScopeGlobal, namespace)
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range entries {
+			if isDisplayScope(entry.Key) {
+				known[entry.Key] = true
+			}
+		}
+	}
+
+	settings, err := s.BotSettings()
 	if err != nil {
 		return nil, err
 	}
-	for _, entry := range entries {
-		if known[entry.Key] {
-			continue
+	result := make([]ScopeSummary, 0, len(known))
+	for scopeID := range known {
+		members := summaries[scopeID].Members
+		if settings.StorageMode == schedule.StorageModeGlobal {
+			visible, err := s.VisibleMembers(scopeID)
+			if err != nil {
+				return nil, err
+			}
+			members = memberSummaries(visible)
 		}
-		if kind, _ := schedule.ParseScope(entry.Key); kind != "group" && kind != "private" {
-			continue
-		}
-		summaries = append(summaries, ScopeSummary{ScopeID: entry.Key})
+		result = append(result, ScopeSummary{ScopeID: scopeID, Members: members})
 	}
-	sort.Slice(summaries, func(i, j int) bool { return summaries[i].ScopeID < summaries[j].ScopeID })
-	return summaries, nil
+	sort.Slice(result, func(i, j int) bool { return result[i].ScopeID < result[j].ScopeID })
+	return result, nil
+}
+
+func isDisplayScope(scopeID string) bool {
+	kind, _ := schedule.ParseScope(scopeID)
+	return kind == "group" || kind == "private"
+}
+
+func memberSummaries(members map[string]*schedule.Member) []ScopeMemberSummary {
+	ids := make([]string, 0, len(members))
+	for userID := range members {
+		ids = append(ids, userID)
+	}
+	sort.Strings(ids)
+	summaries := make([]ScopeMemberSummary, 0, len(ids))
+	for _, userID := range ids {
+		member := members[userID]
+		if member == nil {
+			continue
+		}
+		summaries = append(summaries, ScopeMemberSummary{
+			UserID:     userID,
+			Name:       firstNonEmpty(member.Name, userID),
+			EventCount: len(member.Events),
+			Revision:   member.Revision,
+		})
+	}
+	return summaries
 }
 
 // WebEvent is one event as the admin page sees it.
@@ -104,6 +151,28 @@ type PageSchedule struct {
 
 // PageSchedule loads one member for the admin editor.
 func (s *Service) PageSchedule(scopeID, userID string) (*PageSchedule, bool, error) {
+	scopeID = strings.TrimSpace(scopeID)
+	userID = strings.TrimSpace(userID)
+	if scopeID == "" || userID == "" {
+		return nil, false, fmt.Errorf("scope_id 和 user_id 不能为空。")
+	}
+	target, err := s.ResolveStorageTarget(scopeID, userID, "")
+	if err != nil {
+		return nil, false, err
+	}
+	page, found, err := s.PageScheduleAt(target.ScopeID, target.UserID)
+	if err != nil || !found || page == nil {
+		return page, found, err
+	}
+	page.ScopeID = scopeID
+	page.UserID = userID
+	return page, true, nil
+}
+
+// PageScheduleAt loads a member by exact storage coordinates. Public edit
+// links use this so an already-issued link cannot be reinterpreted after the
+// storage mode changes.
+func (s *Service) PageScheduleAt(scopeID, userID string) (*PageSchedule, bool, error) {
 	scopeID = strings.TrimSpace(scopeID)
 	userID = strings.TrimSpace(userID)
 	if scopeID == "" || userID == "" {
@@ -206,7 +275,7 @@ func (s *Service) PublicPageSchedule(token string, now time.Time) (*PublicPageSc
 	if err != nil {
 		return nil, false, err
 	}
-	page, found, err := s.PageSchedule(link.ScopeID, link.UserID)
+	page, found, err := s.PageScheduleAt(link.ScopeID, link.UserID)
 	if err != nil || !found {
 		return nil, found, err
 	}
@@ -227,7 +296,7 @@ func (s *Service) SavePublicSchedule(token string, payload PublicSavePayload, no
 	if err != nil {
 		return nil, err
 	}
-	result, err := s.SavePageSchedule(SavePagePayload{
+	result, err := s.SavePageScheduleAt(SavePagePayload{
 		ScopeID:  link.ScopeID,
 		UserID:   link.UserID,
 		Revision: payload.Revision,
@@ -253,8 +322,30 @@ func (s *Service) SavePageSchedule(payload SavePagePayload, actor string) (*Save
 	if scopeID == "" || userID == "" {
 		return nil, fmt.Errorf("scope_id 和 user_id 不能为空。")
 	}
+	target, err := s.ResolveStorageTarget(scopeID, userID, "")
+	if err != nil {
+		return nil, err
+	}
+	payload.ScopeID = target.ScopeID
+	payload.UserID = target.UserID
+	result, err := s.SavePageScheduleAt(payload, actor)
+	if err != nil {
+		return nil, err
+	}
+	result.ScopeID = scopeID
+	result.UserID = userID
+	return result, nil
+}
+
+// SavePageScheduleAt saves a member by exact storage coordinates.
+func (s *Service) SavePageScheduleAt(payload SavePagePayload, actor string) (*SavePageResult, error) {
+	scopeID := strings.TrimSpace(payload.ScopeID)
+	userID := strings.TrimSpace(payload.UserID)
+	if scopeID == "" || userID == "" {
+		return nil, fmt.Errorf("scope_id 和 user_id 不能为空。")
+	}
 	kind, _ := schedule.ParseScope(scopeID)
-	if kind != "group" && kind != "private" {
+	if kind != "group" && kind != "private" && kind != "global-user" {
 		return nil, fmt.Errorf("无效的 scope_id。")
 	}
 	if payload.Revision == nil {
@@ -389,15 +480,19 @@ func (s *Service) CreateMemberSchedules(scopeID string, inputs []NewMember, acto
 		if len([]rune(name)) > schedule.MaxMemberNameLength {
 			return nil, fmt.Errorf("成员名称不能超过 %d 个字符。", schedule.MaxMemberNameLength)
 		}
+		target, err := s.ResolveStorageTarget(scopeID, userID, "")
+		if err != nil {
+			return nil, err
+		}
 		member := &schedule.Member{
-			UserID:         userID,
+			UserID:         target.UserID,
 			Name:           name,
 			Source:         "manual",
 			UpdatedAt:      schedule.NowISO(),
 			LastModifiedBy: actor,
 		}
 		zero := int64(0)
-		if err := s.storage.PutMember(scopeID, userID, member, &zero); err != nil {
+		if err := s.storage.PutMember(target.ScopeID, target.UserID, member, &zero); err != nil {
 			if err == schedule.ErrConflict {
 				continue
 			}
@@ -414,6 +509,20 @@ func (s *Service) CreateMemberSchedules(scopeID string, inputs []NewMember, acto
 // WebMemberICS returns one member's ICS content for a direct download.
 // content is empty when the member has no events yet.
 func (s *Service) WebMemberICS(scopeID, userID string) (name, content string, found bool, err error) {
+	scopeID = strings.TrimSpace(scopeID)
+	userID = strings.TrimSpace(userID)
+	if scopeID == "" || userID == "" {
+		return "", "", false, fmt.Errorf("scope_id 和 user_id 不能为空。")
+	}
+	target, err := s.ResolveStorageTarget(scopeID, userID, "")
+	if err != nil {
+		return "", "", false, err
+	}
+	return s.WebMemberICSAt(target.ScopeID, target.UserID)
+}
+
+// WebMemberICSAt returns ICS content for exact storage coordinates.
+func (s *Service) WebMemberICSAt(scopeID, userID string) (name, content string, found bool, err error) {
 	scopeID = strings.TrimSpace(scopeID)
 	userID = strings.TrimSpace(userID)
 	if scopeID == "" || userID == "" {
@@ -451,11 +560,15 @@ func (s *Service) WebDayOverrides(scopeID string) ([]WebDayOverride, error) {
 	if scopeID == "" {
 		return nil, fmt.Errorf("scope_id 不能为空。")
 	}
-	rows, err := s.storage.ListDayOverrides(scopeID)
+	members, err := s.VisibleMembers(scopeID)
 	if err != nil {
 		return nil, err
 	}
-	members, err := s.storage.GetScopeMembers(scopeID)
+	targets, err := s.dayOverrideTargets(scopeID, members)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.DayOverrideRowsForTargets(targets)
 	if err != nil {
 		return nil, err
 	}
@@ -472,6 +585,31 @@ func (s *Service) WebDayOverrides(scopeID string) ([]WebDayOverride, error) {
 		})
 	}
 	return result, nil
+}
+
+func (s *Service) dayOverrideTargets(scopeID string, members map[string]*schedule.Member) ([]schedule.DayOverrideTarget, error) {
+	targets := []schedule.DayOverrideTarget{{
+		ScopeID:   scopeID,
+		UserID:    schedule.DayOverrideAll,
+		DisplayID: schedule.DayOverrideAll,
+	}}
+	userIDs := make([]string, 0, len(members))
+	for userID := range members {
+		userIDs = append(userIDs, userID)
+	}
+	sort.Strings(userIDs)
+	for _, userID := range userIDs {
+		target, err := s.ResolveStorageTarget(scopeID, userID, "")
+		if err != nil {
+			return nil, err
+		}
+		targets = append(targets, schedule.DayOverrideTarget{
+			ScopeID:   target.ScopeID,
+			UserID:    target.UserID,
+			DisplayID: userID,
+		})
+	}
+	return targets, nil
 }
 
 func overrideDisplayName(members map[string]*schedule.Member, userID string) string {
@@ -498,13 +636,18 @@ func (s *Service) SetWebDayOverride(scopeID, userID, day, kind, sourceDay, actor
 	if kind != schedule.DayOverrideHoliday && kind != schedule.DayOverrideShift {
 		return fmt.Errorf("标记类型只能是休假或调休。")
 	}
+	storageTarget := schedule.StorageTarget{ScopeID: scopeID, UserID: userID, LocalUserID: userID}
 	if userID != schedule.DayOverrideAll {
-		members, err := s.storage.GetScopeMembers(scopeID)
+		members, err := s.VisibleMembers(scopeID)
 		if err != nil {
 			return err
 		}
 		if _, ok := members[userID]; !ok {
 			return fmt.Errorf("找不到该成员，请先为其创建课表。")
+		}
+		storageTarget, err = s.ResolveStorageTarget(scopeID, userID, "")
+		if err != nil {
+			return err
 		}
 	}
 	var source *time.Time
@@ -523,13 +666,13 @@ func (s *Service) SetWebDayOverride(scopeID, userID, day, kind, sourceDay, actor
 	}
 
 	dayText := target.Format("2006-01-02")
-	rows, err := s.storage.ListDayOverrides(scopeID)
+	rows, err := s.storage.ListDayOverrides(storageTarget.ScopeID)
 	if err != nil {
 		return err
 	}
 	found := false
 	for _, row := range rows {
-		if row.UserID == userID && row.Day == dayText {
+		if row.UserID == storageTarget.UserID && row.Day == dayText {
 			found = true
 			break
 		}
@@ -541,7 +684,7 @@ func (s *Service) SetWebDayOverride(scopeID, userID, day, kind, sourceDay, actor
 	if source != nil {
 		override.SourceDay = source.Format("2006-01-02")
 	}
-	return s.storage.SetDayOverride(scopeID, userID, dayText, override, firstNonEmpty(actor, "webui"), schedule.NowISO())
+	return s.storage.SetDayOverride(storageTarget.ScopeID, storageTarget.UserID, dayText, override, firstNonEmpty(actor, "webui"), schedule.NowISO())
 }
 
 // DeleteWebDayOverride removes one marker from the admin page.
@@ -555,7 +698,14 @@ func (s *Service) DeleteWebDayOverride(scopeID, userID, day string) (bool, error
 	if err != nil {
 		return false, err
 	}
-	return s.storage.DeleteDayOverride(scopeID, userID, target.Format("2006-01-02"))
+	storageTarget := schedule.StorageTarget{ScopeID: scopeID, UserID: userID, LocalUserID: userID}
+	if userID != schedule.DayOverrideAll {
+		storageTarget, err = s.ResolveStorageTarget(scopeID, userID, "")
+		if err != nil {
+			return false, err
+		}
+	}
+	return s.storage.DeleteDayOverride(storageTarget.ScopeID, storageTarget.UserID, target.Format("2006-01-02"))
 }
 
 func parseWebDay(value, label string) (time.Time, error) {
@@ -576,7 +726,7 @@ func (s *Service) PendingMembers(scopeID string) ([]NewMember, error) {
 	if _, err := s.storage.GetKV(schedule.KVScopeGlobal, schedule.KVNamespaceSeen, scopeID, &seen); err != nil {
 		return nil, err
 	}
-	members, err := s.storage.GetScopeMembers(scopeID)
+	members, err := s.VisibleMembers(scopeID)
 	if err != nil {
 		return nil, err
 	}

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { Lock, Right } from "@element-plus/icons-vue";
+import { Calendar, Lock, Right } from "@element-plus/icons-vue";
 import { apiPost } from "../api";
 import { errorMessage } from "../store/admin";
 
@@ -41,7 +41,7 @@ async function submit(): Promise<void> {
   <div class="login-page">
     <div class="login-card">
       <div class="login-brand">
-        <span class="login-logo">📅</span>
+        <el-icon class="login-logo"><Calendar /></el-icon>
         <h1>课表管理</h1>
         <p>QQ 课表机器人管理台</p>
       </div>
@@ -68,7 +68,7 @@ async function submit(): Promise<void> {
           登录
         </el-button>
       </form>
-      <p class="login-footnote">密码在服务器 config.json 的 admin_password 中配置</p>
+      <p class="login-footnote">管理密码：config.json / admin_password</p>
     </div>
   </div>
 </template>
@@ -88,7 +88,7 @@ async function submit(): Promise<void> {
 .login-card {
   width: min(400px, 100%);
   padding: 40px 36px 28px;
-  border-radius: 18px;
+  border-radius: 8px;
   background: var(--kb-panel);
   border: 1px solid var(--kb-border);
   box-shadow: 0 18px 50px rgba(15, 23, 42, 0.12);
@@ -105,7 +105,8 @@ async function submit(): Promise<void> {
   width: 64px;
   height: 64px;
   font-size: 32px;
-  border-radius: 18px;
+  color: #fff;
+  border-radius: 8px;
   background: linear-gradient(135deg, #4268df, #6f8cf0);
   box-shadow: 0 10px 24px rgba(66, 104, 223, 0.35);
 }

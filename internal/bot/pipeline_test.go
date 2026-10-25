@@ -32,18 +32,24 @@ END:VCALENDAR
 `
 
 type fakeQQ struct {
-	mu          sync.Mutex
-	uploads     []map[string]any
-	messages    []map[string]any
-	msgCh       chan map[string]any
-	failUploads bool
+	mu             sync.Mutex
+	uploads        []map[string]any
+	messages       []map[string]any
+	memberCalls    []string
+	memberUnionIDs map[string]string
+	memberError    int
+	msgCh          chan map[string]any
+	failUploads    bool
 	// failMarkdown rejects msg_type=2 so the plain-text fallback can be tested.
 	failMarkdown bool
 	avatarURL    string
 }
 
 func newFakeQQ() *fakeQQ {
-	return &fakeQQ{msgCh: make(chan map[string]any, 32)}
+	return &fakeQQ{
+		memberUnionIDs: make(map[string]string),
+		msgCh:          make(chan map[string]any, 32),
+	}
 }
 
 func (f *fakeQQ) handler() http.Handler {
@@ -56,6 +62,26 @@ func (f *fakeQQ) handler() http.Handler {
 		avatarURL := f.avatarURL
 		f.mu.Unlock()
 		_ = json.NewEncoder(w).Encode(map[string]string{"username": "课表机器人", "avatar": avatarURL})
+	})
+	mux.HandleFunc("/v2/groups/GROUP/members/", func(w http.ResponseWriter, r *http.Request) {
+		memberID := strings.TrimPrefix(r.URL.Path, "/v2/groups/GROUP/members/")
+		f.mu.Lock()
+		f.memberCalls = append(f.memberCalls, memberID)
+		unionID := f.memberUnionIDs[memberID]
+		errorCode := f.memberError
+		f.mu.Unlock()
+		if errorCode != 0 {
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": errorCode, "message": "no permission"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"member_openid": memberID,
+			"username":      "小明",
+			"member_role":   "member",
+			"bot":           false,
+			"union_openid":  unionID,
+		})
 	})
 	mux.HandleFunc("/v2/groups/GROUP/files", func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
@@ -89,6 +115,12 @@ func (f *fakeQQ) handler() http.Handler {
 		_ = json.NewEncoder(w).Encode(map[string]string{"id": "sent-1"})
 	})
 	return mux
+}
+
+func (f *fakeQQ) memberCallCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.memberCalls)
 }
 
 func waitMessage(t *testing.T, fake *fakeQQ) map[string]any {
@@ -347,14 +379,24 @@ func TestDayOffAndRankPipeline(t *testing.T) {
 	}
 	_ = waitMessage(t, fake)
 
-	// Admin marks tomorrow as a holiday for everyone.
+	// Administrator commands target the sender unless "所有人" is explicit.
 	admin := freshMessage(base)
 	admin.MemberRole = "owner"
 	admin.Content = "/休假 明天"
 	dispatch(ctx, env, handler, admin)
 	reply := waitMessage(t, fake)
+	if content, _ := reply["content"].(string); !strings.Contains(content, "已将 2026-09-18 标记为休假（小明(U1)）") {
+		t.Fatalf("self day off reply = %q", content)
+	}
+
+	// An explicit target marks every member in the conversation.
+	adminAll := freshMessage(base)
+	adminAll.MemberRole = "owner"
+	adminAll.Content = "/休假 明天 所有人"
+	dispatch(ctx, env, handler, adminAll)
+	reply = waitMessage(t, fake)
 	if content, _ := reply["content"].(string); !strings.Contains(content, "已将 2026-09-18 标记为休假（全体成员）") {
-		t.Fatalf("day off reply = %q", content)
+		t.Fatalf("all day off reply = %q", content)
 	}
 
 	// /假期 lists it.
@@ -378,7 +420,7 @@ func TestDayOffAndRankPipeline(t *testing.T) {
 	// Admin cancels the marker.
 	cancel := freshMessage(base)
 	cancel.MemberRole = "owner"
-	cancel.Content = "/销假 明天"
+	cancel.Content = "/销假 明天 所有人"
 	dispatch(ctx, env, handler, cancel)
 	reply = waitMessage(t, fake)
 	if content, _ := reply["content"].(string); !strings.Contains(content, "已取消 2026-09-18 的休假标记") {

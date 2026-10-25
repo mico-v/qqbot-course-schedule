@@ -19,12 +19,13 @@ const (
 // command handlers need. It carries no way to answer, so a handler cannot
 // accidentally close over sending ability while handling received data.
 type Inbound struct {
-	Origin      Origin
-	GroupOpenID string
-	UserOpenID  string
-	MsgID       string
-	EventID     string
-	Content     string
+	Origin           Origin
+	GroupOpenID      string
+	UserOpenID       string
+	GlobalUserOpenID string
+	MsgID            string
+	EventID          string
+	Content          string
 	// Args is set by Handler.Dispatch: the text after the matched prefix.
 	Args string
 	// Command is set by Handler.Dispatch: the matched command prefix.
@@ -85,6 +86,14 @@ func NewInbound(ctx context.Context, origin Origin, groupOpenID, userOpenID, msg
 func (in *Inbound) WithReceived(ctx context.Context) *Inbound {
 	if in != nil {
 		in.receivedCtx = ctx
+	}
+	return in
+}
+
+// WithGlobalUserOpenID attaches the union OpenID used by global storage.
+func (in *Inbound) WithGlobalUserOpenID(globalUserOpenID string) *Inbound {
+	if in != nil {
+		in.GlobalUserOpenID = globalUserOpenID
 	}
 	return in
 }
