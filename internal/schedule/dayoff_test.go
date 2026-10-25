@@ -134,23 +134,54 @@ func TestSplitDayOverrideArgsResolvesShiftInSemester(t *testing.T) {
 	}
 }
 
-func TestSingleDayQuery(t *testing.T) {
+func TestParseDayQuery(t *testing.T) {
 	today := mustTime(t, "2006-01-02", "2026-09-17")
-	day, message := SingleDayQuery("", today)
-	if day != nil || message != "" {
-		t.Errorf("empty query = %v %q", day, message)
+	query, message := ParseDayQuery("", today)
+	if query != nil || message != "" {
+		t.Errorf("empty query = %v %q", query, message)
 	}
-	day, message = SingleDayQuery("明天", today)
-	if day == nil || message != "" || day.Format("2006-01-02") != "2026-09-18" {
-		t.Errorf("明天 = %v %q", day, message)
+	query, message = ParseDayQuery("明天", today)
+	if query == nil || message != "" || query.Day.Format("2006-01-02") != "2026-09-18" || query.HasTime() {
+		t.Errorf("明天 = %v %q", query, message)
 	}
-	day, message = SingleDayQuery("9.17..9.19", today)
-	if day != nil || message == "" {
-		t.Errorf("range should be rejected, got %v %q", day, message)
+	query, message = ParseDayQuery("9.17..9.19", today)
+	if query != nil || message == "" {
+		t.Errorf("range should be rejected, got %v %q", query, message)
 	}
-	day, message = SingleDayQuery("abc", today)
-	if day != nil || message == "" {
-		t.Errorf("garbage should be rejected, got %v %q", day, message)
+	query, message = ParseDayQuery("abc", today)
+	if query != nil || message == "" {
+		t.Errorf("garbage should be rejected, got %v %q", query, message)
+	}
+}
+
+func TestParseDayQueryWithTime(t *testing.T) {
+	today := mustTime(t, "2006-01-02 15:04", "2026-10-08 12:00")
+	cases := []struct{ input, day, at string }{
+		{"明天 晚上", "2026-10-09", "2026-10-09 18:00"},
+		{"10-10 8:00", "2026-10-10", "2026-10-10 08:00"},
+		{"10-10 8点", "2026-10-10", "2026-10-10 08:00"},
+		{"10-10 8点30分", "2026-10-10", "2026-10-10 08:30"},
+		{"10-10 8点半", "2026-10-10", "2026-10-10 08:30"},
+		{"明天晚上8点", "2026-10-09", "2026-10-09 20:00"},
+		{"今晚", "2026-10-08", "2026-10-08 18:00"},
+		{"明晚", "2026-10-09", "2026-10-09 18:00"},
+		{"下午3:30", "2026-10-08", "2026-10-08 15:30"},
+		{"晚上8:00", "2026-10-08", "2026-10-08 20:00"},
+		{"8:00", "2026-10-08", "2026-10-08 08:00"},
+		{"中午", "2026-10-08", "2026-10-08 12:00"},
+	}
+	for _, tc := range cases {
+		query, message := ParseDayQuery(tc.input, today)
+		if message != "" || query == nil {
+			t.Errorf("ParseDayQuery(%q) = %v %q", tc.input, query, message)
+			continue
+		}
+		if got := query.Day.Format("2006-01-02"); got != tc.day {
+			t.Errorf("ParseDayQuery(%q) day = %s, want %s", tc.input, got, tc.day)
+		}
+		if got := query.At.Format("2006-01-02 15:04"); got != tc.at {
+			t.Errorf("ParseDayQuery(%q) at = %s, want %s", tc.input, got, tc.at)
+		}
 	}
 }
 

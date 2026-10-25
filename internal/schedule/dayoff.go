@@ -160,24 +160,6 @@ func SplitDayOverrideArgs(value string, today time.Time) ([]time.Time, []string,
 	return days, filtered, nil
 }
 
-// SingleDayQuery resolves the /课表 argument to at most one day.
-func SingleDayQuery(value string, today time.Time) (day *time.Time, message string) {
-	days, rest, err := SplitDayOverrideArgs(value, today)
-	if err != nil {
-		return nil, err.Error()
-	}
-	if len(rest) > 0 {
-		return nil, fmt.Sprintf("无法识别日期“%s”。%s", strings.Join(rest, " "), DayHint)
-	}
-	if len(days) > 1 {
-		return nil, fmt.Sprintf("一次只能查看一天（当前解析出 %d 天），例如 /课表 9.17 或 /课表 明天。", len(days))
-	}
-	if len(days) == 0 {
-		return nil, ""
-	}
-	return &days[0], ""
-}
-
 // FormatDayList renders one day, a contiguous range, or a short list.
 func FormatDayList(days []time.Time) string {
 	if len(days) == 0 {

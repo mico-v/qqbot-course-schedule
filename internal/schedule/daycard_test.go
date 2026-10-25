@@ -43,7 +43,7 @@ func TestDailyMemberRowsStatuses(t *testing.T) {
 		},
 	}
 
-	rows := DailyMemberRows(members, mustTime(t, "2006-01-02", day), now, nil)
+	rows := DailyMemberRows(members, mustTime(t, "2006-01-02", day), now, time.Time{}, nil)
 	if len(rows) != 4 {
 		t.Fatalf("rows = %d, want 4", len(rows))
 	}
@@ -75,13 +75,38 @@ func TestDailyMemberRowsFinishedAndFolded(t *testing.T) {
 		"done": memberWithEvents(t, "done", "已下课", eventOn(t, day, "09:00", "10:30", "高数")),
 		"none": memberWithEvents(t, "none", "无课"),
 	}
-	rows := DailyMemberRows(members, mustTime(t, "2006-01-02", day), now, nil)
+	rows := DailyMemberRows(members, mustTime(t, "2006-01-02", day), now, time.Time{}, nil)
 	if rows[0].StatusKey != "finished" {
 		t.Fatalf("status = %s, want finished", rows[0].StatusKey)
 	}
 	shown, folded := SplitFoldedRows(rows)
 	if len(shown) != 0 || len(folded) != 2 {
 		t.Errorf("shown=%d folded=%d, want 0/2", len(shown), len(folded))
+	}
+}
+
+func TestDailyMemberRowsUsesPinnedTime(t *testing.T) {
+	day := "2026-09-17"
+	now := mustTime(t, "2006-01-02 15:04", day+" 20:00")
+	at := mustTime(t, "2006-01-02 15:04", day+" 09:30")
+	members := map[string]*Member{
+		"active": memberWithEvents(t, "active", "在课", eventOn(t, day, "09:00", "10:30", "高数")),
+		"next":   memberWithEvents(t, "next", "待课", eventOn(t, day, "10:00", "11:00", "英语")),
+		"done":   memberWithEvents(t, "done", "已完", eventOn(t, day, "08:00", "09:00", "体育")),
+	}
+	rows := DailyMemberRows(members, mustTime(t, "2006-01-02", day), now, at, nil)
+	byID := make(map[string]DayRow, len(rows))
+	for _, row := range rows {
+		byID[row.UserID] = row
+	}
+	if byID["active"].StatusKey != "active" {
+		t.Errorf("active row = %+v", byID["active"])
+	}
+	if byID["next"].StatusKey != "upcoming" {
+		t.Errorf("next row = %+v", byID["next"])
+	}
+	if byID["done"].StatusKey != "finished" {
+		t.Errorf("done row = %+v", byID["done"])
 	}
 }
 
@@ -93,9 +118,27 @@ func TestDailyMemberRowsOrdersByStartThenEnd(t *testing.T) {
 		"long":       memberWithEvents(t, "long", "长课", eventOn(t, day, "09:00", "12:00", "长课")),
 		"short":      memberWithEvents(t, "short", "短课", eventOn(t, day, "09:00", "10:30", "短课")),
 	}
-	rows := DailyMemberRows(members, mustTime(t, "2006-01-02", day), now, nil)
+	rows := DailyMemberRows(members, mustTime(t, "2006-01-02", day), now, time.Time{}, nil)
 	got := []string{rows[0].UserID, rows[1].UserID, rows[2].UserID}
 	want := []string{"short", "long", "late-start"}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("order = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestDailyMemberRowsBreaksTiesByCourseName(t *testing.T) {
+	day := "2026-09-17"
+	now := mustTime(t, "2006-01-02 15:04", day+" 10:00")
+	members := map[string]*Member{
+		"z": memberWithEvents(t, "z", "张三", eventOn(t, day, "09:00", "10:30", "C课程")),
+		"a": memberWithEvents(t, "a", "李四", eventOn(t, day, "09:00", "10:30", "A课程")),
+		"m": memberWithEvents(t, "m", "王五", eventOn(t, day, "09:00", "10:30", "B课程")),
+	}
+	rows := DailyMemberRows(members, mustTime(t, "2006-01-02", day), now, time.Time{}, nil)
+	got := []string{rows[0].Course, rows[1].Course, rows[2].Course}
+	want := []string{"A课程", "B课程", "C课程"}
 	for index := range want {
 		if got[index] != want[index] {
 			t.Fatalf("order = %v, want %v", got, want)

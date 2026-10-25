@@ -174,12 +174,13 @@ func (e *Env) PublicBaseURLForLinks() string {
 }
 
 // RenderDayCard builds and saves the card for one day, recording how long the
-// render stage took on the replier.
+// render stage took on the replier. at, when non-zero, is the reference instant
+// parsed from the query; zero keeps the real current time.
 // ok is false when the scope has no saved schedules.
-func (e *Env) RenderDayCard(ctx context.Context, in *Inbound, r *Replier, day time.Time) (RenderedCard, bool, error) {
+func (e *Env) RenderDayCard(ctx context.Context, in *Inbound, r *Replier, day, at time.Time) (RenderedCard, bool, error) {
 	start := time.Now()
 	e.EnsureBotAvatar()
-	card, ok, err := e.Service.BuildDayCard(e.Scope(in), day, e.now())
+	card, ok, err := e.Service.BuildDayCard(e.Scope(in), day, e.now(), at)
 	if err != nil || !ok {
 		return RenderedCard{}, ok, err
 	}

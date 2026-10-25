@@ -31,9 +31,15 @@ type DayRow struct {
 	SortEnd         float64
 }
 
-// DailyMemberRows builds one status row per member on the selected day.
-func DailyMemberRows(members map[string]*Member, target time.Time, now time.Time, memberIDs []string) []DayRow {
+// DailyMemberRows builds one status row per member on the selected day. When
+// at is non-zero it is used instead of now for active/upcoming statuses and
+// countdowns, so a query such as "明天 晚上" renders as of that instant.
+func DailyMemberRows(members map[string]*Member, target time.Time, now time.Time, at time.Time, memberIDs []string) []DayRow {
 	current := now.In(LocalTZ)
+	reference := current
+	if !at.IsZero() {
+		reference = at.In(LocalTZ)
+	}
 	target = beginningOfDay(target)
 	isToday := target.Equal(beginningOfDay(current))
 	startBound := target
@@ -56,6 +62,10 @@ func DailyMemberRows(members map[string]*Member, target time.Time, now time.Time
 		}
 		occurrences := ExpandMemberOccurrences(member, startBound, endBound)
 		sort.SliceStable(occurrences, func(i, j int) bool { return lessOccurrence(occurrences[i], occurrences[j]) })
+		dayFinished := !target.After(beginningOfDay(current))
+		if !at.IsZero() && len(occurrences) > 0 {
+			dayFinished = !occurrences[len(occurrences)-1].End.After(reference)
+		}
 
 		override := member.DayOverrides[target.Format("2006-01-02")]
 		holiday := override.Kind == DayOverrideHoliday
@@ -69,10 +79,21 @@ func DailyMemberRows(members map[string]*Member, target time.Time, now time.Time
 		}
 
 		var active, upcoming *Occurrence
+		pinned := !at.IsZero()
 		for index := range occurrences {
 			occurrence := &occurrences[index]
 			if holiday {
 				break
+			}
+			if pinned {
+				if active == nil && !occurrence.Start.After(reference) && reference.Before(occurrence.End) {
+					active = occurrence
+					continue
+				}
+				if upcoming == nil && occurrence.Start.After(reference) {
+					upcoming = occurrence
+				}
+				continue
 			}
 			if active == nil && isToday && !occurrence.Start.After(current) && current.Before(occurrence.End) {
 				active = occurrence
@@ -106,8 +127,8 @@ func DailyMemberRows(members map[string]*Member, target time.Time, now time.Time
 			row.StatusKey = "active"
 			row.Status = "正在上课"
 			row.CountdownLabel = "距下课"
-			row.Countdown = FormatRemaining(active.End.Sub(current))
-			row.Progress = clamp01(current.Sub(active.Start).Seconds() / math.Max(1, active.End.Sub(active.Start).Seconds()))
+			row.Countdown = FormatRemaining(active.End.Sub(reference))
+			row.Progress = clamp01(reference.Sub(active.Start).Seconds() / math.Max(1, active.End.Sub(active.Start).Seconds()))
 			row.SortPriority = 0
 			row.SortTime = float64(active.Start.UnixNano()) / 1e9
 			row.SortEnd = float64(active.End.UnixNano()) / 1e9
@@ -116,11 +137,11 @@ func DailyMemberRows(members map[string]*Member, target time.Time, now time.Time
 			row.StatusKey = "upcoming"
 			row.Status = "下一节即将上课"
 			row.CountdownLabel = "距上课"
-			row.Countdown = FormatRemaining(upcoming.Start.Sub(current))
+			row.Countdown = FormatRemaining(upcoming.Start.Sub(reference))
 			row.SortPriority = 1
 			row.SortTime = float64(upcoming.Start.UnixNano()) / 1e9
 			row.SortEnd = float64(upcoming.End.UnixNano()) / 1e9
-		case len(occurrences) > 0 && !target.After(beginningOfDay(current)):
+		case len(occurrences) > 0 && dayFinished:
 			featured = &occurrences[len(occurrences)-1]
 			row.StatusKey = "finished"
 			row.Status = pickText(isToday, "今日课程已结束", "当天课程已结束")
@@ -135,7 +156,7 @@ func DailyMemberRows(members map[string]*Member, target time.Time, now time.Time
 			row.StatusKey = "upcoming"
 			row.Status = "下一节即将上课"
 			row.CountdownLabel = "距上课"
-			row.Countdown = FormatRemaining(featured.Start.Sub(current))
+			row.Countdown = FormatRemaining(featured.Start.Sub(reference))
 			row.SortPriority = 1
 			row.SortTime = float64(featured.Start.UnixNano()) / 1e9
 			row.SortEnd = float64(featured.End.UnixNano()) / 1e9
@@ -173,6 +194,7 @@ func DailyMemberRows(members map[string]*Member, target time.Time, now time.Time
 		result = append(result, row)
 	}
 
+	// Status group, then course start, end, course name, member name and id.
 	sort.SliceStable(result, func(i, j int) bool {
 		left, right := result[i], result[j]
 		if left.SortPriority != right.SortPriority {
@@ -183,6 +205,9 @@ func DailyMemberRows(members map[string]*Member, target time.Time, now time.Time
 		}
 		if left.SortEnd != right.SortEnd {
 			return left.SortEnd < right.SortEnd
+		}
+		if leftCourse, rightCourse := strings.ToLower(left.Course), strings.ToLower(right.Course); leftCourse != rightCourse {
+			return leftCourse < rightCourse
 		}
 		if leftName, rightName := strings.ToLower(left.Name), strings.ToLower(right.Name); leftName != rightName {
 			return leftName < rightName
@@ -346,6 +371,18 @@ func ScheduleFooter(selected, today time.Time) string {
 	default:
 		return "实时状态 · 课程时间以本地时区为准"
 	}
+}
+
+// ScheduleFooterAt is ScheduleFooter for a pinned reference time. A pinned
+// time on today is a planned view, not the real-time status.
+func ScheduleFooterAt(selected, today, at time.Time) string {
+	if at.IsZero() {
+		return ScheduleFooter(selected, today)
+	}
+	if beginningOfDay(selected).Before(beginningOfDay(today)) {
+		return "历史课表 · 课程时间以本地时区为准"
+	}
+	return "课程安排 · 课程时间以本地时区为准"
 }
 
 func displayName(name, fallback string) string {

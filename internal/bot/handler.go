@@ -224,11 +224,20 @@ func (h *Handler) HandleCallback(ctx context.Context, cb *Callback) {
 	}
 	switch action {
 	case "day":
-		day, err := time.ParseInLocation("2006-01-02", param, schedule.LocalTZ)
+		dayText, clockText, _ := strings.Cut(param, "@")
+		day, err := time.ParseInLocation("2006-01-02", dayText, schedule.LocalTZ)
 		if err != nil {
 			return
 		}
-		if err := sendDayView(ctx, h.env, in, r, day, true, true); err != nil {
+		at := time.Time{}
+		if clockText != "" {
+			clock, clockErr := time.ParseInLocation("15:04", clockText, schedule.LocalTZ)
+			if clockErr != nil {
+				return
+			}
+			at = day.Add(time.Duration(clock.Hour())*time.Hour + time.Duration(clock.Minute())*time.Minute)
+		}
+		if err := sendDayView(ctx, h.env, in, r, day, at, true, true); err != nil {
 			slog.Error("按钮课表发送失败", "err", err)
 		}
 	case "rank":

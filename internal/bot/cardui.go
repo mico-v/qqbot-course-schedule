@@ -10,11 +10,17 @@ import (
 // dayNavigationKeyboard builds the 上一天 / 下一天 callback buttons for a day.
 // The button data uses the same day: action for both the image and markdown
 // send formats, so the handler re-renders the day in the configured format.
-func dayNavigationKeyboard(selected, userOpenID string) *qqapi.Keyboard {
+// When at is non-zero its clock is appended as @HH:MM so navigation keeps the
+// parsed reference time.
+func dayNavigationKeyboard(selected string, at time.Time, userOpenID string) *qqapi.Keyboard {
+	suffix := ""
+	if !at.IsZero() {
+		suffix = "@" + at.In(schedule.LocalTZ).Format("15:04")
+	}
 	return &qqapi.Keyboard{Content: qqapi.KeyboardContent{Rows: []qqapi.KeyboardRow{{
 		Buttons: []qqapi.KeyboardButton{
-			callbackButton("prev", "上一天", "day:"+shiftDay(selected, -1), userOpenID),
-			callbackButton("next", "下一天", "day:"+shiftDay(selected, 1), userOpenID),
+			callbackButton("prev", "上一天", "day:"+shiftDay(selected, -1)+suffix, userOpenID),
+			callbackButton("next", "下一天", "day:"+shiftDay(selected, 1)+suffix, userOpenID),
 		},
 	}}}}
 }

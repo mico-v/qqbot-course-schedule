@@ -136,8 +136,10 @@ type DayCard struct {
 }
 
 // BuildDayCard loads a scope and builds the card data for the selected day.
+// at, when non-zero, is the reference instant used for statuses and countdowns
+// (for example the time parsed from "/课表 10-10 8:00").
 // ok is false when the scope has no saved schedules at all.
-func (s *Service) BuildDayCard(scopeID string, selected, now time.Time) (*DayCard, bool, error) {
+func (s *Service) BuildDayCard(scopeID string, selected, now, at time.Time) (*DayCard, bool, error) {
 	members, err := s.store.GetScopeMembers(scopeID)
 	if err != nil {
 		return nil, false, err
@@ -148,7 +150,7 @@ func (s *Service) BuildDayCard(scopeID string, selected, now time.Time) (*DayCar
 	now = now.In(LocalTZ)
 	today := beginningOfDay(now)
 	selected = beginningOfDay(selected)
-	allRows := DailyMemberRows(members, selected, now, nil)
+	allRows := DailyMemberRows(members, selected, now, at, nil)
 	rows, folded := SplitFoldedRows(allRows)
 
 	weekdayNames := []string{"一", "二", "三", "四", "五", "六", "日"}
@@ -172,7 +174,7 @@ func (s *Service) BuildDayCard(scopeID string, selected, now time.Time) (*DayCar
 		Title:       title,
 		Subtitle:    subtitle,
 		FoldedTitle: foldedTitle,
-		Footer:      ScheduleFooter(selected, today),
+		Footer:      ScheduleFooterAt(selected, today, at),
 		Rows:        rows,
 		Folded:      folded,
 		Selected:    selected,

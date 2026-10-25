@@ -33,7 +33,7 @@ func NewDefaultHandler(env *Env) *Handler {
 
 	h.Register(&Command{
 		Prefix:      "/课表",
-		Description: "查询指定日期课程表",
+		Description: "查询指定日期/时间课程表（如 明天 晚上、10-10 8:00）",
 		Ready:       true,
 		Handle:      h.handleScheduleCommand,
 	})
@@ -159,14 +159,14 @@ func (h *Handler) handleScheduleCommand(ctx context.Context, in *Inbound, r *Rep
 	if h.env == nil {
 		return r.Reply(ctx, "课表功能未初始化。")
 	}
-	day, message := schedule.SingleDayQuery(in.Args, h.env.now())
+	query, message := schedule.ParseDayQuery(in.Args, h.env.now())
 	if message != "" {
 		return r.Reply(ctx, message)
 	}
-	if day == nil {
-		return sendDayView(ctx, h.env, in, r, h.env.now(), false, false)
+	if query == nil {
+		return sendDayView(ctx, h.env, in, r, h.env.now(), time.Time{}, false, false)
 	}
-	return sendDayView(ctx, h.env, in, r, *day, true, true)
+	return sendDayView(ctx, h.env, in, r, query.Day, query.At, true, true)
 }
 
 func (h *Handler) handleImportCommand(ctx context.Context, in *Inbound, r *Replier) error {
@@ -393,19 +393,20 @@ func (h *Handler) handleSyncPanelCommand(ctx context.Context, in *Inbound, r *Re
 }
 
 // sendDayView sends one day's schedule in the configured format. withCaption
-// adds the "YYYY-MM-DD 的课表：" line above the image/markdown list, and
-// withButtons attaches the previous/next day navigation buttons.
-func sendDayView(ctx context.Context, env *Env, in *Inbound, r *Replier, day time.Time, withCaption, withButtons bool) error {
+// adds the "YYYY-MM-DD[ HH:MM] 的课表：" line above the image/markdown list, and
+// withButtons attaches the previous/next day navigation buttons. at, when
+// non-zero, pins the reference instant used for statuses and countdowns.
+func sendDayView(ctx context.Context, env *Env, in *Inbound, r *Replier, day, at time.Time, withCaption, withButtons bool) error {
 	if env == nil {
 		return r.Reply(ctx, "课表功能未初始化。")
 	}
 	caption := ""
 	if withCaption {
-		caption = dayCaption(day)
+		caption = dayCaption(day, at)
 	}
 	var keyboard *qqapi.Keyboard
 	if withButtons {
-		keyboard = dayNavigationKeyboard(day.Format("2006-01-02"), in.UserOpenID)
+		keyboard = dayNavigationKeyboard(day.Format("2006-01-02"), at, in.UserOpenID)
 	}
 	if env.currentSettings().SendFormat == schedule.SendFormatMarkdown {
 		text, ok, err := env.RenderDayMarkdown(in, day)
@@ -417,7 +418,7 @@ func sendDayView(ctx context.Context, env *Env, in *Inbound, r *Replier, day tim
 		}
 		return env.SendDayMarkdownWithKeyboard(ctx, in, r, caption+text, keyboard)
 	}
-	card, ok, err := env.RenderDayCard(ctx, in, r, day)
+	card, ok, err := env.RenderDayCard(ctx, in, r, day, at)
 	if err != nil {
 		return err
 	}
@@ -428,9 +429,12 @@ func sendDayView(ctx context.Context, env *Env, in *Inbound, r *Replier, day tim
 }
 
 // dayCaption is the markdown caption shown above a day schedule, e.g.
-// "2026-10-08 的课表：".
-func dayCaption(day time.Time) string {
-	return day.Format("2006-01-02") + " 的课表："
+// "2026-10-08 的课表：" or "2026-10-10 08:00 的课表：".
+func dayCaption(day, at time.Time) string {
+	if at.IsZero() {
+		return day.Format("2006-01-02") + " 的课表："
+	}
+	return day.Format("2006-01-02") + " " + at.In(schedule.LocalTZ).Format("15:04") + " 的课表："
 }
 
 func toScheduleMentions(mentions []Mention) []schedule.Mention {

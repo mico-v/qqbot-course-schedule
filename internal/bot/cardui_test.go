@@ -6,16 +6,24 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/mico-v/qqbot-course-schedule/internal/schedule"
 )
 
 func TestCardKeyboards(t *testing.T) {
-	dayKeyboard := dayNavigationKeyboard("2026-09-17", "U1")
+	dayKeyboard := dayNavigationKeyboard("2026-09-17", time.Time{}, "U1")
 	buttons := dayKeyboard.Content.Rows[0].Buttons
 	if len(buttons) != 2 {
 		t.Fatalf("buttons = %d", len(buttons))
 	}
 	if buttons[0].Action.Data != "day:2026-09-16" || buttons[1].Action.Data != "day:2026-09-18" {
 		t.Fatalf("day data = %q %q", buttons[0].Action.Data, buttons[1].Action.Data)
+	}
+	timedKeyboard := dayNavigationKeyboard("2026-09-17", time.Date(2026, 9, 17, 18, 0, 0, 0, schedule.LocalTZ), "U1")
+	timedButtons := timedKeyboard.Content.Rows[0].Buttons
+	if timedButtons[0].Action.Data != "day:2026-09-16@18:00" || timedButtons[1].Action.Data != "day:2026-09-18@18:00" {
+		t.Fatalf("timed day data = %q %q", timedButtons[0].Action.Data, timedButtons[1].Action.Data)
 	}
 	if buttons[0].Action.Permission == nil || len(buttons[0].Action.Permission.SpecifyUserIDs) != 1 ||
 		buttons[0].Action.Permission.SpecifyUserIDs[0] != "U1" {
@@ -25,6 +33,17 @@ func TestCardKeyboards(t *testing.T) {
 	rankData := rankKeyboard.Content.Rows[0].Buttons[0].Action.Data
 	if rankData != "rank:thisweek" {
 		t.Fatalf("rank data = %q", rankData)
+	}
+}
+
+func TestDayCaptionIncludesPinnedTime(t *testing.T) {
+	day := time.Date(2026, 9, 17, 0, 0, 0, 0, schedule.LocalTZ)
+	if got := dayCaption(day, time.Time{}); got != "2026-09-17 的课表：" {
+		t.Fatalf("caption = %q", got)
+	}
+	at := time.Date(2026, 9, 17, 11, 0, 0, 0, schedule.LocalTZ)
+	if got := dayCaption(day, at); got != "2026-09-17 11:00 的课表：" {
+		t.Fatalf("timed caption = %q", got)
 	}
 }
 
@@ -105,6 +124,37 @@ func TestScheduleCommandWithDateSendsImageWithButtons(t *testing.T) {
 	keyboard, _ := reply["keyboard"].(map[string]any)
 	if keyboard == nil {
 		t.Fatalf("reply must carry a keyboard: %+v", reply)
+	}
+}
+
+func TestScheduleCommandWithTimeSendsTimedCard(t *testing.T) {
+	fake := newFakeQQ()
+	apiServer := httptest.NewServer(fake.handler())
+	t.Cleanup(apiServer.Close)
+	icsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(testICS))
+	}))
+	t.Cleanup(icsServer.Close)
+
+	env, base := newTestEnv(t, fake, apiServer.URL)
+	env.Buttons = true
+	handler := NewDefaultHandler(env)
+	ctx := context.Background()
+	freshImport := freshMessage(base)
+	if err := env.ImportICS(ctx, freshImport, NewReplier(freshImport, env.Client), Attachment{URL: icsServer.URL + "/s.ics", Filename: "s.ics"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = waitMessage(t, fake)
+
+	message := freshMessage(base)
+	message.Content = "/课表 2026-09-17 11:00"
+	dispatch(ctx, env, handler, message)
+
+	reply := waitMessage(t, fake)
+	markdown, _ := reply["markdown"].(map[string]any)
+	content, _ := markdown["content"].(string)
+	if !strings.Contains(content, "2026-09-17 11:00 的课表：") {
+		t.Fatalf("markdown = %q", content)
 	}
 }
 
