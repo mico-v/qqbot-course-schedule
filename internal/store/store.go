@@ -17,7 +17,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 5
+const schemaVersion = 6
 
 // Store is the SQLite-backed implementation of schedule.Storage.
 type Store struct {
@@ -91,6 +91,7 @@ func (s *Store) migrate() error {
 			PRIMARY KEY (scope_id, user_id)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_schedule_members_scope ON schedule_members(scope_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_schedule_members_user ON schedule_members(user_id)`,
 		`CREATE TABLE IF NOT EXISTS course_events (
 			scope_id TEXT NOT NULL,
 			user_id TEXT NOT NULL,
@@ -303,6 +304,30 @@ func (s *Store) GetScopeMembers(scopeID string) (map[string]*schedule.Member, er
 		member.DayOverrides = mergeOverrides(scopeWide, overrides[userID])
 	}
 	return members, nil
+}
+
+// ListMemberScopes returns every scope containing a member row for userID.
+// Global storage uses this to find a legacy per-group schedule after switching
+// modes without requiring a data migration.
+func (s *Store) ListMemberScopes(userID string) ([]string, error) {
+	rows, err := s.db.Query(
+		`SELECT DISTINCT scope_id FROM schedule_members WHERE user_id = ? ORDER BY scope_id`,
+		userID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("读取成员课表位置失败: %w", err)
+	}
+	defer rows.Close()
+
+	var scopeIDs []string
+	for rows.Next() {
+		var scopeID string
+		if err := rows.Scan(&scopeID); err != nil {
+			return nil, fmt.Errorf("读取成员课表位置行失败: %w", err)
+		}
+		scopeIDs = append(scopeIDs, scopeID)
+	}
+	return scopeIDs, rows.Err()
 }
 
 func (s *Store) memberEvents(scopeID, userID string) ([]schedule.Event, error) {

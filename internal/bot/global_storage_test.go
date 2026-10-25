@@ -72,6 +72,63 @@ func TestGlobalUserIDUsesMessageValueWithoutRequest(t *testing.T) {
 	}
 }
 
+func TestGlobalStorageUsesLegacyGroupScheduleWithoutUnionOpenID(t *testing.T) {
+	fake := newFakeQQ()
+	apiServer := httptest.NewServer(fake.handler())
+	t.Cleanup(apiServer.Close)
+
+	env, message := newTestEnv(t, fake, apiServer.URL)
+	scopeID := env.Scope(message)
+	if _, err := env.Service.SaveICS(scopeID, message.UserOpenID, "小明", testICS, "legacy.ics", message.UserOpenID); err != nil {
+		t.Fatal(err)
+	}
+	enableGlobalStorage(t, env)
+
+	members, err := env.ScheduleMembers(context.Background(), message)
+	if err != nil {
+		t.Fatalf("ScheduleMembers: %v", err)
+	}
+	if member := members[message.UserOpenID]; member == nil || len(member.Events) == 0 {
+		t.Fatalf("legacy member = %+v", member)
+	}
+
+	target, err := env.ScheduleTarget(context.Background(), message, message.UserOpenID)
+	if err != nil {
+		t.Fatalf("ScheduleTarget: %v", err)
+	}
+	if target.ScopeID != scopeID || target.UserID != message.UserOpenID {
+		t.Fatalf("legacy target = %+v", target)
+	}
+	if calls := fake.memberCallCount(); calls != 0 {
+		t.Fatalf("member API calls = %d, want 0", calls)
+	}
+}
+
+func TestGlobalStorageFindsLegacyScheduleFromAnotherGroupWithoutUnionOpenID(t *testing.T) {
+	fake := newFakeQQ()
+	apiServer := httptest.NewServer(fake.handler())
+	t.Cleanup(apiServer.Close)
+
+	env, message := newTestEnv(t, fake, apiServer.URL)
+	if _, err := env.Service.SaveICS(env.Scope(message), message.UserOpenID, "旧群课表", testICS, "legacy.ics", message.UserOpenID); err != nil {
+		t.Fatal(err)
+	}
+	enableGlobalStorage(t, env)
+
+	otherGroupMessage := *message
+	otherGroupMessage.GroupOpenID = "GROUP-2"
+	members, err := env.ScheduleMembers(context.Background(), &otherGroupMessage)
+	if err != nil {
+		t.Fatalf("ScheduleMembers: %v", err)
+	}
+	if member := members[message.UserOpenID]; member == nil || member.Name != "旧群课表" || len(member.Events) == 0 {
+		t.Fatalf("fallback member = %+v", member)
+	}
+	if calls := fake.memberCallCount(); calls != 0 {
+		t.Fatalf("member API calls = %d, want 0", calls)
+	}
+}
+
 func TestGlobalUserIDExplainsMissingUnionOpenID(t *testing.T) {
 	tests := []struct {
 		name      string

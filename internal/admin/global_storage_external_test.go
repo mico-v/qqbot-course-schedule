@@ -71,6 +71,51 @@ func TestGlobalStorageAdminEditsSharedScheduleAcrossGroups(t *testing.T) {
 	}
 }
 
+func TestGlobalStorageAdminPageUsesLegacyCurrentGroupThenFallback(t *testing.T) {
+	service, _ := newService(t)
+	groupOne := schedule.ScopeGroup("G1")
+	groupTwo := schedule.ScopeGroup("G2")
+	if _, err := service.SaveICS(groupOne, "U1", "旧群课表", adminICS, "legacy.ics", "U1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.RecordIdentity(groupTwo, "U1", "UNION-A"); err != nil {
+		t.Fatal(err)
+	}
+	enableAdminGlobalStorage(t, service)
+
+	pageOne, found, err := service.PageSchedule(groupOne, "U1")
+	if err != nil || !found || pageOne.Name != "旧群课表" {
+		t.Fatalf("legacy page = %+v found=%v err=%v", pageOne, found, err)
+	}
+	pageTwo, found, err := service.PageSchedule(groupTwo, "U1")
+	if err != nil || !found || pageTwo.Name != "旧群课表" {
+		t.Fatalf("fallback page = %+v found=%v err=%v", pageTwo, found, err)
+	}
+
+	name := "全局副本"
+	revision := pageTwo.Revision
+	if _, err := service.SavePageSchedule(admin.SavePagePayload{
+		ScopeID:  groupTwo,
+		UserID:   "U1",
+		Revision: &revision,
+		Name:     &name,
+		Events: []admin.WebEventInput{{
+			ID: pageTwo.Events[0].ID, UID: pageTwo.Events[0].UID, Course: pageTwo.Events[0].Course,
+			Start: pageTwo.Events[0].Start, End: pageTwo.Events[0].End, RRule: pageTwo.Events[0].RRule,
+		}},
+	}, "webui"); err != nil {
+		t.Fatalf("copy-on-write save: %v", err)
+	}
+	pageOne, found, err = service.PageSchedule(groupOne, "U1")
+	if err != nil || !found || pageOne.Name != "旧群课表" {
+		t.Fatalf("current-group page after global save = %+v found=%v err=%v", pageOne, found, err)
+	}
+	pageTwo, found, err = service.PageSchedule(groupTwo, "U1")
+	if err != nil || !found || pageTwo.Name != name {
+		t.Fatalf("global page after global save = %+v found=%v err=%v", pageTwo, found, err)
+	}
+}
+
 func TestGlobalEditLinkKeepsExactTargetAfterModeSwitch(t *testing.T) {
 	service, _ := newService(t)
 	enableAdminGlobalStorage(t, service)

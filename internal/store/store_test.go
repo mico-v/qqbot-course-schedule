@@ -58,8 +58,8 @@ func TestOpenDropsLegacyCheckinTable(t *testing.T) {
 	).Scan(&version); err != nil {
 		t.Fatalf("read schema version: %v", err)
 	}
-	if version != "5" {
-		t.Fatalf("schema version = %q, want 5", version)
+	if version != "6" {
+		t.Fatalf("schema version = %q, want 6", version)
 	}
 }
 

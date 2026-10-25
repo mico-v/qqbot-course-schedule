@@ -100,7 +100,8 @@ async function submit(): Promise<void> {
             <el-radio value="global">全局存储</el-radio>
           </el-radio-group>
           <span class="setting-hint muted">
-            按群存储时每个群的成员课表相互独立；全局存储时按 union_openid 跨群共享。全局模式需要平台提供该字段，群消息缺失时会尝试调用群成员信息接口，机器人需获得对应权限。切换模式不会迁移已有课表，原数据会保留。
+            按群存储时每个群的成员课表相互独立；全局存储时优先使用本群已有课表，本群没有时自动读取全局个人课表或其他群最近更新的课表，无需迁移即可切换。全局模式需要平台提供
+            union_openid，群消息缺失时会尝试调用群成员信息接口，机器人需获得对应权限。
           </span>
         </el-form-item>
         <el-form-item label="管理员 OpenID 名单">

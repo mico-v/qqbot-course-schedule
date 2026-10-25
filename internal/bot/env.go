@@ -201,8 +201,9 @@ func (e *Env) globalUserIDForMember(ctx context.Context, scopeID, groupOpenID, l
 	return globalID, nil
 }
 
-// ScheduleTarget resolves the storage coordinates for one member. In global
-// mode the local group member OpenID is projected onto union_openid.
+// ScheduleTarget resolves the write coordinates for one member. In global mode
+// a schedule already stored in the current group keeps that target; otherwise
+// the local member OpenID is projected onto union_openid.
 func (e *Env) ScheduleTarget(ctx context.Context, in *Inbound, localUserID string) (schedule.StorageTarget, error) {
 	localUserID = strings.TrimSpace(localUserID)
 	globalUserID := ""
@@ -224,20 +225,25 @@ func (e *Env) ScheduleTarget(ctx context.Context, in *Inbound, localUserID strin
 	if localUserID == "" {
 		return schedule.StorageTarget{}, fmt.Errorf("无法识别要操作的成员，请稍后重试。")
 	}
-	globalUserID, err = e.globalUserIDForMember(ctx, scopeID, groupOpenID, localUserID, globalUserID)
+
+	target, targetErr := e.Service.ResolveStorageTarget(scopeID, localUserID, globalUserID)
+	if targetErr == nil {
+		return target, nil
+	}
+	if globalUserID != "" {
+		return schedule.StorageTarget{}, targetErr
+	}
+
+	globalUserID, err = e.globalUserIDForMember(ctx, scopeID, groupOpenID, localUserID, "")
 	if err != nil {
 		return schedule.StorageTarget{}, err
 	}
-	return schedule.StorageTarget{
-		ScopeID:     schedule.ScopeGlobalUser(globalUserID),
-		UserID:      globalUserID,
-		LocalUserID: localUserID,
-	}, nil
+	return e.Service.ResolveStorageTarget(scopeID, localUserID, globalUserID)
 }
 
 // ScheduleMembers returns the member view for the current conversation. In
-// global mode a group only shows members it has actually seen, projected back
-// onto local IDs so buttons and permission checks keep working.
+// global mode old rows in the current group take priority, then schedules from
+// other groups are projected back onto local IDs so buttons keep working.
 func (e *Env) ScheduleMembers(ctx context.Context, in *Inbound) (map[string]*schedule.Member, error) {
 	scopeID := e.Scope(in)
 	if e.currentSettings().StorageMode != schedule.StorageModeGlobal {
@@ -247,12 +253,17 @@ func (e *Env) ScheduleMembers(ctx context.Context, in *Inbound) (map[string]*sch
 	if err != nil {
 		return nil, err
 	}
-	if in != nil && in.UserOpenID != "" {
-		globalUserID, err := e.GlobalUserID(ctx, in)
-		if err != nil {
-			return nil, err
+	if in != nil {
+		localUserID := strings.TrimSpace(in.UserOpenID)
+		if localUserID != "" {
+			if globalUserOpenID := strings.TrimSpace(in.GlobalUserOpenID); globalUserOpenID != "" {
+				identities[localUserID] = globalUserOpenID
+			} else if _, exists := identities[localUserID]; !exists {
+				// An empty value still asks the global resolver to look up this
+				// local OpenID across legacy group schedules.
+				identities[localUserID] = ""
+			}
 		}
-		identities[in.UserOpenID] = globalUserID
 	}
 	return e.Service.SharedUserMembers(scopeID, identities)
 }

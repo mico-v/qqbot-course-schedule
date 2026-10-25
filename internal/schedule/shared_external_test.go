@@ -67,6 +67,139 @@ func TestGlobalStorageSharesScheduleByUnionOpenID(t *testing.T) {
 	}
 }
 
+func TestGlobalStorageKeepsLegacyGroupSchedulesWithoutIdentity(t *testing.T) {
+	service, _ := newService(t)
+	groupOne := schedule.ScopeGroup("G1")
+	groupTwo := schedule.ScopeGroup("G2")
+	if _, err := service.SaveICS(groupOne, "U1", "第一群课表", adminICS, "one.ics", "U1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.SaveICS(groupTwo, "U1", "第二群课表", adminICS, "two.ics", "U1"); err != nil {
+		t.Fatal(err)
+	}
+	enableGlobalStorage(t, service)
+
+	visibleOne, err := service.VisibleMembers(groupOne)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if visibleOne["U1"] == nil || visibleOne["U1"].Name != "第一群课表" {
+		t.Fatalf("group one visible = %+v", visibleOne)
+	}
+	visibleTwo, err := service.VisibleMembers(groupTwo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if visibleTwo["U1"] == nil || visibleTwo["U1"].Name != "第二群课表" {
+		t.Fatalf("group two visible = %+v", visibleTwo)
+	}
+
+	target, err := service.ResolveStorageTarget(groupOne, "U1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.ScopeID != groupOne || target.UserID != "U1" {
+		t.Fatalf("legacy write target = %+v", target)
+	}
+}
+
+func TestGlobalStorageFallsBackToOtherGroupsAndPrefersGlobal(t *testing.T) {
+	service, _ := newService(t)
+	groupOne := schedule.ScopeGroup("G1")
+	groupTwo := schedule.ScopeGroup("G2")
+	groupThree := schedule.ScopeGroup("G3")
+	if _, err := service.SaveICS(groupOne, "U1", "旧群课表", adminICS, "legacy.ics", "U1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.SaveICS(schedule.ScopeGlobalUser("UNION-A"), "UNION-A", "全局课表", adminICS, "global.ics", "U1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.RecordIdentity(groupThree, "U1", "UNION-A"); err != nil {
+		t.Fatal(err)
+	}
+	enableGlobalStorage(t, service)
+
+	visibleOne, err := service.VisibleMembers(groupOne)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if visibleOne["U1"] == nil || visibleOne["U1"].Name != "旧群课表" {
+		t.Fatalf("current group should win: %+v", visibleOne)
+	}
+	visibleThree, err := service.VisibleMembers(groupThree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if visibleThree["U1"] == nil || visibleThree["U1"].Name != "全局课表" {
+		t.Fatalf("global schedule should win before another group: %+v", visibleThree)
+	}
+
+	if _, err := service.SaveICS(groupTwo, "U2", "另一位成员", adminICS, "other.ics", "U2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.RecordIdentity(groupTwo, "U2", "UNION-B"); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.RecordIdentity(groupThree, "U2", "UNION-B"); err != nil {
+		t.Fatal(err)
+	}
+	visibleThree, err = service.VisibleMembers(groupThree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if visibleThree["U2"] == nil || visibleThree["U2"].Name != "另一位成员" {
+		t.Fatalf("other-group fallback = %+v", visibleThree["U2"])
+	}
+}
+
+func TestGlobalStorageFallbackOverridesStayInCurrentScope(t *testing.T) {
+	service, _ := newService(t)
+	groupOne := schedule.ScopeGroup("G1")
+	groupTwo := schedule.ScopeGroup("G2")
+	if _, err := service.SaveICS(groupOne, "U1", "旧群课表", adminICS, "legacy.ics", "U1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.RecordIdentity(groupTwo, "U1", "UNION-A"); err != nil {
+		t.Fatal(err)
+	}
+	enableGlobalStorage(t, service)
+
+	sourceHoliday := time.Date(2026, 10, 1, 0, 0, 0, 0, schedule.LocalTZ)
+	currentHoliday := time.Date(2026, 10, 2, 0, 0, 0, 0, schedule.LocalTZ)
+	globalShift := time.Date(2026, 10, 3, 0, 0, 0, 0, schedule.LocalTZ)
+	if _, err := service.SetDayOverridesForTargets([]schedule.DayOverrideTarget{{
+		ScopeID: groupOne, UserID: schedule.DayOverrideAll, DisplayID: schedule.DayOverrideAll,
+	}}, []time.Time{sourceHoliday}, schedule.DayOverrideHoliday, nil, "U1", nil, sourceHoliday); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.SetDayOverridesForTargets([]schedule.DayOverrideTarget{{
+		ScopeID: groupTwo, UserID: schedule.DayOverrideAll, DisplayID: schedule.DayOverrideAll,
+	}}, []time.Time{currentHoliday}, schedule.DayOverrideHoliday, nil, "U1", nil, currentHoliday); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.SetDayOverridesForTargets([]schedule.DayOverrideTarget{{
+		ScopeID: schedule.ScopeGlobalUser("UNION-A"), UserID: "UNION-A", DisplayID: "U1",
+	}}, []time.Time{globalShift}, schedule.DayOverrideShift, &sourceHoliday, "U1", nil, globalShift); err != nil {
+		t.Fatal(err)
+	}
+
+	visible, err := service.VisibleMembers(groupTwo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	member := visible["U1"]
+	if member == nil || member.Name != "旧群课表" {
+		t.Fatalf("fallback member = %+v", member)
+	}
+	if _, exists := member.DayOverrides["2026-10-01"]; exists {
+		t.Fatalf("source scope-wide override leaked: %+v", member.DayOverrides)
+	}
+	if member.DayOverrides["2026-10-02"].Kind != schedule.DayOverrideHoliday ||
+		member.DayOverrides["2026-10-03"].Kind != schedule.DayOverrideShift {
+		t.Fatalf("effective overrides = %+v", member.DayOverrides)
+	}
+}
+
 func TestGlobalOverridesKeepScopeBoundaries(t *testing.T) {
 	service, _ := newService(t)
 	enableGlobalStorage(t, service)

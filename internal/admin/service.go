@@ -154,17 +154,34 @@ func (s *Service) PageSchedule(scopeID, userID string) (*PageSchedule, bool, err
 	if scopeID == "" || userID == "" {
 		return nil, false, fmt.Errorf("scope_id 和 user_id 不能为空。")
 	}
-	target, err := s.ResolveStorageTarget(scopeID, userID, "")
+	member, found, err := s.VisibleMember(scopeID, userID, "")
 	if err != nil {
 		return nil, false, err
 	}
-	page, found, err := s.PageScheduleAt(target.ScopeID, target.UserID)
-	if err != nil || !found || page == nil {
-		return page, found, err
+	if !found || member == nil {
+		return nil, false, nil
 	}
-	page.ScopeID = scopeID
-	page.UserID = userID
-	return page, true, nil
+	events := make([]WebEvent, 0, len(member.Events))
+	for index, event := range member.Events {
+		events = append(events, WebEvent{
+			ID:          index + 1,
+			UID:         event["UID"],
+			Course:      event["SUMMARY"],
+			Location:    event["LOCATION"],
+			Description: event["DESCRIPTION"],
+			Start:       webDateTimeValue(event["DTSTART"], event["DTSTART_TZID"]),
+			End:         webDateTimeValue(event["DTEND"], event["DTEND_TZID"]),
+			RRule:       event["RRULE"],
+		})
+	}
+	return &PageSchedule{
+		ScopeID:  scopeID,
+		UserID:   userID,
+		Name:     firstNonEmpty(member.Name, userID),
+		QQ:       member.QQ,
+		Revision: member.Revision,
+		Events:   events,
+	}, true, nil
 }
 
 // PageScheduleAt loads a member by exact storage coordinates. Public edit
@@ -326,6 +343,37 @@ func (s *Service) SavePageSchedule(payload SavePagePayload, actor string) (*Save
 	}
 	payload.ScopeID = target.ScopeID
 	payload.UserID = target.UserID
+	targetMember, targetFound, err := s.storage.GetMember(target.ScopeID, target.UserID)
+	if err != nil {
+		return nil, err
+	}
+	if !targetFound || !hasCourses(targetMember) {
+		visible, visibleFound, err := s.VisibleMember(scopeID, userID, "")
+		if err != nil {
+			return nil, err
+		}
+		if visibleFound && hasCourses(visible) {
+			seed := *visible
+			seed.UserID = target.UserID
+			seed.DayOverrides = nil
+			expected := int64(0)
+			if targetFound && targetMember != nil {
+				expected = targetMember.Revision
+			}
+			if err := s.storage.PutMember(target.ScopeID, target.UserID, &seed, &expected); err != nil {
+				return nil, err
+			}
+			seeded, found, err := s.storage.GetMember(target.ScopeID, target.UserID)
+			if err != nil {
+				return nil, err
+			}
+			if !found || seeded == nil {
+				return nil, fmt.Errorf("准备全局课表失败，请刷新后重试。")
+			}
+			revision := seeded.Revision
+			payload.Revision = &revision
+		}
+	}
 	result, err := s.SavePageScheduleAt(payload, actor)
 	if err != nil {
 		return nil, err
@@ -333,6 +381,10 @@ func (s *Service) SavePageSchedule(payload SavePagePayload, actor string) (*Save
 	result.ScopeID = scopeID
 	result.UserID = userID
 	return result, nil
+}
+
+func hasCourses(member *schedule.Member) bool {
+	return member != nil && len(member.Events) > 0
 }
 
 // SavePageScheduleAt saves a member by exact storage coordinates.
@@ -512,11 +564,19 @@ func (s *Service) WebMemberICS(scopeID, userID string) (name, content string, fo
 	if scopeID == "" || userID == "" {
 		return "", "", false, fmt.Errorf("scope_id 和 user_id 不能为空。")
 	}
-	target, err := s.ResolveStorageTarget(scopeID, userID, "")
-	if err != nil {
+	member, found, err := s.VisibleMember(scopeID, userID, "")
+	if err != nil || !found || member == nil {
 		return "", "", false, err
 	}
-	return s.WebMemberICSAt(target.ScopeID, target.UserID)
+	name = firstNonEmpty(member.Name, userID)
+	if len(member.Events) == 0 {
+		return name, "", true, nil
+	}
+	content = strings.TrimSpace(member.ICS)
+	if content == "" {
+		content = schedule.SerializeScheduleICS(member.Events, "", member.Name)
+	}
+	return name, content, true, nil
 }
 
 // WebMemberICSAt returns ICS content for exact storage coordinates.
