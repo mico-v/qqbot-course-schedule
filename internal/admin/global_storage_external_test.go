@@ -71,7 +71,7 @@ func TestGlobalStorageAdminEditsSharedScheduleAcrossGroups(t *testing.T) {
 	}
 }
 
-func TestGlobalStorageAdminPageUsesLegacyCurrentGroupThenFallback(t *testing.T) {
+func TestGlobalStorageAdminPageUsesLegacyLocalOpenIDFallback(t *testing.T) {
 	service, _ := newService(t)
 	groupOne := schedule.ScopeGroup("G1")
 	groupTwo := schedule.ScopeGroup("G2")
@@ -89,30 +89,84 @@ func TestGlobalStorageAdminPageUsesLegacyCurrentGroupThenFallback(t *testing.T) 
 	}
 	pageTwo, found, err := service.PageSchedule(groupTwo, "U1")
 	if err != nil || !found || pageTwo.Name != "旧群课表" {
-		t.Fatalf("fallback page = %+v found=%v err=%v", pageTwo, found, err)
+		t.Fatalf("local OpenID fallback page = %+v found=%v err=%v", pageTwo, found, err)
 	}
 
-	name := "全局副本"
-	revision := pageTwo.Revision
+	sourceICS := strings.Replace(adminICS, "高等数学", "线性代数", 1)
+	if _, err := service.SaveICSWithSource(groupOne, "U1", "带来源课表", sourceICS, "source.ics", "U1", schedule.ImportSource{
+		GroupOpenID: "G1",
+		UserOpenID:  "U1",
+		UnionOpenID: "UNION-A",
+	}); err != nil {
+		t.Fatalf("SaveICSWithSource: %v", err)
+	}
+	pageTwo, found, err = service.PageSchedule(groupTwo, "U1")
+	if err != nil || !found || len(pageTwo.Events) != 1 || pageTwo.Events[0].Course != "线性代数" {
+		t.Fatalf("exact union source page = %+v found=%v err=%v", pageTwo, found, err)
+	}
+}
+
+func TestGlobalStorageAdminEditsLatestSeenMemberScheduleByLocalOpenID(t *testing.T) {
+	service, storeHandle := newService(t)
+	groupOld := schedule.ScopeGroup("G1")
+	groupLatest := schedule.ScopeGroup("G2")
+	groupCurrent := schedule.ScopeGroup("G3")
+	const localUserID = "337202E7E24BFB043BB7B7349222AE6B"
+	for _, member := range []struct {
+		scopeID  string
+		name     string
+		imported string
+	}{
+		{scopeID: groupOld, name: "较早导入", imported: "2026-09-22T13:38:51Z"},
+		{scopeID: groupLatest, name: "最后导入", imported: "2026-09-22T13:48:42Z"},
+	} {
+		if _, err := service.SaveICSWithSource(
+			member.scopeID, localUserID, member.name, adminICS, "schedule.ics", localUserID,
+			schedule.ImportSource{
+				GroupOpenID: strings.TrimPrefix(member.scopeID, "group:"),
+				UserOpenID:  localUserID,
+			},
+		); err != nil {
+			t.Fatal(err)
+		}
+		current, found, err := storeHandle.GetMember(member.scopeID, localUserID)
+		if err != nil || !found {
+			t.Fatalf("GetMember(%s): found=%v err=%v", member.scopeID, found, err)
+		}
+		current.ScheduleUpdatedAt = member.imported
+		if err := storeHandle.PutMember(member.scopeID, localUserID, current, nil); err != nil {
+			t.Fatalf("PutMember(%s): %v", member.scopeID, err)
+		}
+	}
+	if err := service.RecordSeenMember(groupCurrent, localUserID, "謎矢"); err != nil {
+		t.Fatal(err)
+	}
+	enableAdminGlobalStorage(t, service)
+
+	page, found, err := service.PageSchedule(groupCurrent, localUserID)
+	if err != nil || !found || page.Name != "最后导入" {
+		t.Fatalf("seen member page = %+v found=%v err=%v", page, found, err)
+	}
+	name := "最后导入（已编辑）"
+	revision := page.Revision
 	if _, err := service.SavePageSchedule(admin.SavePagePayload{
-		ScopeID:  groupTwo,
-		UserID:   "U1",
+		ScopeID:  groupCurrent,
+		UserID:   localUserID,
 		Revision: &revision,
 		Name:     &name,
 		Events: []admin.WebEventInput{{
-			ID: pageTwo.Events[0].ID, UID: pageTwo.Events[0].UID, Course: pageTwo.Events[0].Course,
-			Start: pageTwo.Events[0].Start, End: pageTwo.Events[0].End, RRule: pageTwo.Events[0].RRule,
+			ID: page.Events[0].ID, UID: page.Events[0].UID, Course: "高等数学",
+			Start: page.Events[0].Start, End: page.Events[0].End, RRule: page.Events[0].RRule,
 		}},
 	}, "webui"); err != nil {
-		t.Fatalf("copy-on-write save: %v", err)
+		t.Fatalf("SavePageSchedule: %v", err)
 	}
-	pageOne, found, err = service.PageSchedule(groupOne, "U1")
-	if err != nil || !found || pageOne.Name != "旧群课表" {
-		t.Fatalf("current-group page after global save = %+v found=%v err=%v", pageOne, found, err)
+	saved, found, err := service.PageScheduleAt(groupLatest, localUserID)
+	if err != nil || !found || saved.Name != name {
+		t.Fatalf("latest source page = %+v found=%v err=%v", saved, found, err)
 	}
-	pageTwo, found, err = service.PageSchedule(groupTwo, "U1")
-	if err != nil || !found || pageTwo.Name != name {
-		t.Fatalf("global page after global save = %+v found=%v err=%v", pageTwo, found, err)
+	if _, found, err := service.PageScheduleAt(groupCurrent, localUserID); err != nil || found {
+		t.Fatalf("unexpected copy in current group: found=%v err=%v", found, err)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -172,6 +173,9 @@ type memberMeta struct {
 	Source            string `json:"source"`
 	SourceFile        string `json:"source_file,omitempty"`
 	UploaderID        string `json:"uploader_id,omitempty"`
+	ImportGroupOpenID string `json:"import_group_openid,omitempty"`
+	ImportUserOpenID  string `json:"import_user_openid,omitempty"`
+	ImportUnionOpenID string `json:"import_union_openid,omitempty"`
 	EventCount        int    `json:"event_count"`
 	UpdatedAt         string `json:"updated_at"`
 	ScheduleUpdatedAt string `json:"schedule_updated_at"`
@@ -194,6 +198,9 @@ func encodeMember(member *schedule.Member) (string, []schedule.Event, error) {
 		LastModifiedAt:    member.LastModifiedAt,
 		LastModifiedBy:    member.LastModifiedBy,
 		ICS:               member.ICS,
+		ImportGroupOpenID: member.ImportGroupOpenID,
+		ImportUserOpenID:  member.ImportUserOpenID,
+		ImportUnionOpenID: member.ImportUnionOpenID,
 	}
 	encoded, err := json.Marshal(meta)
 	if err != nil {
@@ -202,10 +209,25 @@ func encodeMember(member *schedule.Member) (string, []schedule.Event, error) {
 	return string(encoded), member.Events, nil
 }
 
-func decodeMember(userID, dataJSON string, revision int64, events []schedule.Event) (*schedule.Member, error) {
+func decodeMember(scopeID, userID, dataJSON string, revision int64, events []schedule.Event) (*schedule.Member, error) {
 	var meta memberMeta
 	if err := json.Unmarshal([]byte(dataJSON), &meta); err != nil {
 		return nil, fmt.Errorf("解析成员 %s 数据失败: %w", userID, err)
+	}
+	kind, targetID := schedule.ParseScope(scopeID)
+	importGroupOpenID := meta.ImportGroupOpenID
+	importUserOpenID := meta.ImportUserOpenID
+	importUnionOpenID := meta.ImportUnionOpenID
+	// Rows written before import metadata existed can still be attributed
+	// safely within their own scope. Global user IDs are union OpenIDs.
+	if importGroupOpenID == "" && kind == "group" {
+		importGroupOpenID = targetID
+	}
+	if importUserOpenID == "" && (kind == "group" || kind == "private") {
+		importUserOpenID = userID
+	}
+	if importUnionOpenID == "" && kind == "global-user" && targetID == userID {
+		importUnionOpenID = targetID
 	}
 	return &schedule.Member{
 		UserID:            userID,
@@ -222,6 +244,9 @@ func decodeMember(userID, dataJSON string, revision int64, events []schedule.Eve
 		ScheduleUpdatedAt: meta.ScheduleUpdatedAt,
 		LastModifiedAt:    meta.LastModifiedAt,
 		LastModifiedBy:    meta.LastModifiedBy,
+		ImportGroupOpenID: importGroupOpenID,
+		ImportUserOpenID:  importUserOpenID,
+		ImportUnionOpenID: importUnionOpenID,
 		Revision:          revision,
 	}, nil
 }
@@ -244,7 +269,7 @@ func (s *Store) GetMember(scopeID, userID string) (*schedule.Member, bool, error
 	if err != nil {
 		return nil, false, err
 	}
-	member, err := decodeMember(userID, dataJSON, revision, events)
+	member, err := decodeMember(scopeID, userID, dataJSON, revision, events)
 	if err != nil {
 		return nil, false, err
 	}
@@ -274,7 +299,7 @@ func (s *Store) GetScopeMembers(scopeID string) (map[string]*schedule.Member, er
 		if err := rows.Scan(&userID, &dataJSON, &revision); err != nil {
 			return nil, fmt.Errorf("读取成员行失败: %w", err)
 		}
-		member, err := decodeMember(userID, dataJSON, revision, nil)
+		member, err := decodeMember(scopeID, userID, dataJSON, revision, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -328,6 +353,39 @@ func (s *Store) ListMemberScopes(userID string) ([]string, error) {
 		scopeIDs = append(scopeIDs, scopeID)
 	}
 	return scopeIDs, rows.Err()
+}
+
+// ListMembersByImportUnionOpenID returns personal rows whose import metadata
+// names one stable union OpenID.
+func (s *Store) ListMembersByImportUnionOpenID(unionOpenID string) ([]schedule.MemberLocation, error) {
+	unionOpenID = strings.TrimSpace(unionOpenID)
+	if unionOpenID == "" {
+		return nil, nil
+	}
+	rows, err := s.db.Query(
+		`SELECT scope_id, user_id, data_json FROM schedule_members
+		 WHERE scope_id NOT LIKE 'global-user:%' ORDER BY scope_id, user_id`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("读取成员导入来源失败: %w", err)
+	}
+	defer rows.Close()
+
+	var locations []schedule.MemberLocation
+	for rows.Next() {
+		var scopeID, userID, dataJSON string
+		if err := rows.Scan(&scopeID, &userID, &dataJSON); err != nil {
+			return nil, fmt.Errorf("读取成员导入来源行失败: %w", err)
+		}
+		var meta memberMeta
+		if err := json.Unmarshal([]byte(dataJSON), &meta); err != nil {
+			continue
+		}
+		if strings.TrimSpace(meta.ImportUnionOpenID) == unionOpenID {
+			locations = append(locations, schedule.MemberLocation{ScopeID: scopeID, UserID: userID})
+		}
+	}
+	return locations, rows.Err()
 }
 
 func (s *Store) memberEvents(scopeID, userID string) ([]schedule.Event, error) {

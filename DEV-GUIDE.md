@@ -260,6 +260,9 @@ func handleSchedule(ctx context.Context, in *Inbound, r *Replier) error {
 - 别名在 `Command.Aliases` 声明，会注册到同一处理器；`Commands()` 会去重。`panelOrder` 只决定面板排序，
   新指令标 `Ready: true` 会自动追加进面板（见 6.7），无需手改列表。
 - 群成员身份用 `in.UserOpenID`（群内为 member_openid），@ 目标从 `in.Mentions` 解析。
+  `member_openid` 不是 QQ 号，生产环境已出现同一用户在不同群返回相同值的情况：
+  隔离模式仍按 `group:<group_openid>` 隔离，全局模式优先精确匹配 `union_openid`，
+  仅在不可用时用本地 OpenID 兜底。
 
 ### 6.2 新增一个事件
 

@@ -94,7 +94,7 @@
 | 群聊作用域 | `group:<group_openid>` |
 | 单聊作用域 | `private:<user_openid>` |
 | 成员主键 | 群聊 `member_openid`；单聊 `user_openid`（缺失时退 `union_openid`） |
-| 说明 | 官方接口不提供 QQ 号，成员身份只能用 OpenID；展示名来自事件 `author.username`，首次互动落库 |
+| 说明 | 官方接口不提供 QQ 号，成员身份只能用 OpenID；生产实测 `member_openid` 可跨群相同。隔离模式仍按群 scope 存储，全局模式优先 `union_openid`、以其本地 OpenID 兜底。展示名来自事件 `author.username`，首次互动落库 |
 
 #### F1.2 数据表（照搬原插件 schema，语义等价）
 

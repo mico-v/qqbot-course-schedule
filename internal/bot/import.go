@@ -31,13 +31,14 @@ func (e *Env) ImportICS(ctx context.Context, in *Inbound, r *Replier, attachment
 		"origin", in.Origin,
 	)
 
-	target, err := e.ScheduleTarget(ctx, in, in.UserOpenID)
+	target, err := e.ImportTarget(ctx, in, in.UserOpenID)
 	if err != nil {
 		return r.Reply(ctx, err.Error())
 	}
-	result, err := e.Service.SaveICS(
+	result, err := e.Service.SaveICSWithSource(
 		target.ScopeID, target.UserID, in.Username,
 		content, attachment.Filename, in.UserOpenID,
+		e.ImportSource(ctx, in, target),
 	)
 	if err != nil {
 		slog.Warn("导入课表失败", "filename", attachment.Filename, "bytes", len(data), "err", err)

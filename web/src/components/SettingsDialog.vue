@@ -100,8 +100,8 @@ async function submit(): Promise<void> {
             <el-radio value="global">全局存储</el-radio>
           </el-radio-group>
           <span class="setting-hint muted">
-            按群存储时每个群的成员课表相互独立；全局存储时优先使用本群已有课表，本群没有时自动读取全局个人课表或其他群最近更新的课表，无需迁移即可切换。全局模式需要平台提供
-            union_openid，群消息缺失时会尝试调用群成员信息接口，机器人需获得对应权限。
+            按群存储时每个群的成员课表相互独立。全局存储时按当前群成员名单逐人关联个人课表，并选取最后导入的一份；优先使用
+            union_openid，平台未提供时按本地 OpenID 查找历史导入记录。成员接口不可用时沿用已缓存或已见成员。
           </span>
         </el-form-item>
         <el-form-item label="管理员 OpenID 名单">

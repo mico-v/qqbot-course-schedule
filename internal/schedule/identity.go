@@ -4,9 +4,9 @@ import "strings"
 
 const identityMemberLimit = 500
 
-// RecordIdentity remembers the union OpenID behind a session-local OpenID.
-// Group member OpenIDs are only stable inside one group, so this mapping is
-// required before a personal schedule can be shared globally.
+// RecordIdentity remembers the union OpenID behind a local OpenID when the
+// platform returns one. Local OpenIDs remain a compatibility fallback because
+// production has returned the same member_openid across groups.
 func (s *Service) RecordIdentity(scopeID, userID, globalUserOpenID string) error {
 	scopeID = strings.TrimSpace(scopeID)
 	userID = strings.TrimSpace(userID)
@@ -14,6 +14,10 @@ func (s *Service) RecordIdentity(scopeID, userID, globalUserOpenID string) error
 	if scopeID == "" || userID == "" || globalUserOpenID == "" {
 		return nil
 	}
+	return s.recordIdentities(scopeID, map[string]string{userID: globalUserOpenID})
+}
+
+func (s *Service) recordIdentities(scopeID string, values map[string]string) error {
 	var identities map[string]string
 	if _, err := s.store.GetKV(KVScopeGlobal, KVNamespaceIdentity, scopeID, &identities); err != nil {
 		return err
@@ -21,18 +25,30 @@ func (s *Service) RecordIdentity(scopeID, userID, globalUserOpenID string) error
 	if identities == nil {
 		identities = make(map[string]string)
 	}
-	if existing, ok := identities[userID]; ok && existing == globalUserOpenID {
-		return nil
-	}
-	if len(identities) >= identityMemberLimit {
-		if _, exists := identities[userID]; !exists {
-			for key := range identities {
-				delete(identities, key)
-				break
+	changed := false
+	for userID, globalUserOpenID := range values {
+		userID = strings.TrimSpace(userID)
+		globalUserOpenID = strings.TrimSpace(globalUserOpenID)
+		if userID == "" || globalUserOpenID == "" {
+			continue
+		}
+		if existing, ok := identities[userID]; ok && existing == globalUserOpenID {
+			continue
+		}
+		if len(identities) >= identityMemberLimit {
+			if _, exists := identities[userID]; !exists {
+				for key := range identities {
+					delete(identities, key)
+					break
+				}
 			}
 		}
+		identities[userID] = globalUserOpenID
+		changed = true
 	}
-	identities[userID] = globalUserOpenID
+	if !changed {
+		return nil
+	}
 	return s.store.SetKV(KVScopeGlobal, KVNamespaceIdentity, scopeID, identities)
 }
 

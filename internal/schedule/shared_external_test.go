@@ -67,15 +67,28 @@ func TestGlobalStorageSharesScheduleByUnionOpenID(t *testing.T) {
 	}
 }
 
-func TestGlobalStorageKeepsLegacyGroupSchedulesWithoutIdentity(t *testing.T) {
-	service, _ := newService(t)
+func TestGlobalStorageUsesLatestLegacyImportWithoutIdentity(t *testing.T) {
+	service, storeHandle := newService(t)
 	groupOne := schedule.ScopeGroup("G1")
 	groupTwo := schedule.ScopeGroup("G2")
-	if _, err := service.SaveICS(groupOne, "U1", "第一群课表", adminICS, "one.ics", "U1"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := service.SaveICS(groupTwo, "U1", "第二群课表", adminICS, "two.ics", "U1"); err != nil {
-		t.Fatal(err)
+	for _, member := range []struct {
+		scopeID  string
+		name     string
+		imported string
+	}{
+		{scopeID: groupOne, name: "较早导入", imported: "2026-09-22T13:38:51Z"},
+		{scopeID: groupTwo, name: "最后导入", imported: "2026-09-22T13:48:42Z"},
+	} {
+		if err := storeHandle.PutMember(member.scopeID, "U1", &schedule.Member{
+			UserID:            "U1",
+			Name:              member.name,
+			Events:            []schedule.Event{{"SUMMARY": member.name}},
+			ScheduleUpdatedAt: member.imported,
+			ImportGroupOpenID: strings.TrimPrefix(member.scopeID, "group:"),
+			ImportUserOpenID:  "U1",
+		}, nil); err != nil {
+			t.Fatalf("PutMember(%s): %v", member.scopeID, err)
+		}
 	}
 	enableGlobalStorage(t, service)
 
@@ -83,14 +96,14 @@ func TestGlobalStorageKeepsLegacyGroupSchedulesWithoutIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if visibleOne["U1"] == nil || visibleOne["U1"].Name != "第一群课表" {
+	if visibleOne["U1"] == nil || visibleOne["U1"].Name != "最后导入" {
 		t.Fatalf("group one visible = %+v", visibleOne)
 	}
 	visibleTwo, err := service.VisibleMembers(groupTwo)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if visibleTwo["U1"] == nil || visibleTwo["U1"].Name != "第二群课表" {
+	if visibleTwo["U1"] == nil || visibleTwo["U1"].Name != "最后导入" {
 		t.Fatalf("group two visible = %+v", visibleTwo)
 	}
 
@@ -98,7 +111,7 @@ func TestGlobalStorageKeepsLegacyGroupSchedulesWithoutIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if target.ScopeID != groupOne || target.UserID != "U1" {
+	if target.ScopeID != groupTwo || target.UserID != "U1" {
 		t.Fatalf("legacy write target = %+v", target)
 	}
 }
@@ -134,7 +147,11 @@ func TestGlobalStorageFallsBackToOtherGroupsAndPrefersGlobal(t *testing.T) {
 		t.Fatalf("global schedule should win before another group: %+v", visibleThree)
 	}
 
-	if _, err := service.SaveICS(groupTwo, "U2", "另一位成员", adminICS, "other.ics", "U2"); err != nil {
+	if _, err := service.SaveICSWithSource(groupTwo, "U2", "另一位成员", adminICS, "other.ics", "U2", schedule.ImportSource{
+		GroupOpenID: "G2",
+		UserOpenID:  "U2",
+		UnionOpenID: "UNION-B",
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := service.RecordIdentity(groupTwo, "U2", "UNION-B"); err != nil {
@@ -152,11 +169,220 @@ func TestGlobalStorageFallsBackToOtherGroupsAndPrefersGlobal(t *testing.T) {
 	}
 }
 
+func TestGlobalStorageUsesLatestExactUnionImport(t *testing.T) {
+	service, storeHandle := newService(t)
+	groupOne := schedule.ScopeGroup("G1")
+	groupTwo := schedule.ScopeGroup("G2")
+	groupThree := schedule.ScopeGroup("G3")
+	for _, member := range []struct {
+		scopeID  string
+		userID   string
+		name     string
+		imported string
+	}{
+		{scopeID: groupOne, userID: "U1", name: "较早导入", imported: "2026-10-01T08:00:00Z"},
+		{scopeID: groupTwo, userID: "U2", name: "最后导入", imported: "2026-10-02T08:00:00Z"},
+	} {
+		if err := storeHandle.PutMember(member.scopeID, member.userID, &schedule.Member{
+			UserID:            member.userID,
+			Name:              member.name,
+			Events:            []schedule.Event{{"SUMMARY": member.name}},
+			ScheduleUpdatedAt: member.imported,
+			ImportGroupOpenID: strings.TrimPrefix(member.scopeID, "group:"),
+			ImportUserOpenID:  member.userID,
+			ImportUnionOpenID: "UNION-A",
+		}, nil); err != nil {
+			t.Fatalf("PutMember: %v", err)
+		}
+	}
+	if err := service.RecordIdentity(groupThree, "U3", "UNION-A"); err != nil {
+		t.Fatal(err)
+	}
+	enableGlobalStorage(t, service)
+
+	member, found, err := service.VisibleMember(groupThree, "U3", "")
+	if err != nil || !found || member.Name != "最后导入" {
+		t.Fatalf("latest exact union member = %+v found=%v err=%v", member, found, err)
+	}
+}
+
+func TestGlobalStorageUsesLatestLocalOpenIDImportWithoutUnion(t *testing.T) {
+	service, storeHandle := newService(t)
+	groupOld := schedule.ScopeGroup("G1")
+	groupLatest := schedule.ScopeGroup("G2")
+	groupCurrent := schedule.ScopeGroup("G3")
+	const localUserID = "337202E7E24BFB043BB7B7349222AE6B"
+	for _, member := range []struct {
+		scopeID  string
+		name     string
+		imported string
+	}{
+		{scopeID: groupOld, name: "较早导入", imported: "2026-09-22T13:38:51Z"},
+		{scopeID: groupLatest, name: "最后导入", imported: "2026-09-22T13:48:42Z"},
+	} {
+		if err := storeHandle.PutMember(member.scopeID, localUserID, &schedule.Member{
+			UserID:            localUserID,
+			Name:              member.name,
+			Events:            []schedule.Event{{"SUMMARY": member.name}},
+			ScheduleUpdatedAt: member.imported,
+			ImportGroupOpenID: strings.TrimPrefix(member.scopeID, "group:"),
+			ImportUserOpenID:  localUserID,
+		}, nil); err != nil {
+			t.Fatalf("PutMember: %v", err)
+		}
+	}
+	if err := service.RecordSeenMember(groupCurrent, localUserID, "謎矢"); err != nil {
+		t.Fatal(err)
+	}
+	enableGlobalStorage(t, service)
+
+	target, err := service.ResolveStorageTarget(groupCurrent, localUserID, "")
+	if err != nil {
+		t.Fatalf("ResolveStorageTarget: %v", err)
+	}
+	if target.ScopeID != groupLatest || target.UserID != localUserID {
+		t.Fatalf("local fallback target = %+v", target)
+	}
+	member, found, err := service.VisibleMember(groupCurrent, localUserID, "")
+	if err != nil || !found || member.Name != "最后导入" {
+		t.Fatalf("local fallback member = %+v found=%v err=%v", member, found, err)
+	}
+
+	settings, err := service.BotSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.StorageMode = schedule.StorageModeGroup
+	if err := service.SaveBotSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	member, found, err = service.VisibleMember(groupCurrent, localUserID, "")
+	if err != nil || found || member != nil {
+		t.Fatalf("isolated member leaked from another group: member=%+v found=%v err=%v", member, found, err)
+	}
+}
+
+func TestGlobalStoragePrefersExactUnionOverSameLocalOpenID(t *testing.T) {
+	service, storeHandle := newService(t)
+	groupOne := schedule.ScopeGroup("G1")
+	groupTwo := schedule.ScopeGroup("G2")
+	groupCurrent := schedule.ScopeGroup("G3")
+	const localUserID = "SAME-LOCAL"
+	for _, member := range []struct {
+		scopeID  string
+		unionID  string
+		name     string
+		imported string
+	}{
+		{scopeID: groupOne, unionID: "UNION-A", name: "正确的全局课表", imported: "2026-10-01T08:00:00Z"},
+		{scopeID: groupTwo, unionID: "UNION-B", name: "同本地 ID 的另一人", imported: "2026-10-02T08:00:00Z"},
+	} {
+		if err := storeHandle.PutMember(member.scopeID, localUserID, &schedule.Member{
+			UserID:            localUserID,
+			Name:              member.name,
+			Events:            []schedule.Event{{"SUMMARY": member.name}},
+			ScheduleUpdatedAt: member.imported,
+			ImportGroupOpenID: strings.TrimPrefix(member.scopeID, "group:"),
+			ImportUserOpenID:  localUserID,
+			ImportUnionOpenID: member.unionID,
+		}, nil); err != nil {
+			t.Fatalf("PutMember: %v", err)
+		}
+	}
+	if err := service.RecordIdentity(groupCurrent, localUserID, "UNION-A"); err != nil {
+		t.Fatal(err)
+	}
+	enableGlobalStorage(t, service)
+
+	member, found, err := service.VisibleMember(groupCurrent, localUserID, "")
+	if err != nil || !found || member.Name != "正确的全局课表" {
+		t.Fatalf("union priority member = %+v found=%v err=%v", member, found, err)
+	}
+}
+
+func TestGlobalStorageExactUnionOutranksLaterLocalFallback(t *testing.T) {
+	service, storeHandle := newService(t)
+	groupExact := schedule.ScopeGroup("G1")
+	groupCurrent := schedule.ScopeGroup("G2")
+	const localUserID = "SAME-LOCAL"
+	if err := storeHandle.PutMember(groupExact, localUserID, &schedule.Member{
+		UserID:            localUserID,
+		Name:              "正确的全局课表",
+		Events:            []schedule.Event{{"SUMMARY": "正确的全局课表"}},
+		ScheduleUpdatedAt: "2026-10-01T08:00:00Z",
+		ImportGroupOpenID: "G1",
+		ImportUserOpenID:  localUserID,
+		ImportUnionOpenID: "UNION-A",
+	}, nil); err != nil {
+		t.Fatalf("PutMember exact union: %v", err)
+	}
+	if err := storeHandle.PutMember(groupCurrent, localUserID, &schedule.Member{
+		UserID:            localUserID,
+		Name:              "较新的本群旧课表",
+		Events:            []schedule.Event{{"SUMMARY": "较新的本群旧课表"}},
+		ScheduleUpdatedAt: "2026-10-02T08:00:00Z",
+		ImportGroupOpenID: "G2",
+		ImportUserOpenID:  localUserID,
+	}, nil); err != nil {
+		t.Fatalf("PutMember local fallback: %v", err)
+	}
+	if err := service.RecordIdentity(groupCurrent, localUserID, "UNION-A"); err != nil {
+		t.Fatal(err)
+	}
+	enableGlobalStorage(t, service)
+
+	member, found, err := service.VisibleMember(groupCurrent, localUserID, "")
+	if err != nil || !found || member.Name != "正确的全局课表" {
+		t.Fatalf("union priority member = %+v found=%v err=%v", member, found, err)
+	}
+}
+
+func TestGlobalStorageTieBreakIsDeterministic(t *testing.T) {
+	service, storeHandle := newService(t)
+	groupThree := schedule.ScopeGroup("G3")
+	const sameTime = "2026-10-01T08:00:00Z"
+	for _, member := range []struct {
+		scopeID string
+		userID  string
+		name    string
+	}{
+		{scopeID: schedule.ScopeGroup("G2"), userID: "U2", name: "后排序"},
+		{scopeID: schedule.ScopeGroup("G1"), userID: "U1", name: "先排序"},
+	} {
+		if err := storeHandle.PutMember(member.scopeID, member.userID, &schedule.Member{
+			UserID:            member.userID,
+			Name:              member.name,
+			Events:            []schedule.Event{{"SUMMARY": member.name}},
+			ScheduleUpdatedAt: sameTime,
+			ImportGroupOpenID: strings.TrimPrefix(member.scopeID, "group:"),
+			ImportUserOpenID:  member.userID,
+			ImportUnionOpenID: "UNION-A",
+		}, nil); err != nil {
+			t.Fatalf("PutMember: %v", err)
+		}
+	}
+	if err := service.RecordIdentity(groupThree, "U3", "UNION-A"); err != nil {
+		t.Fatal(err)
+	}
+	enableGlobalStorage(t, service)
+
+	for range 5 {
+		member, found, err := service.VisibleMember(groupThree, "U3", "")
+		if err != nil || !found || member.Name != "先排序" {
+			t.Fatalf("tie-break member = %+v found=%v err=%v", member, found, err)
+		}
+	}
+}
+
 func TestGlobalStorageFallbackOverridesStayInCurrentScope(t *testing.T) {
 	service, _ := newService(t)
 	groupOne := schedule.ScopeGroup("G1")
 	groupTwo := schedule.ScopeGroup("G2")
-	if _, err := service.SaveICS(groupOne, "U1", "旧群课表", adminICS, "legacy.ics", "U1"); err != nil {
+	if _, err := service.SaveICSWithSource(groupOne, "U1", "旧群课表", adminICS, "legacy.ics", "U1", schedule.ImportSource{
+		GroupOpenID: "G1",
+		UserOpenID:  "U1",
+		UnionOpenID: "UNION-A",
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := service.RecordIdentity(groupTwo, "U1", "UNION-A"); err != nil {

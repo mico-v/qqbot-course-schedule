@@ -28,6 +28,11 @@ type SaveResult struct {
 
 // SaveICS parses one ICS document and replaces a member's whole schedule.
 func (s *Service) SaveICS(scopeID, userID, name, content, sourceFile, actor string) (*SaveResult, error) {
+	return s.SaveICSWithSource(scopeID, userID, name, content, sourceFile, actor, ImportSource{})
+}
+
+// SaveICSWithSource saves an ICS document together with its import origin.
+func (s *Service) SaveICSWithSource(scopeID, userID, name, content, sourceFile, actor string, source ImportSource) (*SaveResult, error) {
 	text := strings.TrimSpace(content)
 	if text == "" {
 		return nil, fmt.Errorf("ICS 内容为空，未保存。")
@@ -42,21 +47,27 @@ func (s *Service) SaveICS(scopeID, userID, name, content, sourceFile, actor stri
 	if len(events) == 0 {
 		return nil, fmt.Errorf("ICS 中没有 VEVENT，未保存。")
 	}
-	return s.saveEvents(scopeID, userID, name, events, text, scheduleText, "ics", sourceFile, actor)
+	return s.saveEvents(scopeID, userID, name, events, text, scheduleText, "ics", sourceFile, actor, source)
 }
 
 // SaveWakeUpShare parses a decoded WakeUp share payload and replaces a
 // member's whole schedule.
 func (s *Service) SaveWakeUpShare(scopeID, userID, name, shareData, sourceFile, actor string) (*SaveResult, error) {
+	return s.SaveWakeUpShareWithSource(scopeID, userID, name, shareData, sourceFile, actor, ImportSource{})
+}
+
+// SaveWakeUpShareWithSource saves a WakeUp schedule together with its import
+// origin.
+func (s *Service) SaveWakeUpShareWithSource(scopeID, userID, name, shareData, sourceFile, actor string, source ImportSource) (*SaveResult, error) {
 	events, scheduleText, err := ParseWakeUpEventsAndSchedule(shareData)
 	if err != nil {
 		return nil, fmt.Errorf("WakeUp 分享解析失败，未保存：%v", err)
 	}
 	ics := SerializeScheduleICS(events, "", firstNonEmpty(name, "WakeUp课表"))
-	return s.saveEvents(scopeID, userID, name, events, ics, scheduleText, "wakeup", sourceFile, actor)
+	return s.saveEvents(scopeID, userID, name, events, ics, scheduleText, "wakeup", sourceFile, actor, source)
 }
 
-func (s *Service) saveEvents(scopeID, userID, name string, events []Event, icsText, scheduleText, source, sourceFile, actor string) (*SaveResult, error) {
+func (s *Service) saveEvents(scopeID, userID, name string, events []Event, icsText, scheduleText, source, sourceFile, actor string, importSource ImportSource) (*SaveResult, error) {
 	previous, found, err := s.store.GetMember(scopeID, userID)
 	if err != nil {
 		return nil, err
@@ -78,6 +89,11 @@ func (s *Service) saveEvents(scopeID, userID, name string, events []Event, icsTe
 	updated.ScheduleUpdatedAt = now
 	updated.LastModifiedAt = now
 	updated.LastModifiedBy = actor
+	if importSource != (ImportSource{}) {
+		updated.ImportGroupOpenID = strings.TrimSpace(importSource.GroupOpenID)
+		updated.ImportUserOpenID = strings.TrimSpace(importSource.UserOpenID)
+		updated.ImportUnionOpenID = strings.TrimSpace(importSource.UnionOpenID)
+	}
 
 	expected := int64(0)
 	if found {

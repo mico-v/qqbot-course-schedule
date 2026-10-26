@@ -11,6 +11,15 @@
 Dependencies flow `webhook → bot → schedule`; `store → schedule/admin`. Run
 `bash scripts/check-architecture.sh` before touching imports — it enforces the boundaries.
 
+## Identity Semantics
+
+- OpenID values are opaque platform identifiers, not QQ numbers.
+- Production has returned the same `member_openid` for one user across different groups.
+  Isolated storage still keys data by `group:<group_openid>`; global identity resolution
+  prefers `union_openid` and may fall back to the local OpenID when union is unavailable.
+- `union_openid` is optional and permission-gated. Imports and rendering must remain usable
+  when the platform does not return it.
+
 ## Build, Test, and Development Commands
 
 - `go build ./...` — build all packages.

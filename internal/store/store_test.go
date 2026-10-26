@@ -121,6 +121,96 @@ func TestMemberEventsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestMemberImportSourceRoundTrip(t *testing.T) {
+	store := newTestStore(t)
+	member := &schedule.Member{
+		UserID:            "U1",
+		Name:              "小明",
+		ImportGroupOpenID: "G1",
+		ImportUserOpenID:  "U1",
+		ImportUnionOpenID: "UNION-A",
+	}
+	if err := store.PutMember("group:G1", "U1", member, nil); err != nil {
+		t.Fatalf("PutMember: %v", err)
+	}
+	loaded, found, err := store.GetMember("group:G1", "U1")
+	if err != nil || !found {
+		t.Fatalf("GetMember found=%v err=%v", found, err)
+	}
+	if loaded.ImportGroupOpenID != "G1" ||
+		loaded.ImportUserOpenID != "U1" ||
+		loaded.ImportUnionOpenID != "UNION-A" {
+		t.Fatalf("import source = %+v", loaded)
+	}
+}
+
+func TestLegacyMemberImportSourceInference(t *testing.T) {
+	tests := []struct {
+		name        string
+		scopeID     string
+		userID      string
+		wantGroup   string
+		wantUser    string
+		wantUnionID string
+	}{
+		{name: "group", scopeID: "group:G1", userID: "U1", wantGroup: "G1", wantUser: "U1"},
+		{name: "private", scopeID: "private:U1", userID: "U1", wantUser: "U1"},
+		{name: "global user", scopeID: "global-user:UNION-A", userID: "UNION-A", wantUnionID: "UNION-A"},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			store := newTestStore(t)
+			if err := store.PutMember(testCase.scopeID, testCase.userID, &schedule.Member{
+				UserID: testCase.userID,
+				Name:   testCase.name,
+			}, nil); err != nil {
+				t.Fatalf("PutMember: %v", err)
+			}
+			loaded, found, err := store.GetMember(testCase.scopeID, testCase.userID)
+			if err != nil || !found {
+				t.Fatalf("GetMember found=%v err=%v", found, err)
+			}
+			if loaded.ImportGroupOpenID != testCase.wantGroup ||
+				loaded.ImportUserOpenID != testCase.wantUser ||
+				loaded.ImportUnionOpenID != testCase.wantUnionID {
+				t.Fatalf("inferred source = %+v", loaded)
+			}
+		})
+	}
+}
+
+func TestListMembersByImportUnionOpenID(t *testing.T) {
+	store := newTestStore(t)
+	for _, member := range []struct {
+		scopeID     string
+		userID      string
+		unionOpenID string
+	}{
+		{scopeID: "group:G2", userID: "U2", unionOpenID: "UNION-A"},
+		{scopeID: "group:G1", userID: "U1", unionOpenID: "UNION-A"},
+		{scopeID: "group:G3", userID: "U3", unionOpenID: "UNION-B"},
+		{scopeID: "global-user:UNION-A", userID: "UNION-A", unionOpenID: "UNION-A"},
+	} {
+		if err := store.PutMember(member.scopeID, member.userID, &schedule.Member{
+			UserID:            member.userID,
+			Name:              member.userID,
+			ImportUnionOpenID: member.unionOpenID,
+		}, nil); err != nil {
+			t.Fatalf("PutMember %s/%s: %v", member.scopeID, member.userID, err)
+		}
+	}
+
+	locations, err := store.ListMembersByImportUnionOpenID("UNION-A")
+	if err != nil {
+		t.Fatalf("ListMembersByImportUnionOpenID: %v", err)
+	}
+	if len(locations) != 2 ||
+		locations[0] != (schedule.MemberLocation{ScopeID: "group:G1", UserID: "U1"}) ||
+		locations[1] != (schedule.MemberLocation{ScopeID: "group:G2", UserID: "U2"}) {
+		t.Fatalf("locations = %+v", locations)
+	}
+}
+
 func TestDayOverrideMergeMemberWins(t *testing.T) {
 	store := newTestStore(t)
 	if err := store.PutMember("group:G1", "U1", &schedule.Member{UserID: "U1", Name: "小明"}, nil); err != nil {

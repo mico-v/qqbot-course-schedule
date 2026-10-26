@@ -44,6 +44,9 @@ type Env struct {
 
 	avatarMu    sync.Mutex
 	avatarCache map[string]avatarCacheEntry
+
+	rosterMu       sync.Mutex
+	rosterAttempts map[string]time.Time
 }
 
 // RenderedCard is a card image ready to send, including the dimensions the
@@ -55,8 +58,9 @@ type RenderedCard struct {
 }
 
 const (
-	botAvatarFetchTimeout  = 15 * time.Second
-	botAvatarRetryInterval = 5 * time.Minute
+	botAvatarFetchTimeout   = 15 * time.Second
+	botAvatarRetryInterval  = 5 * time.Minute
+	groupRosterSyncInterval = 10 * time.Minute
 )
 
 // RefreshBotAvatar fetches the bot's own avatar once and caches it in memory
@@ -202,8 +206,8 @@ func (e *Env) globalUserIDForMember(ctx context.Context, scopeID, groupOpenID, l
 }
 
 // ScheduleTarget resolves the write coordinates for one member. In global mode
-// a schedule already stored in the current group keeps that target; otherwise
-// the local member OpenID is projected onto union_openid.
+// a known union OpenID maps to the canonical personal scope. A current-group
+// row is used only when no stable identity can be found.
 func (e *Env) ScheduleTarget(ctx context.Context, in *Inbound, localUserID string) (schedule.StorageTarget, error) {
 	localUserID = strings.TrimSpace(localUserID)
 	globalUserID := ""
@@ -226,46 +230,175 @@ func (e *Env) ScheduleTarget(ctx context.Context, in *Inbound, localUserID strin
 		return schedule.StorageTarget{}, fmt.Errorf("无法识别要操作的成员，请稍后重试。")
 	}
 
-	target, targetErr := e.Service.ResolveStorageTarget(scopeID, localUserID, globalUserID)
-	if targetErr == nil {
-		return target, nil
-	}
 	if globalUserID != "" {
-		return schedule.StorageTarget{}, targetErr
+		return e.Service.ResolveStorageTarget(scopeID, localUserID, globalUserID)
 	}
 
 	globalUserID, err = e.globalUserIDForMember(ctx, scopeID, groupOpenID, localUserID, "")
-	if err != nil {
-		return schedule.StorageTarget{}, err
+	if err == nil {
+		return e.Service.ResolveStorageTarget(scopeID, localUserID, globalUserID)
 	}
-	return e.Service.ResolveStorageTarget(scopeID, localUserID, globalUserID)
+
+	// Legacy rows can still be edited when the platform cannot provide a
+	// union OpenID. ResolveStorageTarget also promotes rows whose import
+	// metadata already contains one.
+	target, targetErr := e.Service.ResolveStorageTarget(scopeID, localUserID, "")
+	if targetErr == nil {
+		if target.ScopeID == scopeID {
+			slog.Warn("global identity unavailable; using current-group schedule",
+				"group", shortID(groupOpenID),
+				"user", shortID(localUserID),
+				"err", err,
+			)
+		}
+		return target, nil
+	}
+	return schedule.StorageTarget{}, err
+}
+
+// ImportTarget resolves where a new schedule import is stored. Without a
+// union OpenID, global storage keeps the import in the current conversation so
+// the source group remains accurate; global reads can still aggregate rows by
+// a cross-group local OpenID.
+func (e *Env) ImportTarget(ctx context.Context, in *Inbound, localUserID string) (schedule.StorageTarget, error) {
+	localUserID = strings.TrimSpace(localUserID)
+	scopeID := e.Scope(in)
+	if localUserID == "" {
+		return schedule.StorageTarget{}, fmt.Errorf("无法识别要操作的成员，请稍后重试。")
+	}
+	settings, err := e.Service.BotSettings()
+	if err != nil {
+		return schedule.StorageTarget{}, fmt.Errorf("读取课表存储设置失败：%w", err)
+	}
+	current := schedule.StorageTarget{
+		ScopeID:     scopeID,
+		UserID:      localUserID,
+		LocalUserID: localUserID,
+	}
+	if settings.StorageMode != schedule.StorageModeGlobal {
+		return current, nil
+	}
+
+	groupOpenID := ""
+	globalUserID := ""
+	if in != nil {
+		groupOpenID = in.GroupOpenID
+		if localUserID == in.UserOpenID {
+			globalUserID = strings.TrimSpace(in.GlobalUserOpenID)
+		}
+	}
+	if globalUserID == "" {
+		globalUserID, err = e.globalUserIDForMember(ctx, scopeID, groupOpenID, localUserID, "")
+	}
+	if err == nil && globalUserID != "" {
+		return e.Service.ResolveStorageTarget(scopeID, localUserID, globalUserID)
+	}
+	slog.Info("global identity unavailable; keeping import in current conversation",
+		"group", shortID(groupOpenID),
+		"user", shortID(localUserID),
+	)
+	return current, nil
+}
+
+// ImportSource captures the platform identifiers for one imported schedule.
+// Isolated imports make a best-effort union lookup so both storage modes keep
+// the same source metadata when the app has member API access.
+func (e *Env) ImportSource(ctx context.Context, in *Inbound, target schedule.StorageTarget) schedule.ImportSource {
+	source := schedule.ImportSource{}
+	if in != nil {
+		if in.Origin == OriginGroup {
+			source.GroupOpenID = in.GroupOpenID
+		}
+		source.UserOpenID = in.UserOpenID
+		source.UnionOpenID = strings.TrimSpace(in.GlobalUserOpenID)
+	}
+	kind, targetID := schedule.ParseScope(target.ScopeID)
+	if source.UnionOpenID == "" && kind == "global-user" {
+		source.UnionOpenID = targetID
+	}
+	if source.UnionOpenID == "" && in != nil && in.Origin == OriginGroup &&
+		e.currentSettings().StorageMode == schedule.StorageModeGroup {
+		unionOpenID, err := e.globalUserIDForMember(ctx, e.Scope(in), in.GroupOpenID, in.UserOpenID, "")
+		if err == nil {
+			source.UnionOpenID = unionOpenID
+		}
+	}
+	return source
 }
 
 // ScheduleMembers returns the member view for the current conversation. In
-// global mode old rows in the current group take priority, then schedules from
-// other groups are projected back onto local IDs so buttons keep working.
+// global mode the current group roster is refreshed when permitted, then each
+// local member is projected onto their latest imported personal schedule.
 func (e *Env) ScheduleMembers(ctx context.Context, in *Inbound) (map[string]*schedule.Member, error) {
 	scopeID := e.Scope(in)
 	if e.currentSettings().StorageMode != schedule.StorageModeGlobal {
 		return e.Service.ScopeMembers(scopeID)
 	}
-	identities, err := e.Service.ScopeIdentities(scopeID)
-	if err != nil {
-		return nil, err
-	}
+	e.syncGroupRoster(ctx, in)
+	extra := make(map[string]string)
 	if in != nil {
 		localUserID := strings.TrimSpace(in.UserOpenID)
 		if localUserID != "" {
-			if globalUserOpenID := strings.TrimSpace(in.GlobalUserOpenID); globalUserOpenID != "" {
-				identities[localUserID] = globalUserOpenID
-			} else if _, exists := identities[localUserID]; !exists {
-				// An empty value still asks the global resolver to look up this
-				// local OpenID across legacy group schedules.
-				identities[localUserID] = ""
-			}
+			// Always include the sender, even when a stale roster cache does not
+			// contain them yet.
+			extra[localUserID] = strings.TrimSpace(in.GlobalUserOpenID)
 		}
 	}
-	return e.Service.SharedUserMembers(scopeID, identities)
+	return e.Service.SharedUserMembers(scopeID, extra)
+}
+
+func (e *Env) syncGroupRoster(ctx context.Context, in *Inbound) {
+	if e == nil || e.Client == nil || in == nil || in.Origin != OriginGroup ||
+		strings.TrimSpace(in.GroupOpenID) == "" {
+		return
+	}
+	now := e.now()
+	e.rosterMu.Lock()
+	if e.rosterAttempts == nil {
+		e.rosterAttempts = make(map[string]time.Time)
+	}
+	if last := e.rosterAttempts[in.GroupOpenID]; !last.IsZero() && now.Sub(last) < groupRosterSyncInterval {
+		e.rosterMu.Unlock()
+		return
+	}
+	e.rosterAttempts[in.GroupOpenID] = now
+	e.rosterMu.Unlock()
+
+	members, err := e.Client.ListGroupMembers(ctx, in.GroupOpenID)
+	if err != nil {
+		// Permission failures are expected on unapproved applications. Keep the
+		// cached roster and locally observed members instead of treating the
+		// group as empty.
+		slog.Warn("group member roster sync failed; using cached members",
+			"group", shortID(in.GroupOpenID),
+			"permission_denied", qqapi.ErrorCode(err) == 11253,
+			"err", err,
+		)
+		return
+	}
+
+	roster := make([]schedule.GroupRosterMember, 0, len(members))
+	for _, member := range members {
+		if member.Bot || strings.TrimSpace(member.MemberOpenID) == "" {
+			continue
+		}
+		roster = append(roster, schedule.GroupRosterMember{
+			UserID:      member.MemberOpenID,
+			Name:        member.Username,
+			UnionOpenID: member.UnionOpenID,
+		})
+	}
+	if err := e.Service.SaveGroupRoster(e.Scope(in), roster); err != nil {
+		slog.Warn("failed to cache group member roster",
+			"group", shortID(in.GroupOpenID),
+			"err", err,
+		)
+		return
+	}
+	slog.Info("group member roster synced",
+		"group", shortID(in.GroupOpenID),
+		"members", len(roster),
+	)
 }
 
 // OverrideTargets resolves local member IDs to the coordinates used for

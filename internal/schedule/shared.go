@@ -1,7 +1,6 @@
 package schedule
 
 import (
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -17,15 +16,29 @@ type StorageTarget struct {
 	LocalUserID string
 }
 
-// memberScopeStorage is an optional storage capability used to locate legacy
-// per-group rows without adding another required method to every test store.
-type memberScopeStorage interface {
+// memberImportUnionStorage locates per-group imports that recorded a stable
+// union OpenID. It stays optional so small test stores need not implement it.
+type memberImportUnionStorage interface {
+	ListMembersByImportUnionOpenID(unionOpenID string) ([]MemberLocation, error)
+}
+
+// memberLocalStorage locates schedule rows by their local OpenID. The platform
+// describes member_openid as group-scoped, but production has returned the same
+// value across groups. Global storage therefore uses it only as a fallback when
+// no union OpenID is available.
+type memberLocalStorage interface {
 	ListMemberScopes(userID string) ([]string, error)
 }
 
+type memberCandidate struct {
+	location MemberLocation
+	member   *Member
+}
+
 // ResolveStorageTarget returns the write target for one member. In global mode
-// an existing row in the current conversation always wins so old group data
-// keeps working without migration. Otherwise the union OpenID target is used.
+// any known union OpenID always maps to the canonical personal scope. A local
+// OpenID fallback keeps legacy per-group imports editable when the platform
+// does not return a union OpenID.
 func (s *Service) ResolveStorageTarget(displayScopeID, localUserID, knownGlobalUserOpenID string) (StorageTarget, error) {
 	displayScopeID = strings.TrimSpace(displayScopeID)
 	localUserID = strings.TrimSpace(localUserID)
@@ -44,39 +57,70 @@ func (s *Service) ResolveStorageTarget(displayScopeID, localUserID, knownGlobalU
 		}, nil
 	}
 
-	current, found, err := s.store.GetMember(displayScopeID, localUserID)
-	if err != nil {
-		return StorageTarget{}, fmt.Errorf("读取本群课表失败：%w", err)
-	}
-	if found && current != nil {
-		return StorageTarget{
-			ScopeID:     displayScopeID,
-			UserID:      localUserID,
-			LocalUserID: localUserID,
-		}, nil
-	}
-
 	globalUserOpenID := strings.TrimSpace(knownGlobalUserOpenID)
 	if globalUserOpenID == "" {
 		resolved, found, err := s.ResolveIdentity(displayScopeID, localUserID)
 		if err != nil {
 			return StorageTarget{}, fmt.Errorf("读取全局用户身份失败：%w", err)
 		}
-		if !found {
-			return StorageTarget{}, fmt.Errorf("找不到该成员的全局用户身份，请让对方先在本群发送一条消息。")
+		if found {
+			globalUserOpenID = resolved
 		}
-		globalUserOpenID = resolved
 	}
-	return StorageTarget{
-		ScopeID:     ScopeGlobalUser(globalUserOpenID),
-		UserID:      globalUserOpenID,
-		LocalUserID: localUserID,
-	}, nil
+
+	current, found, err := s.store.GetMember(displayScopeID, localUserID)
+	if err != nil {
+		return StorageTarget{}, fmt.Errorf("读取本群课表失败：%w", err)
+	}
+	if globalUserOpenID == "" && found && current != nil && current.ImportUnionOpenID != "" &&
+		(current.ImportUserOpenID == "" || current.ImportUserOpenID == localUserID) {
+		globalUserOpenID = strings.TrimSpace(current.ImportUnionOpenID)
+	}
+	if globalUserOpenID != "" {
+		return StorageTarget{
+			ScopeID:     ScopeGlobalUser(globalUserOpenID),
+			UserID:      globalUserOpenID,
+			LocalUserID: localUserID,
+		}, nil
+	}
+
+	candidates, err := s.localFallbackCandidates(localUserID)
+	if err != nil {
+		return StorageTarget{}, fmt.Errorf("读取历史课表失败：%w", err)
+	}
+	if found && current != nil && memberMatchesLocalSource(localUserID, current) {
+		candidates = append(candidates, memberCandidate{
+			location: MemberLocation{ScopeID: displayScopeID, UserID: localUserID},
+			member:   current,
+		})
+	}
+	if len(candidates) > 0 {
+		sortMemberCandidates(candidates)
+		latest := candidates[0].location
+		return StorageTarget{
+			ScopeID:     latest.ScopeID,
+			UserID:      latest.UserID,
+			LocalUserID: localUserID,
+		}, nil
+	}
+
+	known, err := s.memberKnownInScope(displayScopeID, localUserID)
+	if err != nil {
+		return StorageTarget{}, fmt.Errorf("读取群成员身份失败：%w", err)
+	}
+	if known {
+		return StorageTarget{
+			ScopeID:     displayScopeID,
+			UserID:      localUserID,
+			LocalUserID: localUserID,
+		}, nil
+	}
+	return StorageTarget{}, fmt.Errorf("找不到该成员的课表记录或群成员身份，请让对方先在本群发送一条消息。")
 }
 
-// VisibleMember resolves the schedule shown for one local member. In global
-// mode the current conversation's own schedule has priority, then the shared
-// global schedule, then the most recently updated schedule from another group.
+// VisibleMember resolves the latest imported schedule shown for one local
+// member. A union OpenID wins when available; the local OpenID is a fallback
+// for deployments that return the same value across groups.
 func (s *Service) VisibleMember(displayScopeID, localUserID, knownGlobalUserOpenID string) (*Member, bool, error) {
 	displayScopeID = strings.TrimSpace(displayScopeID)
 	localUserID = strings.TrimSpace(localUserID)
@@ -100,9 +144,8 @@ func (s *Service) VisibleMember(displayScopeID, localUserID, knownGlobalUserOpen
 }
 
 // VisibleMembers returns the schedules visible in one conversation. Group
-// storage keeps the old scope behavior; global storage projects local
-// identities onto shared personal schedules and also includes legacy group
-// rows that predate the identity map.
+// storage keeps the old scope behavior; global storage projects the scoped
+// roster or locally observed identities onto shared personal schedules.
 func (s *Service) VisibleMembers(displayScopeID string) (map[string]*Member, error) {
 	settings, err := s.BotSettings()
 	if err != nil {
@@ -111,18 +154,15 @@ func (s *Service) VisibleMembers(displayScopeID string) (map[string]*Member, err
 	if settings.StorageMode != StorageModeGlobal {
 		return s.store.GetScopeMembers(displayScopeID)
 	}
-	identities, err := s.ScopeIdentities(displayScopeID)
-	if err != nil {
-		return nil, err
-	}
-	return s.SharedUserMembers(displayScopeID, identities)
+	return s.SharedUserMembers(displayScopeID, nil)
 }
 
 // SharedUserMembers loads global personal schedules and projects them onto the
-// local OpenIDs used by one group or private chat. Existing rows in that same
-// conversation take priority, and only this scope's all-member overrides are
-// merged so another group's markers never leak into the view.
-func (s *Service) SharedUserMembers(displayScopeID string, identities map[string]string) (map[string]*Member, error) {
+// local OpenIDs used by one group or private chat. A non-empty cached roster
+// is authoritative; otherwise current rows, identity mappings and seen members
+// form the fallback member set. extraLocalIDs always stays visible so a newly
+// active sender is not hidden by a stale roster snapshot.
+func (s *Service) SharedUserMembers(displayScopeID string, extraLocalIDs map[string]string) (map[string]*Member, error) {
 	displayScopeID = strings.TrimSpace(displayScopeID)
 	if displayScopeID == "" {
 		return nil, fmt.Errorf("无法识别当前会话。")
@@ -132,23 +172,11 @@ func (s *Service) SharedUserMembers(displayScopeID string, identities map[string
 		return nil, err
 	}
 
-	currentMembers, err := s.store.GetScopeMembers(displayScopeID)
-	if err != nil {
-		return nil, err
-	}
-	localIDs := make(map[string]bool, len(currentMembers)+len(identities))
-	for localID := range currentMembers {
-		localIDs[localID] = true
-	}
-	for localID := range identities {
-		if strings.TrimSpace(localID) != "" {
-			localIDs[localID] = true
-		}
-	}
+	localIDs := resolver.localMemberIDs(extraLocalIDs)
 
 	members := make(map[string]*Member)
 	for localID := range localIDs {
-		knownGlobalUserOpenID := strings.TrimSpace(identities[localID])
+		knownGlobalUserOpenID := strings.TrimSpace(extraLocalIDs[localID])
 		member, found, err := resolver.resolve(localID, knownGlobalUserOpenID)
 		if err != nil {
 			return nil, err
@@ -163,27 +191,96 @@ func (s *Service) SharedUserMembers(displayScopeID string, identities map[string
 type globalScheduleResolver struct {
 	service        *Service
 	displayScopeID string
-	identities     map[string]map[string]string
+	currentMembers map[string]*Member
+	identities     map[string]string
+	rosterMembers  map[string]bool
+	rosterUnions   map[string]string
+	rosterFound    bool
+	seenMembers    map[string]string
 }
 
 func (s *Service) newGlobalScheduleResolver(displayScopeID string) (*globalScheduleResolver, error) {
-	entries, err := s.store.ListKV(KVScopeGlobal, KVNamespaceIdentity)
+	currentMembers, err := s.store.GetScopeMembers(displayScopeID)
+	if err != nil {
+		return nil, fmt.Errorf("读取本群课表失败：%w", err)
+	}
+	identities, err := s.ScopeIdentities(displayScopeID)
 	if err != nil {
 		return nil, fmt.Errorf("读取全局用户身份失败：%w", err)
 	}
-	identities := make(map[string]map[string]string, len(entries))
-	for _, entry := range entries {
-		var mapping map[string]string
-		if err := json.Unmarshal(entry.Value, &mapping); err != nil {
-			continue
+	rosterMembers := make(map[string]bool)
+	rosterUnions := make(map[string]string)
+	rosterFound := false
+	kind, _ := ParseScope(displayScopeID)
+	if kind == "group" {
+		roster, found, err := s.GroupRoster(displayScopeID)
+		if err != nil {
+			return nil, err
 		}
-		identities[entry.Key] = mapping
+		if found {
+			rosterFound = len(roster.Members) > 0
+			for _, member := range roster.Members {
+				if member.UserID == "" {
+					continue
+				}
+				rosterMembers[member.UserID] = true
+				if member.UnionOpenID != "" {
+					rosterUnions[member.UserID] = member.UnionOpenID
+				}
+			}
+		}
+	}
+	var seenMembers map[string]string
+	if _, err := s.store.GetKV(KVScopeGlobal, KVNamespaceSeen, displayScopeID, &seenMembers); err != nil {
+		return nil, fmt.Errorf("读取群成员列表失败：%w", err)
 	}
 	return &globalScheduleResolver{
 		service:        s,
 		displayScopeID: displayScopeID,
+		currentMembers: currentMembers,
 		identities:     identities,
+		rosterMembers:  rosterMembers,
+		rosterUnions:   rosterUnions,
+		rosterFound:    rosterFound,
+		seenMembers:    seenMembers,
 	}, nil
+}
+
+func (r *globalScheduleResolver) localMemberIDs(extra map[string]string) map[string]bool {
+	localIDs := make(map[string]bool)
+	if r.rosterFound {
+		for localID := range r.rosterMembers {
+			localIDs[localID] = true
+		}
+		for localID := range extra {
+			if strings.TrimSpace(localID) != "" {
+				localIDs[localID] = true
+			}
+		}
+		return localIDs
+	}
+	for localID := range r.currentMembers {
+		if strings.TrimSpace(localID) != "" {
+			localIDs[localID] = true
+		}
+	}
+	for localID := range r.identities {
+		localIDs[localID] = true
+	}
+	for localID := range r.rosterUnions {
+		localIDs[localID] = true
+	}
+	for localID := range r.seenMembers {
+		if strings.TrimSpace(localID) != "" {
+			localIDs[localID] = true
+		}
+	}
+	for localID := range extra {
+		if strings.TrimSpace(localID) != "" {
+			localIDs[localID] = true
+		}
+	}
+	return localIDs
 }
 
 func (r *globalScheduleResolver) resolve(localUserID, knownGlobalUserOpenID string) (*Member, bool, error) {
@@ -193,121 +290,215 @@ func (r *globalScheduleResolver) resolve(localUserID, knownGlobalUserOpenID stri
 	}
 	globalUserOpenID := strings.TrimSpace(knownGlobalUserOpenID)
 	if globalUserOpenID == "" {
-		globalUserOpenID = strings.TrimSpace(r.identities[r.displayScopeID][localUserID])
+		globalUserOpenID = strings.TrimSpace(r.identities[localUserID])
+	}
+	if globalUserOpenID == "" {
+		globalUserOpenID = strings.TrimSpace(r.rosterUnions[localUserID])
+	}
+
+	unionCandidates := make(map[string]memberCandidate)
+	add := func(location MemberLocation, member *Member) {
+		if member == nil {
+			return
+		}
+		key := location.ScopeID + "\x00" + location.UserID
+		unionCandidates[key] = memberCandidate{location: location, member: member}
 	}
 
 	current, currentFound, err := r.service.store.GetMember(r.displayScopeID, localUserID)
 	if err != nil {
 		return nil, false, fmt.Errorf("读取本群课表失败：%w", err)
 	}
-	if currentFound && hasCourses(current) {
-		return r.project(localUserID, globalUserOpenID, current)
+	if currentFound && memberBelongsToDisplayScope(r.displayScopeID, localUserID, current) &&
+		memberMatchesUnionSource(globalUserOpenID, current) {
+		add(MemberLocation{ScopeID: r.displayScopeID, UserID: localUserID}, current)
 	}
 
-	var globalMember *Member
-	globalFound := false
 	if globalUserOpenID != "" {
-		globalMember, globalFound, err = r.service.store.GetMember(ScopeGlobalUser(globalUserOpenID), globalUserOpenID)
+		globalMember, globalFound, err := r.service.store.GetMember(ScopeGlobalUser(globalUserOpenID), globalUserOpenID)
 		if err != nil {
 			return nil, false, fmt.Errorf("读取全局课表失败：%w", err)
 		}
-		if globalFound && hasCourses(globalMember) {
-			return r.project(localUserID, globalUserOpenID, globalMember)
+		if globalFound {
+			add(MemberLocation{ScopeID: ScopeGlobalUser(globalUserOpenID), UserID: globalUserOpenID}, globalMember)
 		}
-	}
-
-	fallback, fallbackFound, err := r.latestOtherGroupMember(localUserID, globalUserOpenID)
-	if err != nil {
-		return nil, false, err
-	}
-	if fallbackFound {
-		return r.project(localUserID, globalUserOpenID, fallback)
-	}
-	if currentFound {
-		return r.project(localUserID, globalUserOpenID, current)
-	}
-	if globalFound {
-		return r.project(localUserID, globalUserOpenID, globalMember)
-	}
-	return nil, false, nil
-}
-
-func (r *globalScheduleResolver) latestOtherGroupMember(localUserID, globalUserOpenID string) (*Member, bool, error) {
-	type candidate struct {
-		scopeID string
-		userID  string
-		member  *Member
-	}
-	candidates := make(map[string]candidate)
-	addCandidate := func(scopeID, userID string) error {
-		scopeID = strings.TrimSpace(scopeID)
-		userID = strings.TrimSpace(userID)
-		if scopeID == "" || userID == "" || scopeID == r.displayScopeID {
-			return nil
-		}
-		kind, _ := ParseScope(scopeID)
-		if kind != "group" && kind != "private" {
-			return nil
-		}
-		if mapped := strings.TrimSpace(r.identities[scopeID][userID]); mapped != "" &&
-			globalUserOpenID != "" && mapped != globalUserOpenID {
-			return nil
-		}
-		key := scopeID + "\x00" + userID
-		if _, exists := candidates[key]; exists {
-			return nil
-		}
-		member, found, err := r.service.store.GetMember(scopeID, userID)
-		if err != nil {
-			return fmt.Errorf("读取其他群课表失败：%w", err)
-		}
-		if found && hasCourses(member) {
-			candidates[key] = candidate{scopeID: scopeID, userID: userID, member: member}
-		}
-		return nil
 	}
 
 	if globalUserOpenID != "" {
-		for scopeID, mapping := range r.identities {
-			for userID, mappedGlobalID := range mapping {
-				if strings.TrimSpace(mappedGlobalID) == globalUserOpenID {
-					if err := addCandidate(scopeID, userID); err != nil {
-						return nil, false, err
-					}
+		if storage, ok := r.service.store.(memberImportUnionStorage); ok {
+			locations, err := storage.ListMembersByImportUnionOpenID(globalUserOpenID)
+			if err != nil {
+				return nil, false, fmt.Errorf("读取成员导入来源失败：%w", err)
+			}
+			for _, location := range locations {
+				member, found, err := r.service.store.GetMember(location.ScopeID, location.UserID)
+				if err != nil {
+					return nil, false, fmt.Errorf("读取历史课表失败：%w", err)
+				}
+				if found && member.ImportUnionOpenID == globalUserOpenID {
+					add(location, member)
 				}
 			}
 		}
 	}
-	if storage, ok := r.service.store.(memberScopeStorage); ok {
-		scopeIDs, err := storage.ListMemberScopes(localUserID)
-		if err != nil {
-			return nil, false, fmt.Errorf("读取其他群课表位置失败：%w", err)
+
+	if hasCandidateCourses(unionCandidates) {
+		item, _ := latestMemberCandidate(unionCandidates)
+		return r.project(localUserID, globalUserOpenID, item.member)
+	}
+
+	// A union schedule is authoritative whenever one exists with courses. Only
+	// fall back to rows matched by the local OpenID when no usable union
+	// schedule is found, for example while migrating old per-group data.
+	localCandidates, err := r.service.localFallbackCandidates(localUserID)
+	if err != nil {
+		return nil, false, fmt.Errorf("读取历史课表失败：%w", err)
+	}
+	for _, item := range localCandidates {
+		add(item.location, item.member)
+	}
+	item, found := latestMemberCandidate(unionCandidates)
+	if !found {
+		return nil, false, nil
+	}
+	return r.project(localUserID, globalUserOpenID, item.member)
+}
+
+func (s *Service) localFallbackCandidates(localUserID string) ([]memberCandidate, error) {
+	storage, ok := s.store.(memberLocalStorage)
+	if !ok {
+		return nil, nil
+	}
+	scopeIDs, err := storage.ListMemberScopes(localUserID)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[MemberLocation]bool)
+	candidates := make([]memberCandidate, 0, len(scopeIDs))
+	for _, scopeID := range scopeIDs {
+		kind, _ := ParseScope(scopeID)
+		if kind != "group" && kind != "private" {
+			continue
 		}
-		for _, scopeID := range scopeIDs {
-			if err := addCandidate(scopeID, localUserID); err != nil {
-				return nil, false, err
-			}
+		location := MemberLocation{ScopeID: scopeID, UserID: localUserID}
+		if seen[location] {
+			continue
+		}
+		member, found, err := s.store.GetMember(scopeID, localUserID)
+		if err != nil {
+			return nil, err
+		}
+		if !found || !memberMatchesLocalSource(localUserID, member) {
+			continue
+		}
+		seen[location] = true
+		candidates = append(candidates, memberCandidate{location: location, member: member})
+	}
+	return candidates, nil
+}
+
+func (s *Service) memberKnownInScope(scopeID, userID string) (bool, error) {
+	var seen map[string]string
+	found, err := s.store.GetKV(KVScopeGlobal, KVNamespaceSeen, scopeID, &seen)
+	if err != nil {
+		return false, err
+	}
+	if found {
+		if _, ok := seen[userID]; ok {
+			return true, nil
 		}
 	}
 
-	ordered := make([]candidate, 0, len(candidates))
+	kind, _ := ParseScope(scopeID)
+	if kind != "group" {
+		return false, nil
+	}
+	roster, found, err := s.GroupRoster(scopeID)
+	if err != nil {
+		return false, err
+	}
+	if !found {
+		return false, nil
+	}
+	for _, member := range roster.Members {
+		if member.UserID == userID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func memberMatchesLocalSource(localUserID string, member *Member) bool {
+	if member == nil || strings.TrimSpace(member.ImportUnionOpenID) != "" {
+		return false
+	}
+	importUserID := strings.TrimSpace(member.ImportUserOpenID)
+	return importUserID == "" || importUserID == strings.TrimSpace(localUserID)
+}
+
+func memberMatchesUnionSource(globalUserOpenID string, member *Member) bool {
+	globalUserOpenID = strings.TrimSpace(globalUserOpenID)
+	if globalUserOpenID == "" || member == nil {
+		return false
+	}
+	return strings.TrimSpace(member.ImportUnionOpenID) == globalUserOpenID
+}
+
+func hasCandidateCourses(candidates map[string]memberCandidate) bool {
+	for _, candidate := range candidates {
+		if hasCourses(candidate.member) {
+			return true
+		}
+	}
+	return false
+}
+
+func latestMemberCandidate(candidates map[string]memberCandidate) (memberCandidate, bool) {
+	ordered := make([]memberCandidate, 0, len(candidates))
 	for _, item := range candidates {
 		ordered = append(ordered, item)
 	}
-	sort.Slice(ordered, func(i, j int) bool {
-		left, right := memberUpdatedAt(ordered[i].member), memberUpdatedAt(ordered[j].member)
+	sortMemberCandidates(ordered)
+	if len(ordered) == 0 {
+		return memberCandidate{}, false
+	}
+	for _, item := range ordered {
+		if hasCourses(item.member) {
+			return item, true
+		}
+	}
+	return ordered[0], true
+}
+
+func sortMemberCandidates(candidates []memberCandidate) {
+	sort.Slice(candidates, func(i, j int) bool {
+		left := memberUpdatedAt(candidates[i].member)
+		right := memberUpdatedAt(candidates[j].member)
 		if !left.Equal(right) {
 			return left.After(right)
 		}
-		if ordered[i].scopeID != ordered[j].scopeID {
-			return ordered[i].scopeID < ordered[j].scopeID
+		if candidates[i].location.ScopeID != candidates[j].location.ScopeID {
+			return candidates[i].location.ScopeID < candidates[j].location.ScopeID
 		}
-		return ordered[i].userID < ordered[j].userID
+		return candidates[i].location.UserID < candidates[j].location.UserID
 	})
-	if len(ordered) == 0 {
-		return nil, false, nil
+}
+
+func memberBelongsToDisplayScope(displayScopeID, localUserID string, member *Member) bool {
+	if member == nil {
+		return false
 	}
-	return ordered[0].member, true, nil
+	kind, targetID := ParseScope(displayScopeID)
+	switch kind {
+	case "group":
+		return member.ImportGroupOpenID == targetID &&
+			(member.ImportUserOpenID == "" || member.ImportUserOpenID == localUserID)
+	case "private":
+		return member.ImportGroupOpenID == "" &&
+			(member.ImportUserOpenID == "" || member.ImportUserOpenID == localUserID)
+	default:
+		return true
+	}
 }
 
 func (r *globalScheduleResolver) project(localUserID, globalUserOpenID string, member *Member) (*Member, bool, error) {
@@ -368,7 +559,7 @@ func memberUpdatedAt(member *Member) time.Time {
 		return time.Time{}
 	}
 	for _, value := range []string{member.ScheduleUpdatedAt, member.UpdatedAt} {
-		if parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(value)); err == nil {
+		if parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(value)); err == nil {
 			return parsed
 		}
 	}

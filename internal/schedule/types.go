@@ -55,6 +55,23 @@ type DayOverride struct {
 	SourceDay string `json:"source_day"`
 }
 
+// ImportSource identifies where one personal schedule was imported from.
+// UserOpenID is the platform's local member_openid in groups (or user_openid
+// in private chat). Production has returned the same member_openid across
+// groups, so it is also a global-lookup fallback, not a QQ number. UnionOpenID
+// is the optional cross-application identity and wins when present.
+type ImportSource struct {
+	GroupOpenID string
+	UserOpenID  string
+	UnionOpenID string
+}
+
+// MemberLocation is one persisted member coordinate.
+type MemberLocation struct {
+	ScopeID string
+	UserID  string
+}
+
 // Member is one person's schedule inside a scope.
 type Member struct {
 	UserID string
@@ -72,6 +89,9 @@ type Member struct {
 	LastModifiedBy    string
 	SourceFile        string
 	UploaderID        string
+	ImportGroupOpenID string
+	ImportUserOpenID  string
+	ImportUnionOpenID string
 	Revision          int64
 	// DayOverrides is attached on read, merged from scope-wide and member rows.
 	DayOverrides map[string]DayOverride
@@ -129,4 +149,4 @@ func ParseScope(scopeID string) (kind, targetID string) {
 }
 
 // NowISO returns the UTC bookkeeping timestamp.
-func NowISO() string { return time.Now().UTC().Format(time.RFC3339) }
+func NowISO() string { return time.Now().UTC().Format(time.RFC3339Nano) }

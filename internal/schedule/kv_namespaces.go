@@ -11,6 +11,8 @@ const (
 	KVNamespaceSeen = "seen"
 	// KVNamespaceIdentity maps session-local OpenIDs to global union OpenIDs.
 	KVNamespaceIdentity = "identity"
+	// KVNamespaceRoster stores the latest group member snapshot.
+	KVNamespaceRoster = "roster"
 	// KVNamespacePanel stores command panel state managed by the bot.
 	KVNamespacePanel = "panel"
 	// KVNamespaceEditLinks stores hashed schedule edit-link tokens.

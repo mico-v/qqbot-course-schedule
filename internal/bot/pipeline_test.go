@@ -38,6 +38,9 @@ type fakeQQ struct {
 	memberCalls    []string
 	memberUnionIDs map[string]string
 	memberError    int
+	rosterMembers  []map[string]any
+	rosterCalls    int
+	rosterError    int
 	msgCh          chan map[string]any
 	failUploads    bool
 	// failMarkdown rejects msg_type=2 so the plain-text fallback can be tested.
@@ -62,6 +65,22 @@ func (f *fakeQQ) handler() http.Handler {
 		avatarURL := f.avatarURL
 		f.mu.Unlock()
 		_ = json.NewEncoder(w).Encode(map[string]string{"username": "课表机器人", "avatar": avatarURL})
+	})
+	mux.HandleFunc("/v2/groups/GROUP/members", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.rosterCalls++
+		members := append([]map[string]any(nil), f.rosterMembers...)
+		errorCode := f.rosterError
+		f.mu.Unlock()
+		if errorCode != 0 {
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": errorCode, "message": "no permission"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"members":     members,
+			"next_cursor": "",
+		})
 	})
 	mux.HandleFunc("/v2/groups/GROUP/members/", func(w http.ResponseWriter, r *http.Request) {
 		memberID := strings.TrimPrefix(r.URL.Path, "/v2/groups/GROUP/members/")
@@ -121,6 +140,12 @@ func (f *fakeQQ) memberCallCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.memberCalls)
+}
+
+func (f *fakeQQ) rosterCallCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.rosterCalls
 }
 
 func waitMessage(t *testing.T, fake *fakeQQ) map[string]any {
