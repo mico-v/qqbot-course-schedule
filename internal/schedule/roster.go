@@ -1,8 +1,10 @@
 package schedule
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"time"
 )
 
 const rosterMemberLimit = 500
@@ -20,58 +22,82 @@ type GroupRoster struct {
 	UpdatedAt string              `json:"updated_at"`
 }
 
-// SaveGroupRoster replaces the cached member list for one group and remembers
-// every union OpenID included in the snapshot.
+// SaveGroupRoster atomically replaces one group's roster state in
+// group_members.
 func (s *Service) SaveGroupRoster(scopeID string, members []GroupRosterMember) error {
-	scopeID = strings.TrimSpace(scopeID)
-	kind, targetID := ParseScope(scopeID)
-	if kind != "group" || strings.TrimSpace(targetID) == "" {
-		return fmt.Errorf("无效的群聊作用域。")
-	}
+	return s.SaveGroupRosterContext(context.Background(), scopeID, members)
+}
 
-	deduplicated := make([]GroupRosterMember, 0, min(len(members), rosterMemberLimit))
-	identities := make(map[string]string)
+// SaveGroupRosterContext atomically replaces roster state with cancellation.
+func (s *Service) SaveGroupRosterContext(ctx context.Context, scopeID string, members []GroupRosterMember) error {
+	ref, err := ParseLegacyScopeRef(strings.TrimSpace(scopeID))
+	if err != nil || ref.Kind != "group" {
+		return ValidationErrorf("无效的群聊作用域")
+	}
+	now := time.Now().UTC()
+	observations := make([]GroupMemberObservation, 0, min(len(members), rosterMemberLimit))
 	seen := make(map[string]bool)
 	for _, member := range members {
-		member.UserID = strings.TrimSpace(member.UserID)
-		member.Name = strings.TrimSpace(member.Name)
-		member.UnionOpenID = strings.TrimSpace(member.UnionOpenID)
-		if member.UserID == "" || seen[member.UserID] {
+		memberID := strings.TrimSpace(member.UserID)
+		if memberID == "" || seen[memberID] {
 			continue
 		}
-		if len(deduplicated) >= rosterMemberLimit {
+		if len(observations) >= rosterMemberLimit {
 			break
 		}
-		seen[member.UserID] = true
-		if member.Name == "" {
-			member.Name = member.UserID
-		}
-		deduplicated = append(deduplicated, member)
-		if member.UnionOpenID != "" {
-			identities[member.UserID] = member.UnionOpenID
-		}
+		seen[memberID] = true
+		observations = append(observations, GroupMemberObservation{
+			Key: GroupMemberKey{
+				GroupOpenID:  ref.ID,
+				MemberOpenID: memberID,
+			},
+			DisplayName: firstNonEmpty(member.Name, memberID),
+			UnionOpenID: strings.TrimSpace(member.UnionOpenID),
+			ObservedAt:  now,
+			InRoster:    true,
+		})
 	}
-
-	roster := GroupRoster{Members: deduplicated, UpdatedAt: NowISO()}
-	if err := s.store.SetKV(KVScopeGlobal, KVNamespaceRoster, scopeID, roster); err != nil {
+	if err := s.members.ReplaceGroupRoster(
+		ctx,
+		GroupKey{GroupOpenID: ref.ID},
+		observations,
+	); err != nil {
 		return fmt.Errorf("保存群成员快照失败：%w", err)
-	}
-	if err := s.recordIdentities(scopeID, identities); err != nil {
-		return fmt.Errorf("保存群成员身份失败：%w", err)
 	}
 	return nil
 }
 
-// GroupRoster returns the latest cached member snapshot for one group.
+// GroupRoster returns members currently marked as part of the roster.
 func (s *Service) GroupRoster(scopeID string) (GroupRoster, bool, error) {
-	scopeID = strings.TrimSpace(scopeID)
-	if scopeID == "" {
-		return GroupRoster{}, false, nil
+	ref, err := ParseLegacyScopeRef(strings.TrimSpace(scopeID))
+	if err != nil || ref.Kind != "group" {
+		return GroupRoster{}, false, ValidationErrorf("无效的群聊作用域")
 	}
-	var roster GroupRoster
-	found, err := s.store.GetKV(KVScopeGlobal, KVNamespaceRoster, scopeID, &roster)
+	members, err := s.members.ListGroupMembers(
+		context.Background(),
+		GroupKey{GroupOpenID: ref.ID},
+	)
 	if err != nil {
 		return GroupRoster{}, false, fmt.Errorf("读取群成员快照失败：%w", err)
 	}
-	return roster, found, nil
+	roster := GroupRoster{}
+	var updatedAt time.Time
+	for _, member := range members {
+		if !member.InRoster {
+			continue
+		}
+		roster.Members = append(roster.Members, GroupRosterMember{
+			UserID:      member.Key.MemberOpenID,
+			Name:        firstNonEmpty(member.DisplayName, member.Key.MemberOpenID),
+			UnionOpenID: member.UnionOpenID,
+		})
+		if member.LastRosterAt.After(updatedAt) {
+			updatedAt = member.LastRosterAt
+		}
+	}
+	if len(roster.Members) == 0 {
+		return GroupRoster{}, false, nil
+	}
+	roster.UpdatedAt = updatedAt.UTC().Format(time.RFC3339Nano)
+	return roster, true, nil
 }

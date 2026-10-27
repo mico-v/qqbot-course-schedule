@@ -2,10 +2,12 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { Check, Plus } from "@element-plus/icons-vue";
-import { ApiError, publicApiGet, publicApiPost } from "../api";
+import { ApiError } from "../api/client";
+import { fetchPublicSchedule, savePublicSchedule } from "../api/public";
 import CourseDialog from "../components/CourseDialog.vue";
 import WeekCalendar from "../components/WeekCalendar.vue";
-import type { PublicPageSchedule, PublicSaveResult, WebEvent } from "../types";
+import { normalizeScheduleEvents, validateScheduleEvents } from "../domain/schedule";
+import type { PublicPageSchedule, WebEvent } from "../types";
 import { initialWeekStart } from "../utils/rrule";
 
 const token = new URLSearchParams(window.location.search).get("token") || "";
@@ -46,7 +48,7 @@ async function load(): Promise<void> {
     return;
   }
   try {
-    const page = await publicApiGet<PublicPageSchedule>("/api/public/schedule", { token });
+    const page = await fetchPublicSchedule(token);
     schedule.value = page;
     events.value = page.events || [];
     weekStart.value = initialWeekStart(events.value);
@@ -72,52 +74,23 @@ function openEditCourse(index: number): void {
   dialogVisible.value = true;
 }
 
-function validateEvents(): string {
-  if (!events.value.length) {
-    return "至少需要保留一节课程。";
-  }
-  for (const [index, event] of events.value.entries()) {
-    if (!String(event.course || "").trim()) {
-      return `第 ${index + 1} 节缺少课程名称。`;
-    }
-    if (!event.start || !event.end) {
-      return `第 ${index + 1} 节缺少开始或结束时间。`;
-    }
-    if (event.end <= event.start) {
-      return `第 ${index + 1} 节的结束时间必须晚于开始时间。`;
-    }
-  }
-  return "";
-}
-
 async function save(): Promise<void> {
   const page = schedule.value;
   if (!page) return;
-  const problem = validateEvents();
+  const normalized = normalizeScheduleEvents(events.value);
+  const problem = validateScheduleEvents(normalized);
   if (problem) {
     ElMessage.error(problem);
     return;
   }
   saving.value = true;
   try {
-    const result = await publicApiPost<PublicSaveResult>(
-      `/api/public/schedule/save?token=${encodeURIComponent(token)}`,
-      {
-        revision: page.revision,
-        name: page.name.trim(),
-        qq: (page.qq || "").trim(),
-        events: events.value.map((event) => ({
-          id: event.id || 0,
-          uid: event.uid || "",
-          course: String(event.course || "").trim(),
-          start: String(event.start || "").trim(),
-          end: String(event.end || "").trim(),
-          location: String(event.location || "").trim(),
-          rrule: String(event.rrule || "").trim(),
-          description: String(event.description || "").trim(),
-        })),
-      },
-    );
+    const result = await savePublicSchedule(token, {
+      revision: page.revision,
+      name: page.name.trim(),
+      qq: (page.qq || "").trim(),
+      events: normalized,
+    });
     page.revision = result.revision;
     page.name = result.name;
     dirty.value = false;

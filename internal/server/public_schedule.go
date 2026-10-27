@@ -1,7 +1,6 @@
 package server
 
 import (
-	"errors"
 	"net/http"
 	"time"
 
@@ -22,15 +21,13 @@ func registerPublicScheduleRoutes(router *gin.Engine, service *admin.Service) {
 	})
 
 	public.GET("/schedule", func(c *gin.Context) {
-		page, found, err := service.PublicPageSchedule(c.Query("token"), time.Now())
+		page, found, err := service.PublicPageScheduleContext(c.Request.Context(), c.Query("token"), time.Now())
 		if err != nil {
-			if !writeEditLinkError(c, err) {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			}
+			writeAPIError(c, err)
 			return
 		}
 		if !found {
-			c.JSON(http.StatusNotFound, gin.H{"error": "找不到该成员的课程表。"})
+			writeAPIError(c, schedule.NotFoundErrorf("找不到该成员的课程表。"))
 			return
 		}
 		c.JSON(http.StatusOK, page)
@@ -39,33 +36,14 @@ func registerPublicScheduleRoutes(router *gin.Engine, service *admin.Service) {
 	public.POST("/schedule/save", func(c *gin.Context) {
 		var payload admin.PublicSavePayload
 		if err := c.ShouldBindJSON(&payload); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "请求体必须是 JSON 对象。"})
+			writeBadRequest(c, "请求体必须是 JSON 对象。")
 			return
 		}
-		result, err := service.SavePublicSchedule(c.Query("token"), payload, time.Now())
+		result, err := service.SavePublicScheduleContext(c.Request.Context(), c.Query("token"), payload, time.Now())
 		if err != nil {
-			if errors.Is(err, schedule.ErrConflict) {
-				c.JSON(http.StatusConflict, gin.H{"error": "课表已被其他操作更新，请刷新后重试。"})
-				return
-			}
-			if writeEditLinkError(c, err) {
-				return
-			}
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			writeAPIError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, result)
 	})
-}
-
-func writeEditLinkError(c *gin.Context, err error) bool {
-	switch {
-	case errors.Is(err, schedule.ErrScheduleEditLinkExpired):
-		c.JSON(http.StatusGone, gin.H{"error": err.Error()})
-	case errors.Is(err, schedule.ErrScheduleEditLinkInvalid):
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-	default:
-		return false
-	}
-	return true
 }

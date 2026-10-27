@@ -34,7 +34,7 @@ var panelOrder = []string{
 
 type panelState = schedule.PanelState
 
-// SyncPanels creates or updates the c2c and group command panels. It is safe to
+// SyncPanels creates or updates the group command panel. It is safe to
 // call on every startup: unchanged panels are skipped.
 func SyncPanels(ctx context.Context, env *Env, handler *Handler) (created, updated int, err error) {
 	if env == nil || env.PanelStore == nil || env.Client == nil || handler == nil {
@@ -46,8 +46,8 @@ func SyncPanels(ctx context.Context, env *Env, handler *Handler) (created, updat
 	}
 	itemsHash := hashPanelItems(items)
 
-	for _, scope := range []string{"c2c", "group"} {
-		state, found, err := loadPanelState(env, scope)
+	for _, scope := range []string{"group"} {
+		state, found, err := loadPanelState(ctx, env, scope)
 		if err != nil {
 			return created, updated, err
 		}
@@ -58,7 +58,7 @@ func SyncPanels(ctx context.Context, env *Env, handler *Handler) (created, updat
 			if updateErr := env.Client.UpdatePanel(ctx, state.PanelID, qqapi.Panel{Items: items, Remark: panelRemark}); updateErr == nil {
 				state.ItemsHash = itemsHash
 				state.Version++
-				if err := savePanelState(env, scope, state); err != nil {
+				if err := savePanelState(ctx, env, scope, state); err != nil {
 					return created, updated, err
 				}
 				updated++
@@ -80,7 +80,7 @@ func SyncPanels(ctx context.Context, env *Env, handler *Handler) (created, updat
 		if state.PanelID == "" {
 			if existing, listErr := findOurPanel(ctx, env, scope); listErr == nil && existing != nil {
 				state = panelState{PanelID: existing.PanelID, ItemsHash: itemsHash, Version: existing.Version}
-				if err := savePanelState(env, scope, state); err != nil {
+				if err := savePanelState(ctx, env, scope, state); err != nil {
 					return created, updated, err
 				}
 				continue
@@ -90,7 +90,7 @@ func SyncPanels(ctx context.Context, env *Env, handler *Handler) (created, updat
 		if createErr != nil {
 			return created, updated, fmt.Errorf("创建 %s 面板失败: %w", scope, createErr)
 		}
-		if err := savePanelState(env, scope, panelState{PanelID: panelID, ItemsHash: itemsHash, Version: 1}); err != nil {
+		if err := savePanelState(ctx, env, scope, panelState{PanelID: panelID, ItemsHash: itemsHash, Version: 1}); err != nil {
 			return created, updated, err
 		}
 		created++
@@ -144,12 +144,12 @@ func findOurPanel(ctx context.Context, env *Env, scope string) (*qqapi.PanelReco
 	return nil, nil
 }
 
-func loadPanelState(env *Env, scope string) (panelState, bool, error) {
-	return env.PanelStore.GetPanelState(scope)
+func loadPanelState(ctx context.Context, env *Env, scope string) (panelState, bool, error) {
+	return env.PanelStore.GetPanelState(ctx, scope)
 }
 
-func savePanelState(env *Env, scope string, state panelState) error {
-	return env.PanelStore.SetPanelState(scope, state)
+func savePanelState(ctx context.Context, env *Env, scope string, state panelState) error {
+	return env.PanelStore.SetPanelState(ctx, scope, state)
 }
 
 func hashPanelItems(items []qqapi.PanelItem) string {

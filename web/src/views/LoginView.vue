@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { Calendar, Lock, Right } from "@element-plus/icons-vue";
-import { apiPost } from "../api";
+import { login } from "../api/admin";
 import { errorMessage } from "../store/admin";
 
 const password = ref("");
@@ -27,7 +27,7 @@ async function submit(): Promise<void> {
   loading.value = true;
   error.value = "";
   try {
-    await apiPost("/api/login", { password: password.value });
+    await login(password.value);
     window.location.replace(next.value);
   } catch (submitError) {
     error.value = errorMessage(submitError);

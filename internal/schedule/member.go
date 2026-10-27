@@ -1,6 +1,7 @@
 package schedule
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"strings"
@@ -20,29 +21,34 @@ func NormalizeQQ(value string) (string, error) {
 		return "", nil
 	}
 	if !qqPattern.MatchString(value) {
-		return "", fmt.Errorf("QQ 号应为 5-11 位数字。")
+		return "", ValidationErrorf("QQ 号应为 5-11 位数字。")
 	}
 	return value, nil
 }
 
 // SetMemberQQ binds (or clears) a member's QQ number with the revision lock.
 func (s *Service) SetMemberQQ(scopeID, userID, qq, actor string) (string, error) {
+	return s.SetMemberQQContext(context.Background(), scopeID, userID, qq, actor)
+}
+
+// SetMemberQQContext updates the optional QQ avatar binding with cancellation.
+func (s *Service) SetMemberQQContext(ctx context.Context, scopeID, userID, qq, actor string) (string, error) {
 	scopeID = strings.TrimSpace(scopeID)
 	userID = strings.TrimSpace(userID)
 	if scopeID == "" || userID == "" {
-		return "", fmt.Errorf("scope_id 和 user_id 不能为空。")
+		return "", ValidationErrorf("scope_id 和 user_id 不能为空。")
 	}
 	normalized, err := NormalizeQQ(qq)
 	if err != nil {
 		return "", err
 	}
 	for attempt := 0; attempt < 2; attempt++ {
-		member, found, err := s.store.GetMember(scopeID, userID)
+		member, found, err := s.getMemberContext(ctx, scopeID, userID)
 		if err != nil {
 			return "", err
 		}
 		if !found || member == nil {
-			return "", fmt.Errorf("找不到该成员的课表，请先导入课表。")
+			return "", NotFoundErrorf("找不到该成员的课表，请先导入课表。")
 		}
 		if member.QQ == normalized {
 			return normalized, nil
@@ -52,7 +58,7 @@ func (s *Service) SetMemberQQ(scopeID, userID, qq, actor string) (string, error)
 		updated.LastModifiedAt = NowISO()
 		updated.LastModifiedBy = actor
 		expected := member.Revision
-		if err := s.store.PutMember(scopeID, userID, &updated, &expected); err != nil {
+		if err := s.putMemberContext(ctx, scopeID, userID, &updated, expected); err != nil {
 			if err == ErrConflict && attempt == 0 {
 				continue
 			}
@@ -68,17 +74,22 @@ func (s *Service) SetMemberQQ(scopeID, userID, qq, actor string) (string, error)
 // before a schedule exists. An empty name clears it, falling back to the
 // user id at render time.
 func (s *Service) SetMemberName(scopeID, userID, name, actor string) (string, error) {
+	return s.SetMemberNameContext(context.Background(), scopeID, userID, name, actor)
+}
+
+// SetMemberNameContext updates the group-local display name with cancellation.
+func (s *Service) SetMemberNameContext(ctx context.Context, scopeID, userID, name, actor string) (string, error) {
 	scopeID = strings.TrimSpace(scopeID)
 	userID = strings.TrimSpace(userID)
 	if scopeID == "" || userID == "" {
-		return "", fmt.Errorf("scope_id 和 user_id 不能为空。")
+		return "", ValidationErrorf("scope_id 和 user_id 不能为空。")
 	}
 	name = strings.TrimSpace(name)
 	if len([]rune(name)) > MaxMemberNicknameLength {
-		return "", fmt.Errorf("昵称不能超过 %d 个字符。", MaxMemberNicknameLength)
+		return "", ValidationErrorf("昵称不能超过 %d 个字符。", MaxMemberNicknameLength)
 	}
 	for attempt := 0; attempt < 2; attempt++ {
-		member, found, err := s.store.GetMember(scopeID, userID)
+		member, found, err := s.getMemberContext(ctx, scopeID, userID)
 		if err != nil {
 			return "", err
 		}
@@ -92,7 +103,7 @@ func (s *Service) SetMemberName(scopeID, userID, name, actor string) (string, er
 				LastModifiedBy: actor,
 			}
 			zero := int64(0)
-			if err := s.store.PutMember(scopeID, userID, created, &zero); err != nil {
+			if err := s.putMemberContext(ctx, scopeID, userID, created, zero); err != nil {
 				if err == ErrConflict && attempt == 0 {
 					continue
 				}
@@ -108,7 +119,7 @@ func (s *Service) SetMemberName(scopeID, userID, name, actor string) (string, er
 		updated.LastModifiedAt = NowISO()
 		updated.LastModifiedBy = actor
 		expected := member.Revision
-		if err := s.store.PutMember(scopeID, userID, &updated, &expected); err != nil {
+		if err := s.putMemberContext(ctx, scopeID, userID, &updated, expected); err != nil {
 			if err == ErrConflict && attempt == 0 {
 				continue
 			}
@@ -121,7 +132,7 @@ func (s *Service) SetMemberName(scopeID, userID, name, actor string) (string, er
 
 // MemberQQBindings returns user_id -> QQ for members with a binding.
 func (s *Service) MemberQQBindings(scopeID string) (map[string]string, error) {
-	members, err := s.store.GetScopeMembers(scopeID)
+	members, err := s.listMembers(scopeID)
 	if err != nil {
 		return nil, err
 	}

@@ -1,38 +1,26 @@
 package schedule
 
-import "strings"
+import (
+	"context"
+	"strings"
+	"time"
+)
 
-const seenMemberLimit = 500
-
-// RecordSeenMember remembers a member who interacted with the bot, so the admin
-// page can offer empty schedules for people without one.
+// RecordSeenMember upserts a member observed through a group message. Seen
+// state is durable member data, not a separate KV namespace.
 func (s *Service) RecordSeenMember(scopeID, userID, name string) error {
-	userID = strings.TrimSpace(userID)
-	if userID == "" {
-		return nil
-	}
-	var seen map[string]string
-	if _, err := s.store.GetKV(KVScopeGlobal, KVNamespaceSeen, scopeID, &seen); err != nil {
+	return s.RecordSeenMemberContext(context.Background(), scopeID, userID, name)
+}
+
+// RecordSeenMemberContext records a member observation with cancellation.
+func (s *Service) RecordSeenMemberContext(ctx context.Context, scopeID, userID, name string) error {
+	key, err := GroupMemberKeyFromLegacy(scopeID, userID)
+	if err != nil {
 		return err
 	}
-	if seen == nil {
-		seen = make(map[string]string)
-	}
-	name = strings.TrimSpace(name)
-	if name == "" {
-		name = userID
-	}
-	if existing, ok := seen[userID]; ok && existing == name {
-		return nil
-	}
-	if len(seen) >= seenMemberLimit {
-		if _, exists := seen[userID]; !exists {
-			for key := range seen {
-				delete(seen, key)
-				break
-			}
-		}
-	}
-	seen[userID] = name
-	return s.store.SetKV(KVScopeGlobal, KVNamespaceSeen, scopeID, seen)
+	return s.members.RecordGroupMemberSeen(ctx, GroupMemberObservation{
+		Key:         key,
+		DisplayName: strings.TrimSpace(name),
+		ObservedAt:  time.Now().UTC(),
+	})
 }

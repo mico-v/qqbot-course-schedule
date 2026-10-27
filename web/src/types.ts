@@ -52,7 +52,6 @@ export interface BotSettings {
   reply_slash: boolean;
   reply_mention: boolean;
   send_format: string;
-  storage_mode: string;
   nickname: string;
   base_url: string;
   schedule_link_ttl_minutes: number;

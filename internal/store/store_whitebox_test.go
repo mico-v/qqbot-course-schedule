@@ -1,0 +1,292 @@
+package store
+
+import (
+	"database/sql"
+	"errors"
+	"path/filepath"
+	"testing"
+
+	"github.com/mico-v/qqbot-course-schedule/internal/schedule"
+)
+
+func newTestStore(t *testing.T) *Store {
+	t.Helper()
+	store, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+	return store
+}
+
+func TestOpenDropsLegacyCheckinTable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE checkin_records (
+		scope_id TEXT NOT NULL,
+		user_id TEXT NOT NULL,
+		day TEXT NOT NULL,
+		PRIMARY KEY (scope_id, user_id, day)
+	)`); err != nil {
+		db.Close()
+		t.Fatalf("create legacy table: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close legacy database: %v", err)
+	}
+
+	store, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	var table string
+	err = store.db.QueryRow(
+		`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'checkin_records'`,
+	).Scan(&table)
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("legacy check-in table still exists: name=%q err=%v", table, err)
+	}
+
+	var version string
+	if err := store.db.QueryRow(
+		`SELECT value FROM metadata WHERE key = 'schema_version'`,
+	).Scan(&version); err != nil {
+		t.Fatalf("read schema version: %v", err)
+	}
+	if version != "7" {
+		t.Fatalf("schema version = %q, want 7", version)
+	}
+}
+
+func TestPutMemberRevisionLifecycle(t *testing.T) {
+	store := newTestStore(t)
+	member := &schedule.Member{UserID: "U1", Name: "小明", Source: "manual"}
+
+	zero := int64(0)
+	if err := store.PutMember("group:G1", "U1", member, &zero); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	loaded, found, err := store.GetMember("group:G1", "U1")
+	if err != nil || !found {
+		t.Fatalf("GetMember found=%v err=%v", found, err)
+	}
+	if loaded.Revision != 1 || loaded.Name != "小明" {
+		t.Fatalf("loaded = %+v", loaded)
+	}
+
+	// Insert-only must conflict when the row already exists.
+	if err := store.PutMember("group:G1", "U1", member, &zero); !errors.Is(err, schedule.ErrConflict) {
+		t.Fatalf("expected conflict, got %v", err)
+	}
+
+	// CAS with a stale revision must conflict.
+	stale := int64(0)
+	if err := store.PutMember("group:G1", "U1", member, &stale); !errors.Is(err, schedule.ErrConflict) {
+		t.Fatalf("expected stale conflict, got %v", err)
+	}
+
+	// Correct revision updates.
+	member.Name = "小红"
+	current := int64(1)
+	if err := store.PutMember("group:G1", "U1", member, &current); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	loaded, _, _ = store.GetMember("group:G1", "U1")
+	if loaded.Revision != 2 || loaded.Name != "小红" {
+		t.Fatalf("loaded after update = %+v", loaded)
+	}
+}
+
+func TestMemberEventsRoundTrip(t *testing.T) {
+	store := newTestStore(t)
+	event, err := schedule.MakeEvent("高数", "2026-09-01 08:00", "2026-09-01 09:30", "教一", "备注", "FREQ=WEEKLY;BYDAY=TU", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	member := &schedule.Member{UserID: "U1", Name: "小明", Events: []schedule.Event{event}, Source: "ics"}
+	zero := int64(0)
+	if err := store.PutMember("group:G1", "U1", member, &zero); err != nil {
+		t.Fatalf("PutMember: %v", err)
+	}
+	loaded, _, err := store.GetMember("group:G1", "U1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Events) != 1 || loaded.Events[0]["SUMMARY"] != "高数" || loaded.Events[0]["RRULE"] == "" {
+		t.Fatalf("events = %+v", loaded.Events)
+	}
+}
+
+func TestMemberImportSourceRoundTrip(t *testing.T) {
+	store := newTestStore(t)
+	member := &schedule.Member{
+		UserID:            "U1",
+		Name:              "小明",
+		ImportGroupOpenID: "G1",
+		ImportUserOpenID:  "U1",
+		ImportUnionOpenID: "UNION-A",
+	}
+	zero := int64(0)
+	if err := store.PutMember("group:G1", "U1", member, &zero); err != nil {
+		t.Fatalf("PutMember: %v", err)
+	}
+	loaded, found, err := store.GetMember("group:G1", "U1")
+	if err != nil || !found {
+		t.Fatalf("GetMember found=%v err=%v", found, err)
+	}
+	if loaded.ImportGroupOpenID != "G1" ||
+		loaded.ImportUserOpenID != "U1" ||
+		loaded.ImportUnionOpenID != "UNION-A" {
+		t.Fatalf("import source = %+v", loaded)
+	}
+}
+
+func TestLegacyMemberImportSourceInference(t *testing.T) {
+	tests := []struct {
+		name        string
+		scopeID     string
+		userID      string
+		wantGroup   string
+		wantUser    string
+		wantUnionID string
+	}{
+		{name: "group", scopeID: "group:G1", userID: "U1", wantGroup: "G1", wantUser: "U1"},
+		{name: "private", scopeID: "private:U1", userID: "U1", wantUser: "U1"},
+		{name: "global user", scopeID: "global-user:UNION-A", userID: "UNION-A", wantUnionID: "UNION-A"},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			store := newTestStore(t)
+			zero := int64(0)
+			if err := store.PutMember(testCase.scopeID, testCase.userID, &schedule.Member{
+				UserID: testCase.userID,
+				Name:   testCase.name,
+			}, &zero); err != nil {
+				t.Fatalf("PutMember: %v", err)
+			}
+			loaded, found, err := store.GetMember(testCase.scopeID, testCase.userID)
+			if err != nil || !found {
+				t.Fatalf("GetMember found=%v err=%v", found, err)
+			}
+			if loaded.ImportGroupOpenID != testCase.wantGroup ||
+				loaded.ImportUserOpenID != testCase.wantUser ||
+				loaded.ImportUnionOpenID != testCase.wantUnionID {
+				t.Fatalf("inferred source = %+v", loaded)
+			}
+		})
+	}
+}
+
+func TestListMembersByImportUnionOpenID(t *testing.T) {
+	store := newTestStore(t)
+	for _, member := range []struct {
+		scopeID     string
+		userID      string
+		unionOpenID string
+	}{
+		{scopeID: "group:G2", userID: "U2", unionOpenID: "UNION-A"},
+		{scopeID: "group:G1", userID: "U1", unionOpenID: "UNION-A"},
+		{scopeID: "group:G3", userID: "U3", unionOpenID: "UNION-B"},
+		{scopeID: "global-user:UNION-A", userID: "UNION-A", unionOpenID: "UNION-A"},
+	} {
+		zero := int64(0)
+		if err := store.PutMember(member.scopeID, member.userID, &schedule.Member{
+			UserID:            member.userID,
+			Name:              member.userID,
+			ImportUnionOpenID: member.unionOpenID,
+		}, &zero); err != nil {
+			t.Fatalf("PutMember %s/%s: %v", member.scopeID, member.userID, err)
+		}
+	}
+
+	locations, err := store.ListMembersByImportUnionOpenID("UNION-A")
+	if err != nil {
+		t.Fatalf("ListMembersByImportUnionOpenID: %v", err)
+	}
+	if len(locations) != 2 ||
+		locations[0] != (schedule.MemberLocation{ScopeID: "group:G1", UserID: "U1"}) ||
+		locations[1] != (schedule.MemberLocation{ScopeID: "group:G2", UserID: "U2"}) {
+		t.Fatalf("locations = %+v", locations)
+	}
+}
+
+func TestDayOverrideMergeMemberWins(t *testing.T) {
+	store := newTestStore(t)
+	zero := int64(0)
+	if err := store.PutMember("group:G1", "U1", &schedule.Member{UserID: "U1", Name: "小明"}, &zero); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetDayOverride("group:G1", schedule.DayOverrideAll, "2026-10-01", schedule.DayOverride{Kind: schedule.DayOverrideHoliday}, "admin", schedule.NowISO()); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetDayOverride("group:G1", "U1", "2026-10-01", schedule.DayOverride{Kind: schedule.DayOverrideShift, SourceDay: "2026-10-08"}, "admin", schedule.NowISO()); err != nil {
+		t.Fatal(err)
+	}
+	loaded, _, err := store.GetMember("group:G1", "U1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	override := loaded.DayOverrides["2026-10-01"]
+	if override.Kind != schedule.DayOverrideShift || override.SourceDay != "2026-10-08" {
+		t.Fatalf("override = %+v (member must win)", override)
+	}
+
+	// Scope-wide marker applies to a member without its own marker.
+	zero = int64(0)
+	if err := store.PutMember("group:G1", "U2", &schedule.Member{UserID: "U2", Name: "小红"}, &zero); err != nil {
+		t.Fatal(err)
+	}
+	members, err := store.GetScopeMembers("group:G1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if members["U2"].DayOverrides["2026-10-01"].Kind != schedule.DayOverrideHoliday {
+		t.Fatalf("U2 override = %+v", members["U2"].DayOverrides)
+	}
+}
+
+func TestDeleteDayOverride(t *testing.T) {
+	store := newTestStore(t)
+	zero := int64(0)
+	if err := store.PutMember("group:G1", "U1", &schedule.Member{UserID: "U1", Name: "小明"}, &zero); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetDayOverride("group:G1", "U1", "2026-10-01", schedule.DayOverride{Kind: schedule.DayOverrideHoliday}, "admin", ""); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := store.DeleteDayOverride("group:G1", "U1", "2026-10-01")
+	if err != nil || !removed {
+		t.Fatalf("delete = %v %v", removed, err)
+	}
+	removed, _ = store.DeleteDayOverride("group:G1", "U1", "2026-10-01")
+	if removed {
+		t.Fatal("second delete should report false")
+	}
+}
+
+func TestKV(t *testing.T) {
+	store := newTestStore(t)
+	type value struct {
+		Panel string `json:"panel"`
+	}
+	if err := store.SetKV("global", "panel", "c2c", value{Panel: "p1"}); err != nil {
+		t.Fatal(err)
+	}
+	var loaded value
+	found, err := store.GetKV("global", "panel", "c2c", &loaded)
+	if err != nil || !found || loaded.Panel != "p1" {
+		t.Fatalf("GetKV = %+v %v %v", loaded, found, err)
+	}
+	if err := store.DeleteKV("global", "panel", "c2c"); err != nil {
+		t.Fatal(err)
+	}
+	found, _ = store.GetKV("global", "panel", "c2c", &loaded)
+	if found {
+		t.Fatal("value should be gone")
+	}
+}

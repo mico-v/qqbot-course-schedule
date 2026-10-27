@@ -2,7 +2,7 @@
 import { computed, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { Download, Plus, Upload } from "@element-plus/icons-vue";
-import { uploadForm } from "../api";
+import { uploadAdminFile } from "../api/admin";
 import {
   canExport,
   currentScope,
@@ -16,7 +16,6 @@ import {
   setDirty,
   state,
 } from "../store/admin";
-import type { ImportResult } from "../types";
 import CourseDialog from "./CourseDialog.vue";
 import OverridePanel from "./OverridePanel.vue";
 import WeekCalendar from "./WeekCalendar.vue";
@@ -79,7 +78,7 @@ async function onImportFile(event: Event): Promise<void> {
     form.append("scope_id", schedule.value.scope_id);
     form.append("user_id", schedule.value.user_id);
     form.append("file", file);
-    const result = await uploadForm<ImportResult>("/api/import", form);
+    const result = await uploadAdminFile(form);
     await loadScopes();
     await reloadSelectedMember();
     await loadOverrides(schedule.value.scope_id);

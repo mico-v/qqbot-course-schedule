@@ -12,7 +12,6 @@ const form = reactive<BotSettings>({
   reply_slash: true,
   reply_mention: true,
   send_format: "image",
-  storage_mode: "group",
   nickname: "",
   base_url: "",
   schedule_link_ttl_minutes: 60,
@@ -56,7 +55,6 @@ async function submit(): Promise<void> {
       reply_slash: form.reply_slash,
       reply_mention: form.reply_mention,
       send_format: form.send_format,
-      storage_mode: form.storage_mode,
       nickname: form.nickname.trim(),
       base_url: form.base_url.trim(),
       schedule_link_ttl_minutes: form.schedule_link_ttl_minutes,
@@ -93,16 +91,6 @@ async function submit(): Promise<void> {
             <el-radio value="markdown">Markdown 列表</el-radio>
           </el-radio-group>
           <span class="setting-hint muted">Markdown 会以文字列表发送当天的课程内容。</span>
-        </el-form-item>
-        <el-form-item label="课表存储方式">
-          <el-radio-group v-model="form.storage_mode">
-            <el-radio value="group">按群存储（默认）</el-radio>
-            <el-radio value="global">全局存储</el-radio>
-          </el-radio-group>
-          <span class="setting-hint muted">
-            按群存储时每个群的成员课表相互独立。全局存储时按当前群成员名单逐人关联个人课表，并选取最后导入的一份；优先使用
-            union_openid，平台未提供时按本地 OpenID 查找历史导入记录。成员接口不可用时沿用已缓存或已见成员。
-          </span>
         </el-form-item>
         <el-form-item label="管理员 OpenID 名单">
           <el-input

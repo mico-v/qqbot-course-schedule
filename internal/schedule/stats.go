@@ -1,6 +1,7 @@
 package schedule
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -141,6 +142,11 @@ func percentile(sorted []int, p float64) int {
 // required; a negative duration is clamped so a clock hiccup cannot poison the
 // aggregate.
 func (s *Service) RecordMessageStats(record MessageStats) error {
+	return s.RecordMessageStatsContext(context.Background(), record)
+}
+
+// RecordMessageStatsContext appends one record with cancellation.
+func (s *Service) RecordMessageStatsContext(ctx context.Context, record MessageStats) error {
 	record.ScopeID = strings.TrimSpace(record.ScopeID)
 	if record.ScopeID == "" {
 		return fmt.Errorf("统计记录缺少 scope_id。")
@@ -152,7 +158,7 @@ func (s *Service) RecordMessageStats(record MessageStats) error {
 	if record.ReceivedAt.IsZero() {
 		record.ReceivedAt = time.Now()
 	}
-	return s.store.InsertMessageStats(record)
+	return s.stats.InsertMessageStats(ctx, record)
 }
 
 func clampMS(value int) int {
@@ -164,12 +170,22 @@ func clampMS(value int) int {
 
 // PruneMessageStats drops records older than StatsRetention.
 func (s *Service) PruneMessageStats(now time.Time) (int, error) {
-	return s.store.PruneMessageStats(now.Add(-StatsRetention))
+	return s.PruneMessageStatsContext(context.Background(), now)
+}
+
+// PruneMessageStatsContext removes expired records with cancellation.
+func (s *Service) PruneMessageStatsContext(ctx context.Context, now time.Time) (int, error) {
+	return s.stats.PruneMessageStats(ctx, now.Add(-StatsRetention))
 }
 
 // MessageStatsSummary aggregates the records received at or after since.
 func (s *Service) MessageStatsSummary(since time.Time, scopeID string) (StatsSummary, error) {
-	records, err := s.store.ListMessageStats(since, scopeID)
+	return s.MessageStatsSummaryContext(context.Background(), since, scopeID)
+}
+
+// MessageStatsSummaryContext reads timing aggregates with cancellation.
+func (s *Service) MessageStatsSummaryContext(ctx context.Context, since time.Time, scopeID string) (StatsSummary, error) {
+	records, err := s.messageStatsSinceContext(ctx, since, scopeID)
 	if err != nil {
 		return StatsSummary{}, err
 	}

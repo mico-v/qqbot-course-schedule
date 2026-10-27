@@ -1,13 +1,33 @@
 import { computed, reactive } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { ApiError, apiGet, apiPost, downloadFile } from "../api";
+import { ApiError } from "../api/client";
+import {
+  createSchedules,
+  downloadICS,
+  fetchOverrides,
+  fetchPendingMembers,
+  fetchSchedule,
+  fetchScopes,
+  fetchSettings,
+  persistSettings,
+  removeOverride,
+  saveOverride,
+  saveSchedule as persistSchedule,
+} from "../api/admin";
+import {
+  buildScheduleSavePayload,
+  importSummary as formatImportSummary,
+  safeFileLabel as formatSafeFileLabel,
+  timestampLabel,
+  validateScheduleEvents,
+} from "../domain/schedule";
+import { normalizeSettings } from "../domain/settings";
 import type {
   BotSettings,
   DayOverrideRow,
   ImportResult,
   PageSchedule,
   PendingMember,
-  SavePageResult,
   Scope,
 } from "../types";
 import { initialWeekStart, weekOccurrences } from "../utils/rrule";
@@ -82,8 +102,7 @@ export async function canExport(): Promise<boolean> {
 }
 
 export async function loadScopes(keepSelection = true): Promise<void> {
-  const data = await apiGet<{ scopes: Scope[] }>("/api/scopes");
-  state.scopes = data.scopes || [];
+  state.scopes = await fetchScopes();
   if (!keepSelection) {
     state.selectedScopeId = "";
     state.selectedUserId = "";
@@ -105,10 +124,7 @@ export async function selectMember(scopeId: string, userId: string): Promise<voi
   if (!(await canLeaveEditor())) return;
   const requestId = ++memberRequestId;
   try {
-    const schedule = await apiGet<PageSchedule>("/api/schedule", {
-      scope_id: scopeId,
-      user_id: userId,
-    });
+    const schedule = await fetchSchedule(scopeId, userId);
     if (requestId !== memberRequestId) return;
     state.schedule = schedule;
     state.selectedScopeId = scopeId;
@@ -123,10 +139,7 @@ export async function selectMember(scopeId: string, userId: string): Promise<voi
 
 export async function reloadSelectedMember(): Promise<void> {
   if (!state.selectedScopeId || !state.selectedUserId) return;
-  const schedule = await apiGet<PageSchedule>("/api/schedule", {
-    scope_id: state.selectedScopeId,
-    user_id: state.selectedUserId,
-  });
+  const schedule = await fetchSchedule(state.selectedScopeId, state.selectedUserId);
   state.schedule = schedule;
   state.dirty = false;
   state.calendarWeekStart = initialWeekStart(schedule.events || []);
@@ -151,46 +164,17 @@ export async function refresh(): Promise<void> {
 export async function saveSchedule(): Promise<void> {
   const schedule = state.schedule;
   if (!schedule) return;
-  const events = (schedule.events || []).map((event) => ({
-    id: event.id || 0,
-    uid: event.uid || "",
-    course: String(event.course || "").trim(),
-    start: String(event.start || "").trim(),
-    end: String(event.end || "").trim(),
-    location: String(event.location || "").trim(),
-    rrule: String(event.rrule || "").trim(),
-    description: String(event.description || "").trim(),
-  }));
-  if (!events.length) {
-    ElMessage.error("至少需要一节课程；如果清空课表，请保留一节或删除该成员。");
+  const payload = buildScheduleSavePayload(schedule);
+  const validationError = validateScheduleEvents(payload.events);
+  if (validationError) {
+    ElMessage.error(validationError);
     return;
   }
-  for (const [index, event] of events.entries()) {
-    if (!event.course) {
-      ElMessage.error(`第 ${index + 1} 节缺少课程名称。`);
-      return;
-    }
-    if (!event.start || !event.end) {
-      ElMessage.error(`第 ${index + 1} 节缺少开始或结束时间。`);
-      return;
-    }
-    if (event.end <= event.start) {
-      ElMessage.error(`第 ${index + 1} 节的结束时间必须晚于开始时间。`);
-      return;
-    }
-  }
   try {
-    const saved = await apiPost<SavePageResult>("/api/schedule/save", {
-      scope_id: schedule.scope_id,
-      user_id: schedule.user_id,
-      revision: schedule.revision,
-      name: schedule.name.trim(),
-      qq: (schedule.qq || "").trim(),
-      events,
-    });
+    const saved = await persistSchedule(payload);
     schedule.revision = saved.revision;
     schedule.name = saved.name;
-    schedule.events = events;
+    schedule.events = payload.events;
     state.dirty = false;
     ElMessage.success(`已保存 ${saved.name} 的课表：${saved.event_count} 节课。`);
     await loadScopes();
@@ -205,11 +189,9 @@ export async function saveSchedule(): Promise<void> {
 
 export async function loadOverrides(scopeId: string): Promise<void> {
   try {
-    const data = await apiGet<{ overrides: DayOverrideRow[] }>("/api/overrides", {
-      scope_id: scopeId,
-    });
+    const rows = await fetchOverrides(scopeId);
     if (state.selectedScopeId !== scopeId) return;
-    state.overrides = data.overrides || [];
+    state.overrides = rows;
   } catch (error) {
     if (state.selectedScopeId !== scopeId) return;
     state.overrides = [];
@@ -225,7 +207,7 @@ export async function setOverride(payload: {
 }): Promise<void> {
   const scopeId = state.selectedScopeId;
   if (!scopeId) return;
-  await apiPost("/api/overrides/set", { scope_id: scopeId, ...payload });
+  await saveOverride({ scope_id: scopeId, ...payload });
   const kindText = payload.kind === "shift" ? "调休" : "休假";
   ElMessage.success(`已保存 ${payload.day} 的${kindText}标记。`);
   await loadOverrides(scopeId);
@@ -245,7 +227,7 @@ export async function deleteOverride(row: DayOverrideRow): Promise<void> {
     return;
   }
   try {
-    await apiPost("/api/overrides/delete", {
+    await removeOverride({
       scope_id: scopeId,
       user_id: row.user_id,
       day: row.day,
@@ -261,82 +243,36 @@ export async function loadPendingMembers(scopeId: string): Promise<{
   members: PendingMember[];
   note: string;
 }> {
-  const data = await apiGet<{ members: PendingMember[]; note: string }>("/api/members", {
-    scope_id: scopeId,
-  });
-  return { members: data.members || [], note: data.note || "" };
+  return fetchPendingMembers(scopeId);
 }
 
 export async function createMemberSchedules(
   scopeId: string,
   members: PendingMember[],
 ): Promise<number> {
-  const result = await apiPost<{ created_count: number }>("/api/schedule/create", {
-    scope_id: scopeId,
-    members,
-  });
+  const result = await createSchedules(scopeId, members);
   await loadScopes();
   return result.created_count;
 }
 
 export async function loadSettings(): Promise<BotSettings> {
-  const data = await apiGet<{ settings: BotSettings }>("/api/settings");
-  const settings = data.settings || ({} as BotSettings);
-  return {
-    // Treat an absent flag as on so an older payload never hides the bot.
-    enabled: settings.enabled !== false,
-    reply_plain: settings.reply_plain !== false,
-    reply_slash: settings.reply_slash !== false,
-    reply_mention: settings.reply_mention !== false,
-    send_format: settings.send_format === "markdown" ? "markdown" : "image",
-    storage_mode: settings.storage_mode === "global" ? "global" : "group",
-    nickname: settings.nickname || "",
-    base_url: settings.base_url || "",
-    schedule_link_ttl_minutes:
-      Number.isFinite(settings.schedule_link_ttl_minutes) &&
-      settings.schedule_link_ttl_minutes > 0
-        ? settings.schedule_link_ttl_minutes
-        : 60,
-    admin_open_ids: Array.isArray(settings.admin_open_ids)
-      ? settings.admin_open_ids.filter((value) => typeof value === "string")
-      : [],
-  };
+  return normalizeSettings(await fetchSettings());
 }
 
 export async function saveSettings(settings: BotSettings): Promise<void> {
-  await apiPost("/api/settings", settings);
+  await persistSettings(settings);
 }
 
 export function importSummary(result: ImportResult | null): string {
-  const summary = result || ({} as ImportResult);
-  const parts = [
-    `已导入 ${summary.member_count || 0} 位成员的课表（新增 ${summary.created_count || 0}、` +
-      `覆盖 ${summary.updated_count || 0}），共 ${summary.event_count || 0} 节课程。`,
-  ];
-  if (summary.day_override_count) {
-    parts.push(`同时恢复 ${summary.day_override_count} 条休假/调休标记。`);
-  }
-  const skipped = Array.isArray(summary.skipped) ? summary.skipped : [];
-  if (skipped.length) {
-    const shown = skipped.slice(0, 3).join("、");
-    parts.push(`忽略 ${skipped.length} 个文件：${shown}${skipped.length > 3 ? "…" : ""}`);
-  }
-  return parts.join("");
+  return formatImportSummary(result);
 }
 
 export function safeFileLabel(value: string | undefined): string {
-  const cleaned = String(value || "scope")
-    .replace(/[\\/:*?"<>|\s]+/g, "_")
-    .slice(0, 40);
-  return cleaned || "scope";
+  return formatSafeFileLabel(value);
 }
 
 export function timestamp(): string {
-  const now = new Date();
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(
-    now.getHours(),
-  )}${pad(now.getMinutes())}`;
+  return timestampLabel();
 }
 
 export async function exportMemberICS(): Promise<void> {
@@ -344,9 +280,9 @@ export async function exportMemberICS(): Promise<void> {
   if (!schedule || !(await canExport())) return;
   const label = safeFileLabel(schedule.name || schedule.user_id);
   try {
-    await downloadFile(
-      "/api/export",
-      { scope_id: schedule.scope_id, user_id: schedule.user_id, format: "ics" },
+    await downloadICS(
+      schedule.scope_id,
+      schedule.user_id,
       `课表-${label}-${timestamp()}.ics`,
     );
     ElMessage.success("已开始下载课表文件。");

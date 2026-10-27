@@ -10,8 +10,13 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  go:
+    name: Go
     runs-on: ubuntu-latest
+    env:
+      COVERAGE_STAGE: p2
+      COVERAGE_FILE: coverage.out
+      CARD_PREVIEW_FILE: /tmp/qqbot-cardpreview.jpg
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -22,17 +27,52 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Check formatting
-        run: test -z "$(gofmt -l .)"
+      - name: Run complete Go gate
+        run: bash scripts/test-all.sh
 
-      - name: Check architecture
-        run: bash scripts/check-architecture.sh
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-coverage
+          path: |
+            coverage.out
+            /tmp/qqbot-cardpreview.jpg
+          if-no-files-found: warn
 
-      - name: Vet
-        run: go vet ./...
+  web:
+    name: Web
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Test
-        run: go test ./...
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Lint
+        working-directory: web
+        run: npm run lint
+
+      - name: Unit tests
+        working-directory: web
+        run: npm run test -- --run
+
+      - name: Typecheck
+        working-directory: web
+        run: npm run typecheck
 
       - name: Build
-        run: CGO_ENABLED=0 go build ./cmd/...
+        working-directory: web
+        run: npm run build
+
+      - name: Verify committed bundle
+        run: git diff --exit-code -- web/dist

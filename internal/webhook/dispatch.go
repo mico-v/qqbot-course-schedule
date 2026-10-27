@@ -119,21 +119,7 @@ func (d *Dispatcher) process(payload Payload) {
 		d.handler.Dispatch(ctx, in, bot.NewReplier(in, d.client))
 
 	case EventC2CMessage:
-		data, err := decodeMessage(payload.D)
-		if err != nil {
-			slog.Warn("单聊消息解析失败", "err", err)
-			return
-		}
-		if data.Author.Bot {
-			return
-		}
-		in := bot.NewInbound(ctx, bot.OriginPrivate, "",
-			firstNonEmpty(data.Author.UserOpenID, data.Author.UnionOpenID, data.Author.ID),
-			data.ID, "", data.Content, data.Author.Username, data.Author.MemberRole,
-			toBotAttachments(data.Attachments), toBotMentions(data.Mentions)).
-			WithGlobalUserOpenID(data.Author.UnionOpenID)
-		logInboundMessage(payload.T, data.MessageType, in)
-		d.handler.Dispatch(ctx, in, bot.NewReplier(in, d.client))
+		slog.Debug("单聊消息不在机器人产品作用域内，已忽略")
 
 	case EventInteraction:
 		ackCtx, ackCancel := context.WithTimeout(context.Background(), interactionAckTTL)

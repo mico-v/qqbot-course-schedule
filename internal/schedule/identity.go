@@ -1,88 +1,69 @@
 package schedule
 
-import "strings"
+import (
+	"context"
+	"strings"
+	"time"
+)
 
-const identityMemberLimit = 500
-
-// RecordIdentity remembers the union OpenID behind a local OpenID when the
-// platform returns one. Local OpenIDs remain a compatibility fallback because
-// production has returned the same member_openid across groups.
-func (s *Service) RecordIdentity(scopeID, userID, globalUserOpenID string) error {
-	scopeID = strings.TrimSpace(scopeID)
-	userID = strings.TrimSpace(userID)
-	globalUserOpenID = strings.TrimSpace(globalUserOpenID)
-	if scopeID == "" || userID == "" || globalUserOpenID == "" {
-		return nil
-	}
-	return s.recordIdentities(scopeID, map[string]string{userID: globalUserOpenID})
+// RecordIdentity stores union_openid as an optional group member attribute.
+// It never creates a cross-group identity or redirects schedule storage.
+func (s *Service) RecordIdentity(scopeID, userID, unionOpenID string) error {
+	return s.RecordIdentityContext(context.Background(), scopeID, userID, unionOpenID)
 }
 
-func (s *Service) recordIdentities(scopeID string, values map[string]string) error {
-	var identities map[string]string
-	if _, err := s.store.GetKV(KVScopeGlobal, KVNamespaceIdentity, scopeID, &identities); err != nil {
+// RecordIdentityContext stores the optional union attribute with cancellation.
+func (s *Service) RecordIdentityContext(ctx context.Context, scopeID, userID, unionOpenID string) error {
+	unionOpenID = strings.TrimSpace(unionOpenID)
+	if unionOpenID == "" {
+		return nil
+	}
+	key, err := GroupMemberKeyFromLegacy(scopeID, userID)
+	if err != nil {
 		return err
 	}
-	if identities == nil {
-		identities = make(map[string]string)
-	}
-	changed := false
-	for userID, globalUserOpenID := range values {
-		userID = strings.TrimSpace(userID)
-		globalUserOpenID = strings.TrimSpace(globalUserOpenID)
-		if userID == "" || globalUserOpenID == "" {
-			continue
-		}
-		if existing, ok := identities[userID]; ok && existing == globalUserOpenID {
-			continue
-		}
-		if len(identities) >= identityMemberLimit {
-			if _, exists := identities[userID]; !exists {
-				for key := range identities {
-					delete(identities, key)
-					break
-				}
-			}
-		}
-		identities[userID] = globalUserOpenID
-		changed = true
-	}
-	if !changed {
-		return nil
-	}
-	return s.store.SetKV(KVScopeGlobal, KVNamespaceIdentity, scopeID, identities)
+	return s.members.RecordGroupMemberSeen(ctx, GroupMemberObservation{
+		Key:         key,
+		UnionOpenID: unionOpenID,
+		ObservedAt:  time.Now().UTC(),
+	})
 }
 
-// ResolveIdentity returns the global union OpenID recorded for a local OpenID.
+// ResolveIdentity returns the union_openid attribute for one exact group
+// member. A missing union value is expected and is not an error.
 func (s *Service) ResolveIdentity(scopeID, userID string) (string, bool, error) {
-	scopeID = strings.TrimSpace(scopeID)
-	userID = strings.TrimSpace(userID)
-	if scopeID == "" || userID == "" {
-		return "", false, nil
-	}
-	var identities map[string]string
-	if _, err := s.store.GetKV(KVScopeGlobal, KVNamespaceIdentity, scopeID, &identities); err != nil {
+	key, err := GroupMemberKeyFromLegacy(scopeID, userID)
+	if err != nil {
 		return "", false, err
 	}
-	globalUserOpenID := strings.TrimSpace(identities[userID])
-	return globalUserOpenID, globalUserOpenID != "", nil
+	member, found, err := s.members.GetGroupMember(context.Background(), key)
+	if err != nil || !found {
+		return "", false, err
+	}
+	unionOpenID := strings.TrimSpace(member.UnionOpenID)
+	return unionOpenID, unionOpenID != "", nil
 }
 
-// ScopeIdentities returns all known local-to-global OpenID mappings in a scope.
+// ScopeIdentities returns the known union attributes inside one group.
 func (s *Service) ScopeIdentities(scopeID string) (map[string]string, error) {
-	scopeID = strings.TrimSpace(scopeID)
-	if scopeID == "" {
-		return nil, nil
-	}
-	var identities map[string]string
-	if _, err := s.store.GetKV(KVScopeGlobal, KVNamespaceIdentity, scopeID, &identities); err != nil {
+	ref, err := ParseLegacyScopeRef(scopeID)
+	if err != nil {
 		return nil, err
 	}
-	result := make(map[string]string, len(identities))
-	for localID, globalID := range identities {
-		localID = strings.TrimSpace(localID)
-		globalID = strings.TrimSpace(globalID)
-		if localID != "" && globalID != "" {
-			result[localID] = globalID
+	if ref.Kind != "group" {
+		return nil, ValidationErrorf("仅支持群聊 scope")
+	}
+	members, err := s.members.ListGroupMembers(
+		context.Background(),
+		GroupKey{GroupOpenID: ref.ID},
+	)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]string)
+	for _, member := range members {
+		if unionOpenID := strings.TrimSpace(member.UnionOpenID); unionOpenID != "" {
+			result[member.Key.MemberOpenID] = unionOpenID
 		}
 	}
 	return result, nil

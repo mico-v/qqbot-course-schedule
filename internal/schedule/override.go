@@ -1,6 +1,7 @@
 package schedule
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -162,16 +163,30 @@ func OverrideLabel(members map[string]*Member, targetID string) string {
 
 // SetDayOverrides writes holiday/shift markers and returns the user-facing reply.
 func (s *Service) SetDayOverrides(scopeID string, targets []string, days []time.Time, kind string, sourceDay *time.Time, actor string, members map[string]*Member, today time.Time) (string, error) {
+	return s.SetDayOverridesContext(
+		context.Background(), scopeID, targets, days, kind, sourceDay, actor, members, today,
+	)
+}
+
+// SetDayOverridesContext writes markers with request cancellation.
+func (s *Service) SetDayOverridesContext(ctx context.Context, scopeID string, targets []string, days []time.Time, kind string, sourceDay *time.Time, actor string, members map[string]*Member, today time.Time) (string, error) {
 	overrideTargets := make([]DayOverrideTarget, 0, len(targets))
 	for _, target := range targets {
 		overrideTargets = append(overrideTargets, DayOverrideTarget{ScopeID: scopeID, UserID: target, DisplayID: target})
 	}
-	return s.SetDayOverridesForTargets(overrideTargets, days, kind, sourceDay, actor, members, today)
+	return s.SetDayOverridesForTargetsContext(ctx, overrideTargets, days, kind, sourceDay, actor, members, today)
 }
 
 // SetDayOverridesForTargets writes markers for explicitly resolved storage
 // coordinates while keeping reply labels tied to the current conversation.
 func (s *Service) SetDayOverridesForTargets(targets []DayOverrideTarget, days []time.Time, kind string, sourceDay *time.Time, actor string, members map[string]*Member, today time.Time) (string, error) {
+	return s.SetDayOverridesForTargetsContext(
+		context.Background(), targets, days, kind, sourceDay, actor, members, today,
+	)
+}
+
+// SetDayOverridesForTargetsContext writes resolved targets with cancellation.
+func (s *Service) SetDayOverridesForTargetsContext(ctx context.Context, targets []DayOverrideTarget, days []time.Time, kind string, sourceDay *time.Time, actor string, members map[string]*Member, today time.Time) (string, error) {
 	if len(days) == 0 {
 		return "", fmt.Errorf("请提供要标记的日期，例如 /休假 2026-10-01。")
 	}
@@ -225,7 +240,7 @@ func (s *Service) SetDayOverridesForTargets(targets []DayOverrideTarget, days []
 		existing, ok := rowsByScope[target.ScopeID]
 		if !ok {
 			var err error
-			existing, err = s.store.ListDayOverrides(target.ScopeID)
+			existing, err = s.listDayOverridesContext(ctx, target.ScopeID)
 			if err != nil {
 				return "", err
 			}
@@ -264,7 +279,7 @@ func (s *Service) SetDayOverridesForTargets(targets []DayOverrideTarget, days []
 				replaced = true
 			}
 			override := DayOverride{Kind: kind, SourceDay: sourceText}
-			if err := s.store.SetDayOverride(target.ScopeID, target.UserID, dayText, override, actor, nowISO); err != nil {
+			if err := s.setDayOverrideContext(ctx, target.ScopeID, target.UserID, dayText, override, actor, nowISO); err != nil {
 				return "", err
 			}
 		}
@@ -297,11 +312,16 @@ func (s *Service) SetDayOverridesForTargets(targets []DayOverrideTarget, days []
 
 // ClearDayOverrides removes markers and returns the user-facing reply.
 func (s *Service) ClearDayOverrides(scopeID string, targets []string, days []time.Time, members map[string]*Member) (string, error) {
+	return s.ClearDayOverridesContext(context.Background(), scopeID, targets, days, members)
+}
+
+// ClearDayOverridesContext removes markers with request cancellation.
+func (s *Service) ClearDayOverridesContext(ctx context.Context, scopeID string, targets []string, days []time.Time, members map[string]*Member) (string, error) {
 	overrideTargets := make([]DayOverrideTarget, 0, len(targets))
 	for _, target := range targets {
 		overrideTargets = append(overrideTargets, DayOverrideTarget{ScopeID: scopeID, UserID: target, DisplayID: target})
 	}
-	return s.ClearDayOverridesForTargets(scopeID, overrideTargets, days, members)
+	return s.ClearDayOverridesForTargetsContext(ctx, scopeID, overrideTargets, days, members)
 }
 
 // ClearDayOverridesForTargets removes markers from explicitly resolved storage
@@ -309,6 +329,13 @@ func (s *Service) ClearDayOverrides(scopeID string, targets []string, days []tim
 // displayScopeID is used to detect whole-conversation markers, which stay on
 // the conversation scope even when personal storage is global.
 func (s *Service) ClearDayOverridesForTargets(displayScopeID string, targets []DayOverrideTarget, days []time.Time, members map[string]*Member) (string, error) {
+	return s.ClearDayOverridesForTargetsContext(
+		context.Background(), displayScopeID, targets, days, members,
+	)
+}
+
+// ClearDayOverridesForTargetsContext removes resolved markers with cancellation.
+func (s *Service) ClearDayOverridesForTargetsContext(ctx context.Context, displayScopeID string, targets []DayOverrideTarget, days []time.Time, members map[string]*Member) (string, error) {
 	if len(days) == 0 {
 		return "", fmt.Errorf("请提供要取消标记的日期，例如 /销假 2026-10-01。")
 	}
@@ -346,7 +373,7 @@ func (s *Service) ClearDayOverridesForTargets(displayScopeID string, targets []D
 		if scopeID == "" || loadedScopes[scopeID] {
 			return nil
 		}
-		existing, err := s.store.ListDayOverrides(scopeID)
+		existing, err := s.listDayOverridesContext(ctx, scopeID)
 		if err != nil {
 			return err
 		}
@@ -389,7 +416,7 @@ func (s *Service) ClearDayOverridesForTargets(displayScopeID string, targets []D
 				}
 				continue
 			}
-			deleted, err := s.store.DeleteDayOverride(target.ScopeID, target.UserID, dayText)
+			deleted, err := s.deleteDayOverrideContext(ctx, target.ScopeID, target.UserID, dayText)
 			if err != nil {
 				return "", err
 			}
@@ -434,7 +461,12 @@ func (s *Service) ClearDayOverridesForTargets(displayScopeID string, targets []D
 
 // DayOverrideListText renders the /假期 reply for a scope.
 func (s *Service) DayOverrideListText(scopeID string, members map[string]*Member, today time.Time) (string, error) {
-	rows, err := s.store.ListDayOverrides(scopeID)
+	return s.DayOverrideListTextContext(context.Background(), scopeID, members, today)
+}
+
+// DayOverrideListTextContext renders markers with request cancellation.
+func (s *Service) DayOverrideListTextContext(ctx context.Context, scopeID string, members map[string]*Member, today time.Time) (string, error) {
+	rows, err := s.listDayOverridesContext(ctx, scopeID)
 	if err != nil {
 		return "", err
 	}
@@ -444,7 +476,12 @@ func (s *Service) DayOverrideListText(scopeID string, members map[string]*Member
 // DayOverrideListTextForTargets lists only markers attached to the supplied
 // visible members plus the current conversation's all-member markers.
 func (s *Service) DayOverrideListTextForTargets(targets []DayOverrideTarget, members map[string]*Member, today time.Time) (string, error) {
-	rows, err := s.DayOverrideRowsForTargets(targets)
+	return s.DayOverrideListTextForTargetsContext(context.Background(), targets, members, today)
+}
+
+// DayOverrideListTextForTargetsContext renders resolved markers.
+func (s *Service) DayOverrideListTextForTargetsContext(ctx context.Context, targets []DayOverrideTarget, members map[string]*Member, today time.Time) (string, error) {
+	rows, err := s.DayOverrideRowsForTargetsContext(ctx, targets)
 	if err != nil {
 		return "", err
 	}
@@ -454,6 +491,11 @@ func (s *Service) DayOverrideListTextForTargets(targets []DayOverrideTarget, mem
 // DayOverrideRowsForTargets loads markers from explicit storage targets and
 // projects member IDs back to the identifiers used by the display scope.
 func (s *Service) DayOverrideRowsForTargets(targets []DayOverrideTarget) ([]DayOverrideRow, error) {
+	return s.DayOverrideRowsForTargetsContext(context.Background(), targets)
+}
+
+// DayOverrideRowsForTargetsContext loads resolved rows with cancellation.
+func (s *Service) DayOverrideRowsForTargetsContext(ctx context.Context, targets []DayOverrideTarget) ([]DayOverrideRow, error) {
 	type projectedKey struct {
 		scopeID string
 		userID  string
@@ -471,7 +513,7 @@ func (s *Service) DayOverrideRowsForTargets(targets []DayOverrideTarget) ([]DayO
 		if target.DisplayID == "" {
 			target.DisplayID = target.UserID
 		}
-		stored, err := s.store.ListDayOverrides(target.ScopeID)
+		stored, err := s.listDayOverridesContext(ctx, target.ScopeID)
 		if err != nil {
 			return nil, err
 		}

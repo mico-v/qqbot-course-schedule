@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Check the architecture boundaries documented in REFACTOR-GUIDE.md.
+# Check the architecture boundaries documented in ARCHITECTURE.md.
 #
 set -euo pipefail
 
@@ -31,6 +31,9 @@ fi
 # One go list call returns "pkg dep dep ..." per package. The old per-package
 # loop ran `go list -deps` 11 times and dominated this script's runtime.
 while read -r pkg deps; do
+	if [[ "$pkg" == "github.com/mico-v/qqbot-course-schedule/internal/app" ]]; then
+		continue
+	fi
 	if [[ " $deps " == *"gin-gonic"* && " $deps " == *" modernc.org/sqlite "* ]]; then
 		fail "架构边界违规：$pkg 同时依赖 gin 与 sqlite"
 	fi
@@ -53,10 +56,23 @@ stale_admin_types="$(grep -rnE '^type (ScopeSummary|ScopeMemberSummary|WebEvent|
 bot_imports="$(grep -rl 'internal/store' --include='*.go' --exclude='*_test.go' internal/bot || true)"
 [[ -z "$bot_imports" ]] || fail "架构边界违规：bot 非测试代码不得 import store：\n$bot_imports"
 
+cmd_imports="$(go list -f '{{join .Imports " "}}' ./cmd/bot)"
+if grep -q 'internal/store' <<<"$cmd_imports"; then
+	fail "架构边界违规：cmd 只能调用 app，不得直接依赖 store"
+fi
+
+test_deps="$(go list -deps ./internal/... | grep '/tests' || true)"
+[[ -z "$test_deps" ]] || fail "架构边界违规：生产代码不得 import tests：\n$test_deps"
+
+ordinary_internal_tests="$(find internal -name '*_test.go' ! -name '*_whitebox_test.go' -print)"
+[[ -z "$ordinary_internal_tests" ]] || fail "测试目录违规：源码目录只允许 *_whitebox_test.go：\n$ordinary_internal_tests"
+
 stale_messages="$(grep -rnE '&Message\{|bot\.Message' --include='*.go' internal cmd || true)"
 [[ -z "$stale_messages" ]] || fail "重构边界违规：Message 已拆分:\n$stale_messages"
 
 raw_kv="$(grep -rnE '\.Store\.(Get|Set|List|Delete)KV' --include='*.go' internal/bot || true)"
 [[ -z "$raw_kv" ]] || fail "重构边界违规：bot 不得直接访问裸 KV:\n$raw_kv"
+
+go run ./scripts/check-ports.go
 
 printf '架构边界检查通过\n'

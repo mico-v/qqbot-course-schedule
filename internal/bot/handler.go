@@ -99,7 +99,7 @@ func (h *Handler) Dispatch(ctx context.Context, in *Inbound, r *Replier) {
 	if h.env != nil {
 		// Expired handling records are swept here (throttled to once an hour)
 		// so retention no longer depends on a background ticker.
-		h.env.pruneStats(h.env.now())
+		h.env.pruneStats(ctx, h.env.now())
 		// Install the recorder here rather than at every construction site, so a
 		// caller that builds a bare replier still gets its stages recorded.
 		if r != nil {
@@ -125,7 +125,7 @@ func (h *Handler) Dispatch(ctx context.Context, in *Inbound, r *Replier) {
 	if settings.Enabled && h.env != nil {
 		// Every accepted message marks the sender as seen, so the admin page can
 		// offer an empty schedule even for members who only chat (full-message mode).
-		h.recordSeen(in)
+		h.recordSeen(ctx, in)
 		for _, attachment := range in.Attachments {
 			if isICSFile(attachment) {
 				if err := h.env.ImportICS(ctx, in, r, attachment); err != nil {
@@ -199,11 +199,10 @@ func (h *Handler) HandleCallback(ctx context.Context, cb *Callback) {
 		return
 	}
 	in := (&Inbound{EventID: cb.EventID, UserOpenID: cb.UserOpenID, GroupOpenID: cb.GroupOpenID}).WithReceived(ctx)
-	if cb.GroupOpenID != "" {
-		in.Origin = OriginGroup
-	} else {
-		in.Origin = OriginPrivate
+	if cb.GroupOpenID == "" {
+		return
 	}
+	in.Origin = OriginGroup
 	r := h.env.newReplier(ctx, in)
 	action, param, ok := strings.Cut(cb.Data, ":")
 	if !ok {
@@ -244,15 +243,15 @@ func (h *Handler) HandleCallback(ctx context.Context, cb *Callback) {
 }
 
 // recordSeen remembers the sender so the admin page can offer an empty schedule.
-func (h *Handler) recordSeen(in *Inbound) {
+func (h *Handler) recordSeen(ctx context.Context, in *Inbound) {
 	if h.env == nil || in.UserOpenID == "" {
 		return
 	}
 	scopeID := h.env.Scope(in)
-	if err := h.env.Service.RecordSeenMember(scopeID, in.UserOpenID, in.Username); err != nil {
+	if err := h.env.Service.RecordSeenMemberContext(ctx, scopeID, in.UserOpenID, in.Username); err != nil {
 		slog.Warn("记录成员失败", "err", err)
 	}
-	if err := h.env.Service.RecordIdentity(scopeID, in.UserOpenID, in.GlobalUserOpenID); err != nil {
+	if err := h.env.Service.RecordIdentityContext(ctx, scopeID, in.UserOpenID, in.GlobalUserOpenID); err != nil {
 		slog.Warn("记录全局用户身份失败", "err", err)
 	}
 }

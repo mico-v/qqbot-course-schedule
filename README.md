@@ -5,10 +5,15 @@
 功能抽象自 [astrbot_plugin_CourseSchedule](https://github.com/mico-v/astrbot_plugin_CourseSchedule)，
 框架思路参考 [Polarix](https://github.com/YearnstudioYangyi/Polarix)，不依赖 AstrBot / OneBot / NapCat。
 
+产品作用域仅限群聊。成员身份始终是 `(group_openid, member_openid)`；
+`member_openid` 是平台签发的群内标识，不是昵称或 QQ 号。`union_openid` 和 `qq`
+只是可空成员属性，不参与课表主键。
+
 ## 项目文档
 
 | 文档 | 内容 |
 | --- | --- |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | 架构基线：群内身份与数据库模型、文件布局、调用链、端口/错误/测试契约、P0-P6 优化计划 |
 | [PLAN.md](PLAN.md) | 项目计划：功能抽象、里程碑与进度、验收标准、风险、决策记录 |
 | [DEV-GUIDE.md](DEV-GUIDE.md) | 开发手册：环境、目录结构、配置、编码规范、测试、部署、FAQ |
 | [CONNECT.md](CONNECT.md) | 接入清单：平台配置、服务器配置、验证步骤与按钮说明 |
@@ -27,10 +32,8 @@ curl -s localhost:18080/healthz      # {"ok":true,"version":"dev"}
 提交前检查：
 
 ```bash
-bash scripts/check-architecture.sh
-gofmt -l .
-go vet ./...
-go test ./...
+COVERAGE_STAGE=p2 bash scripts/test-all.sh
+RUN_WEB=1 COVERAGE_STAGE=p2 bash scripts/test-all.sh
 ```
 
 这些检查也会由 `.github/workflows/ci.yml` 在 push 与 PR 上自动执行。
@@ -48,12 +51,12 @@ go test ./...
 | 课表 | `/课表` 直接发送今天的课表图片；`/课表 今天/明天/日期` 发送「{日期} 的课表：」+ 当天图片，并在启用 `buttons` 且平台开通按钮能力时附带「上一天 / 下一天」按钮（点击后按相同格式翻页） |
 | ICS | 在群里发送 `.ics` 附件自动导入（支持 RRULE/RDATE/EXDATE、GBK/UTF-16、嵌套 VALARM）；WebUI 管理台支持批量/单人导入导出 |
 | WakeUp | `/wakeup <分享链接或分享口令>`，或直接发送官方分享文案自动导入；分享码可带括号和中文备注（无需 APK；`wakeup_android_id` 可配置） |
-| 榜单 | `/上课时长榜`（别名 `/上课排行` `/本周上课排行` `/学习时长榜`；union 去重、窗口裁剪） |
+| 榜单 | `/上课时长榜`（别名 `/上课排行` `/本周上课排行` `/学习时长榜`；群内隔离、窗口裁剪） |
 | 休假调休 | `/休假` `/调休` `/销假` `/假期`（别名齐全，默认只标记自己；管理员显式写 `/休假 今天 所有人` 才标记全体，支持 @）；日期支持 `11/1-11/14`、`11月1日-11月14日` 等范围，未写年份时按学期解析（8 月 1 日为分界） |
 | 头像 | `/绑定QQ <QQ号>` `/解绑QQ` 自助绑定，或管理员在 WebUI 填 QQ 号；卡片改用 qlogo 公开头像（24h 磁盘缓存，失败回退昵称首字底色） |
 | 个人昵称 | `/nickname <昵称>`（别名 `/昵称` `/nikname`；`清空` 恢复默认）：设置自己的显示昵称，渲染你的课表卡片时使用；WebUI「设置」中的“机器人昵称”则是卡片右上角显示的机器人名称 |
-| 平台交互 | 指令面板（c2c + group，自动包含全部 Ready 指令）、自定义菜单、卡片按钮框架（`buttons`，内邀能力默认关闭） |
-| 机器人设置 | WebUI「设置」：总开关 + 回复策略（无斜杠 / 斜杠 / @机器人 分别开关）+ 发送格式（图片 / markdown 列表）+ 课表存储方式 + 管理员 OpenID 名单 + 机器人昵称，改完即时生效 |
+| 平台交互 | 群指令面板（自动包含全部 Ready 指令）、卡片按钮框架（`buttons`，内邀能力默认关闭） |
+| 机器人设置 | WebUI「设置」：总开关 + 回复策略（无斜杠 / 斜杠 / @机器人 分别开关）+ 发送格式（图片 / markdown 列表）+ 管理员 OpenID 名单 + 机器人昵称，改完即时生效 |
 | Web 管理台 | `/login` 独立登录页 + 会话 Cookie（不再弹 Basic Auth 弹窗）；`/admin` 按会话/成员增删改课程、批量建空课表（在群里发过言的成员会自动出现在候选列表）、revision 409 冲突提示、批量导入/导出（ICS 压缩包 / 原始备份）、成员页单成员 `.ics` 导入/导出、休假/调休标记管理、机器人设置 |
 
 ## 部署
@@ -82,6 +85,7 @@ go test ./...
 - [x] M11 增强：机器人总开关 + 回复策略设置
 - [x] M12 增强：课表发送格式（图片 / markdown 列表，平台拒绝 markdown 时回退纯文本）
 - [x] M13 增强：机器人昵称（卡片右上角）
+- [x] M14 架构：群内复合身份、schema v7、app 装配、测试根目录与完整 CI
 
 ## 许可证
 

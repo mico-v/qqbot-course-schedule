@@ -36,7 +36,7 @@ func (h *Handler) handleEditScheduleCommand(ctx context.Context, in *Inbound, r 
 		return r.Reply(ctx, "尚未配置服务回调地址，请联系管理员在设置中填写。")
 	}
 	ttl := time.Duration(settings.ScheduleLinkTTLMinutes) * time.Minute
-	token, expiresAt, err := h.env.Service.CreateScheduleEditLink(target.ScopeID, target.UserID, ttl, h.env.now())
+	token, expiresAt, err := h.env.Service.CreateScheduleEditLinkContext(ctx, target.ScopeID, target.UserID, ttl, h.env.now())
 	if err != nil {
 		return r.Reply(ctx, "生成修改链接失败："+err.Error())
 	}

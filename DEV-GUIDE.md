@@ -1,7 +1,7 @@
 # qqbot-course-schedule 开发手册
 
 > 适用范围：本项目全部 Go 代码、Web 管理台、部署与联调。
-> 对应计划：[PLAN.md](PLAN.md)。手册描述的是 **M0–M5 已实现**的代码结构与接口；改动代码时请同步本文档。
+> 对应计划：[PLAN.md](PLAN.md)。当前模块边界、契约与目标文件布局以 [ARCHITECTURE.md](ARCHITECTURE.md) 为准；本手册描述开发流程与现有实现，改动代码时请同步相关文档。
 
 ---
 
@@ -56,11 +56,12 @@ go run ./cmd/bot
 
 ```
 qqbot-course-schedule/
-├── README.md / PLAN.md / DEV-GUIDE.md / CONNECT.md / COVERAGE-AstrBot.md
+├── README.md / ARCHITECTURE.md / PLAN.md / DEV-GUIDE.md / CONNECT.md / COVERAGE-AstrBot.md
 ├── cmd/
-│   ├── bot/main.go              # 装配：config → store → schedule/admin → qqapi → bot/server
+│   ├── bot/main.go              # 配置加载、signal、调用 internal/app
 │   └── cardpreview/main.go      # 样例卡片预览（-rank 预览榜单）
 ├── internal/
+│   ├── app/                     # 依赖装配、路由、worker、生命周期
 │   ├── config/                  # config.json 加载、默认值、校验
 │   ├── qqapi/                   # 官方 API 客户端（自研，不用 botgo）
 │   │   ├── client.go            #   Token 缓存刷新、请求、重试、flexInt
@@ -87,14 +88,22 @@ qqbot-course-schedule/
 │   │   ├── panel.go             #   指令面板同步
 │   │   ├── menu.go              #   自定义菜单同步
 │   │   └── cardui.go            #   卡片键盘（日期/榜单切换按钮）
-│   ├── store/                   # SQLite：三表 + KV + revision 乐观锁
-│   │   ├── store.go             #   课表、标记、统计与通用 KV
-│   │   └── kv_state.go          #   面板状态的窄接口适配
+│   ├── store/                   # SQLite v7 适配器与 v6 兼容层
+│   │   ├── store.go             #   Open/DSN/Close 与迁移前备份
+│   │   ├── schema.go            #   v7 DDL、v6 → v7 迁移与校验
+│   │   ├── group_repository.go  #   群、成员、roster、seen
+│   │   ├── schedule_repository.go # 课表、事件、revision CAS
+│   │   └── *_store.go           #   设置、编辑链接、面板、统计
 │   ├── admin/                   # 管理台应用层（无 Gin / SQLite / 渲染依赖）
-│   │   ├── service.go           #   会话汇总、成员读写、批量建表、标记管理
-│   │   └── backup.go            #   管理台原始备份/恢复与限额
+│   │   ├── service.go           #   显式窄依赖与目录用例
+│   │   ├── dto.go               #   HTTP 共用 DTO
+│   │   ├── public_editor.go     #   公开 token 编辑
+│   │   ├── transfer.go          #   ZIP/manifest/ICS 导入导出
+│   │   └── backup.go            #   原始备份/恢复与限额
 │   ├── schedule/                # 课表领域（纯逻辑，无框架依赖）
-│   │   ├── types.go             #   Event/Member/DayOverride/Storage 接口
+│   │   ├── ports.go             #   窄仓储端口
+│   │   ├── identity_types.go    #   GroupKey / GroupMemberKey / Revision
+│   │   ├── errors.go            #   稳定错误分类
 │   │   ├── ics.go               #   VEVENT 解析/序列化、RAW_ICAL、嵌套组件
 │   │   ├── encoding.go          #   UTF-8/UTF-16/GBK 解码与内容嗅探
 │   │   ├── occurrence.go        #   RRULE/RDATE/EXDATE 展开 + 休假调休
@@ -104,7 +113,6 @@ qqbot-course-schedule/
 │   │   ├── daycard.go           #   每日状态行、收纳拆分、区间合并
 │   │   ├── rank.go              #   时长榜口径
 │   │   ├── override.go          #   休假/调休目标解析与写入
-│   │   ├── kv_namespaces.go     #   三个 KV 命名空间集中定义
 │   │   ├── panelstore.go        #   面板状态 DTO 与存储接口
 │   │   ├── seen.go              #   观察成员记录（管理台候选来源）
 │   │   └── service.go           #   ICS 导入与日卡数据
@@ -117,7 +125,8 @@ qqbot-course-schedule/
 │       ├── admin.go             #   /admin 页面 + /api/*（会话校验）
 │       ├── auth.go              #   /login 登录页 + 会话 Cookie + 登录限流
 │       ├── images.go            #   公开卡片图床 /images/:name
-│       └── files.go             #   公开导出文件 /files/:name
+│       ├── files.go             #   公开导出文件 /files/:name
+│       └── errors.go            #   错误分类到 HTTP 的唯一映射
 ├── web/                         # 管理台前端（Vue 3 + Vite + TS + Element Plus）
 │   ├── src/                     #   源码（views/ components/ store/ utils/）
 │   ├── dist/                    #   npm run build 产物，入库后 go:embed
@@ -136,6 +145,9 @@ qqbot-course-schedule/
 └── go.mod                       # module github.com/mico-v/qqbot-course-schedule
 ```
 
+上图是当前生产布局。`tests/` 已承担黑盒测试，详见
+[ARCHITECTURE.md 8.2](ARCHITECTURE.md#82-测试目录政策)；业务源码不再作为新测试的默认归属地。
+
 **依赖规则**（禁止反向依赖）：
 
 ```
@@ -150,8 +162,7 @@ admin 包内不得 import gin/sqlite/render/store
 ```
 
 `bot` 的非测试代码不得 import `store`；`Env` 只暴露 `schedule.PanelStore` 窄接口。
-KV 命名空间集中定义在 `schedule/kv_namespaces.go`。
-`store.Store` 是适配器，同时实现 `schedule.Storage` 与 `admin.Storage`；HTTP 路由只拿到
+`store.Store` 是适配器，显式实现 `schedule.ServiceStorage` 与 `admin.Storage`；HTTP 路由只拿到
 `*admin.Service`，不得直接访问 SQLite。边界由 `scripts/check-architecture.sh` 强制检查。
 
 ---
@@ -191,9 +202,8 @@ KV 命名空间集中定义在 `schedule/kv_namespaces.go`。
 2. 「开发设置 → 回调配置」填写 `https://<你的域名>:<端口>/webhook`（端口限 80/443/8080/8443）。
 3. 勾选事件：
    - 群 @ 消息 `GROUP_AT_MESSAGE_CREATE`
-   - 单聊消息 `C2C_MESSAGE_CREATE`
    - 互动事件 `INTERACTION_CREATE`（按钮）
-   - 群消息接收开关 `GROUP_MSG_RECEIVE`、单聊 `C2C_MSG_RECEIVE`
+   - 群消息接收开关 `GROUP_MSG_RECEIVE`
    - 全量群消息 `GROUP_MESSAGE_CREATE`（申请通过后）
    - 群成员事件（如平台开放）
 4. 保存时平台会发送 `op=13` 验证请求，服务必须正确回包（见 5.3）。
@@ -259,28 +269,39 @@ func handleSchedule(ctx context.Context, in *Inbound, r *Replier) error {
 - 指令参数用 `in.Args`（`Dispatch` 已剥离命中的前缀），不要自己 `TrimPrefix`。
 - 别名在 `Command.Aliases` 声明，会注册到同一处理器；`Commands()` 会去重。`panelOrder` 只决定面板排序，
   新指令标 `Ready: true` 会自动追加进面板（见 6.7），无需手改列表。
-- 群成员身份用 `in.UserOpenID`（群内为 member_openid），@ 目标从 `in.Mentions` 解析。
-  `member_openid` 不是 QQ 号，生产环境已出现同一用户在不同群返回相同值的情况：
-  隔离模式仍按 `group:<group_openid>` 隔离，全局模式优先精确匹配 `union_openid`，
-  仅在不可用时用本地 OpenID 兜底。
+- 群消息的成员坐标是 `GroupMemberKey{GroupOpenID: in.GroupOpenID, MemberOpenID: in.UserOpenID}`。
+  `in.UserOpenID` 在群事件中承载平台 `member_openid`，它既不是昵称也不是 QQ 号，只有与 `group_openid`
+  组合后才构成完整业务身份。@ 目标从 `in.Mentions` 解析，不能按显示名反查身份。
+- 两个群即使返回相同字面值的 `member_openid`，也必须是两条记录。`union_openid` 只作为可空成员属性，
+  不参与主键，也不得据此合并两个群的课表；现有 v6 全局存储行为仅做只读兼容，不再扩展。
+  缺失 union 时仍保留当前群身份，不要求导入、查询、渲染或编辑失败。
 
 ### 6.2 新增一个事件
 
 1. 在 `webhook/payload.go` 增加 DTO（只加需要字段，保留 `json.RawMessage` 兜底）。
 2. 在 `webhook/dispatch.go` 的 `switch payload.T` 增加分支；未知事件默认忽略。
-3. 若是开关类事件（如 `GROUP_MSG_RECEIVE`），只更新 KV，不回复。
+3. 若是开关类事件（如 `GROUP_MSG_RECEIVE`），只更新对应的窄设置端口，不回复；新代码不得新增通用 KV。
 4. 补 `testdata/payload/<event>.json` 与分发测试。
 
 ### 6.3 存储使用
 
+目标是让应用层只接收显式身份坐标；下面是目标签名示意，现有 `scope_id`/`user_id` 参数只允许出现在 HTTP
+绑定和迁移兼容层，并应立即转换：
+
 ```go
+key := schedule.GroupMemberKey{
+    GroupOpenID:  in.GroupOpenID,
+    MemberOpenID: in.UserOpenID,
+}
+
 // 管理台读取
-page, found, err := adminService.PageSchedule(scopeID, userID)
+page, found, err := adminService.PageSchedule(ctx, key)
 
 // 管理台写入：回传页面读到的 revision，由 admin.Service 调用领域服务
-_, err = adminService.SavePageSchedule(admin.SavePagePayload{
-    ScopeID: scopeID, UserID: userID, Revision: &page.Revision,
-    Events: events,
+_, err = adminService.SavePageSchedule(ctx, admin.SavePageCommand{
+    Key:              key,
+    ExpectedRevision: page.Revision,
+    Events:           events,
 }, "webui")
 ```
 
@@ -288,7 +309,8 @@ _, err = adminService.SavePageSchedule(admin.SavePagePayload{
 
 - HTTP 边界只调用 `admin.Service`；不得直接调用 `store` 或拼接 SQL。
 - 事件变更复用 `schedule.Service` / `schedule.SortEvents`，由服务层负责排序、ICS 重建与派生字段。
-- 成员课表写操作必须带 `expected_revision`；冲突在管理台转为 409，在聊天侧转为中文提示，禁止裸写。
+- 成员课表写操作必须带 `expected_revision`：0 只允许创建，正数执行精确 CAS；冲突在管理台转为 409，
+  在聊天侧转为中文提示，禁止裸写。
 - 一次业务操作 = 一个事务；不得跨事务拼接。
 - 迁移用 `metadata.schema_version` + 顺序脚本，禁止直接改线上表结构。
 
@@ -334,10 +356,11 @@ msg.Keyboard(kb)
 - 前端不使用 `window.AstrBotPluginPage`，统一 `fetch('/api/...')`，错误统一 `{error: "..."}`。
 - 保存流程：读取时拿 `revision` → 提交时回传 → 409 时提示刷新，**不要自动重试覆盖**。
 - 所有输入在服务端重新校验（长度、时间、RRULE），前端校验只是体验。
-- 观察成员：`Handler.Dispatch` 对**每条收到的消息**调用 `schedule.Service.RecordSeenMember`
+- 观察成员：`Handler.Dispatch` 对**每条收到的群消息**调用
+  `schedule.Service.RecordSeenMemberContext`
   （指令、附件、全量模式下的普通发言都算）；官方群成员列表内邀不可用，这是降级方案。
-- 会话列表除"已有课表"的群外，还包含"只有发言记录、还没有课表"的群（`ScopeSummaries`
-  合并 `seen` KV），并返回 `pending_count`，管理台显示"待添加 N 位成员"引导建表。
+- 会话列表除"已有课表"的群外，还包含"只有发言记录、还没有课表"的群
+  （`groups` / `group_members`），并返回 `pending_count`，管理台显示"待添加 N 位成员"引导建表。
 - 成员编辑器可填 QQ 号（可选）：保存进成员记录（随备份/恢复一起走），用于卡片头像；
   输入时用 `q1.qlogo.cn` 做小圆预览，校验 5-11 位数字。
 - 休假/调休标记（`internal/server/overrides.go`）：
@@ -348,7 +371,7 @@ msg.Keyboard(kb)
     （类型、来源日期、上限），`created_by` 记为 `webui`
 - 机器人设置面板含「机器人昵称」：写入 `settings/bot` 的 `nickname`，渲染时由
   `render.DayCardData.BotName` 画在卡片右上角（空值只显示头像）
-- 批量导入/导出（`internal/server/transfer.go`）：
+- 批量导入/导出（工作流在 `internal/admin/transfer.go`，`internal/server/transfer.go` 只做 HTTP 绑定）：
   - `GET /api/export?scope_id=&format=ics|backup`：ICS 压缩包（每成员 `schedule_<OpenID>.ics`
     + `manifest.json`）或原始备份 JSON（成员 + 休假/调休标记）
   - `GET /api/export?scope_id=&user_id=&format=ics`：单成员 `.ics` 直下（`text/calendar`；
@@ -356,6 +379,9 @@ msg.Keyboard(kb)
   - `POST /api/import`（multipart：`scope_id`、可选 `user_id`、`file`）：`.zip` 按 manifest 或
     文件名约定导入、`.json` 备份恢复（清空并重建标记）、`.ics` 导入到选中成员
   - 上限：总文件 20 MiB、压缩包条目 ≤ 510、单 ICS 2 MiB；空课表成员不进入 ICS 压缩包
+
+以上 `scope_id`/`user_id` 是现有 HTTP 兼容字段，不是新的领域身份。group scope 的入口必须校验
+`scope_id == "group:"+group_openid`，并把 `user_id` 解释为 `member_openid`；不得只凭 `user_id` 读写。
 
 ### 6.7 指令面板与自定义菜单
 
@@ -368,12 +394,11 @@ created, updated, err := bot.SyncPanels(ctx, env, handler)
 
 | 规则 | 说明 |
 | --- | --- |
-| 面板数量 | 只创建 2 个：`scope=c2c`、`scope=group`，`target_type=all`；ID + items hash 存 KV `global/panel/<scope>` |
+| 面板数量 | 只创建 1 个：`scope=group`，`target_type=all`；ID + items hash 存 `bot_panels` |
 | 面板元素 | 来自 `panelOrder` 中标记 `Ready` 的指令；`name` ≤ 14 显示列、`desc` ≤ 30 显示列（CJK 算 2） |
-| 认领与重建 | 用 `remark=qqbot-course-schedule` 认领旧面板；KV 丢失时不重复创建；平台侧被删除时重建 |
-| 变更检测 | items 的 SHA-256 前 8 字节存 KV，未变化不调 PUT |
+| 认领与重建 | 用 `remark=qqbot-course-schedule` 认领旧面板；本地状态丢失时不重复创建；平台侧被删除时重建 |
+| 变更检测 | items 的 SHA-256 前 8 字节存 `bot_panels`，未变化不调 PUT |
 | 平台行为 | 条目名会去掉前导 `/`，因此 `Dispatch` 同时接受 `/课表` 与 `课表` |
-| 自定义菜单 | `PUT /v2/menu` 仅单聊全局；一级 ≤10 项、二级 ≤5 项；待实现 |
 | 失败隔离 | 面板错误不影响启动与消息链路，仅记日志 |
 
 ---
@@ -382,21 +407,41 @@ created, updated, err := bot.SyncPanels(ctx, env, handler)
 
 ### 7.1 表结构
 
-见 [PLAN.md F1.2](PLAN.md#f12-数据表照搬原插件-schema语义等价)。Go 版字段与 Python 版保持一致，
-JSON 键名沿用，便于对照与手工排查。
+旧版 schema v6 使用 `schedule_members(scope_id, user_id, data_json)`、`course_events` 和 `kv_data`。
+启动时会自动迁移到 schema v7；旧表保留用于回滚和只读兼容。
+
+目标 schema v7 以 `(group_openid, member_openid)` 为群成员唯一键，并拆出 `groups`、`group_members`、
+`group_member_schedules`、`group_member_course_events`、`group_day_overrides`、`bot_settings`、
+`schedule_edit_links`、`bot_panels`、`message_stats`、`metadata`。v6 的 `course_events` 保持原名作为兼容快照，
+避免建表冲突。
+字段、复合外键、迁移映射与回滚要求见
+[ARCHITECTURE.md 5.4](ARCHITECTURE.md#54-身份与存储不变量)、
+[5.5](ARCHITECTURE.md#55-sqlite-目标数据模型)、
+[5.6](ARCHITECTURE.md#56-schema-v7-迁移契约)。
+
+- `member_openid` 是群内用户标识，不是昵称或 QQ 号。
+- 同一个 `member_openid` 出现在不同群时必须保存为不同记录。
+- `union_openid` 是可空成员属性，不是跨群课表关联键；不得据此自动合并不同群的成员或课表。
+- v7 不再提供全局存储模式；`private:*` / `global-user:*` 和 `storage_mode=global` 只作为 v6 迁移输入，
+  旧数据仅允许通过兼容层读取或导出。
 
 ### 7.2 写入语义
 
-- `PutMember`：`begin immediate` → 更新成员行（revision CAS）→ 删除旧事件 → 批量插入新事件 → 提交。
-- 派生字段（`ics/schedule/event_count/updated_at/...`）由服务层计算后一并写入。
-- 覆盖标记读取顺序：先取 `*` 行，再用成员行覆盖同 `day`。
+- `PutMember`：`begin immediate` → 按 `(group_openid, member_openid, revision)` CAS 更新成员课表 →
+  删除旧事件 → 批量插入新事件 → 提交。
+- revision CAS 必须同时带 `group_openid` 与 `member_openid`，禁止只按 `member_openid` 更新；
+  `expected_revision=0` 只允许插入，不提供无条件覆盖。
+- 可查询字段由服务层规范化后写入结构化列；事件数通过事件表计算，不另存容易漂移的计数列。
+  `raw_json` 只保留无法结构化且需无损往返的 iCalendar 数据。
+- 覆盖标记读取顺序：先取 `member_openid IS NULL` 的全群行，再用成员行覆盖同 `day`。
 
 ### 7.3 迁移策略
 
-- `metadata.schema_version` 从 2 起（对齐 Python 版），每次升级递增。
-- 提供 `store.Migrate()`，启动时执行；迁移必须幂等。
-- schema v5 删除已下线的 `checkin_records` 表。
-- **不做** Python 数据自动迁移：OpenID 与 QQ 号无法对应，用户重新导入 ICS 即可。
+- `metadata.schema_version` 当前为 6；v7 迁移按 [ARCHITECTURE.md](ARCHITECTURE.md) 的契约实施。
+- 迁移前备份数据库，迁移在事务中完成，并校验行数、revision、事件数和失败坐标。
+- v7 首版保留旧表用于回滚或双读校验，确认稳定后再单独提交删除。
+- **不自动导入旧 Python 插件数据**：其数据坐标与当前 Go 版不保证可对应，用户重新导入 ICS 即可；
+  当前 Go v6 → schema v7 的结构迁移仍按上述契约自动执行。
 
 ---
 
@@ -449,26 +494,46 @@ JSON 键名沿用，便于对照与手工排查。
 bash scripts/check-architecture.sh # 依赖边界与重构守卫
 gofmt -l .                       # 应为空
 go vet ./...                     # 静态检查
-go test ./...                    # 全量
-go test ./internal/schedule/... -run TestDayoff -v
-go test ./internal/render/... -update   # 更新 golden（仅限有意改版式）
+go test -race -shuffle=on ./...  # 全量，发现竞态与顺序依赖
+go test ./internal/schedule -run TestDayoff -v
 ```
 
-`.github/workflows/ci.yml` 会在 push 到 `main` 和所有 PR 上重复执行上述检查，并额外做
-`CGO_ENABLED=0 go build ./cmd/...` 的静态构建。架构规则只维护在
-`scripts/check-architecture.sh`，部署脚本与 CI 共用，禁止复制第二份断言。
+当前黑盒测试目录：
+
+```text
+tests/unit/          公开 API 可验证的纯领域测试
+tests/contract/      端口契约对 fake 与 SQLite 运行同一套用例
+tests/integration/   SQLite、migration、admin、server、webhook
+tests/e2e/           入站 payload 到 ReplyPlan/HTTP 的完整链路
+tests/testutil/      fake、临时数据库、fixture 工厂
+tests/testdata/      输入型 ICS、payload、备份
+```
+
+只有必须访问未导出函数的白盒测试保留为同目录 `_whitebox_test.go`。禁止为了搬目录而导出生产符号。
+
+`.github/workflows/ci.yml` 在 push 到 `main` 和所有 PR 上执行 Go 与 Web 两个必需 job。本地使用：
+
+```bash
+COVERAGE_STAGE=p2 bash scripts/test-all.sh
+RUN_WEB=1 COVERAGE_STAGE=p2 bash scripts/test-all.sh
+```
+
+完整门禁见 [ARCHITECTURE.md 8.5](ARCHITECTURE.md#85-完整-ci)。
 
 | 类型 | 要求 |
 | --- | --- |
 | 表格驱动 | 日期解析、ICS、occurrence、rank、权限矩阵必须表格化 |
-| 测试数据 | `testdata/ics/*.ics` 覆盖 RRULE/RDATE/EXDATE/时区/跨天/全天 |
-| 存储 | 临时目录；必须覆盖 revision=0/None/N 三种写入与冲突 |
+| 测试数据 | `tests/testdata/ics/*.ics` 覆盖 RRULE/RDATE/EXDATE/时区/跨天/全天 |
+| 存储 | 临时目录；必须覆盖 revision=0 创建、revision=N 更新、CAS 冲突与取消 |
 | HTTP | `httptest` 假官方服务器；覆盖 Token 刷新、重试、409、频控 |
 | Webhook | 构造真实签名；覆盖验签失败、Op=13、重复 id |
 | 渲染 | 尺寸断言 + 像素抽样；性能守卫用例（20 人卡片） |
+| 迁移 | v6 fixture → v7、幂等、坏数据中止、跨群同 `member_openid` 不合并 |
+| 身份 | 群模式无 union、union 后补、显示名变化、两群同值 |
 | 对齐 | 每条 Python 测试在 Go 侧有对应用例，命名加 `TestPy_` 前缀便于追踪（可选约定） |
 
-覆盖率目标：`internal/schedule` ≥ 85%，`internal/store` ≥ 80%，其余 ≥ 60%。
+覆盖率采用不回退的阶梯门槛，最终 Go 总覆盖率 ≥ 90%；`schedule/store/server/webhook`
+≥ 90%，`admin/bot/render` ≥ 85%，`qqapi` ≥ 80%。不允许使用 golden 文件或 `-update` 流程。
 
 ---
 

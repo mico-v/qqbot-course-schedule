@@ -1,6 +1,7 @@
 package schedule
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -27,22 +28,20 @@ type ScheduleEditLink struct {
 	ExpiresAt time.Time
 }
 
-type storedScheduleEditLink struct {
-	ScopeID   string `json:"scope_id"`
-	UserID    string `json:"user_id"`
-	ExpiresAt string `json:"expires_at"`
-}
-
 // CreateScheduleEditLink creates a random bearer token for one member's public
 // schedule editor. Only the token digest is persisted.
 func (s *Service) CreateScheduleEditLink(scopeID, userID string, ttl time.Duration, now time.Time) (string, time.Time, error) {
-	scopeID = strings.TrimSpace(scopeID)
-	userID = strings.TrimSpace(userID)
-	if scopeID == "" || userID == "" {
-		return "", time.Time{}, fmt.Errorf("scope_id 和 user_id 不能为空。")
+	return s.CreateScheduleEditLinkContext(context.Background(), scopeID, userID, ttl, now)
+}
+
+// CreateScheduleEditLinkContext creates a hashed edit token with cancellation.
+func (s *Service) CreateScheduleEditLinkContext(ctx context.Context, scopeID, userID string, ttl time.Duration, now time.Time) (string, time.Time, error) {
+	key, err := GroupMemberKeyFromLegacy(scopeID, userID)
+	if err != nil {
+		return "", time.Time{}, err
 	}
 	if ttl <= 0 {
-		return "", time.Time{}, fmt.Errorf("课表修改链接有效期必须大于 0。")
+		return "", time.Time{}, ValidationErrorf("课表修改链接有效期必须大于 0。")
 	}
 	if now.IsZero() {
 		now = time.Now()
@@ -54,12 +53,11 @@ func (s *Service) CreateScheduleEditLink(scopeID, userID string, ttl time.Durati
 	}
 	token := base64.RawURLEncoding.EncodeToString(raw)
 	expiresAt := now.Add(ttl).UTC()
-	record := storedScheduleEditLink{
-		ScopeID:   scopeID,
-		UserID:    userID,
-		ExpiresAt: expiresAt.Format(time.RFC3339Nano),
+	record := EditLinkRecord{
+		TokenHash: scheduleEditTokenKey(token), GroupOpenID: key.GroupOpenID,
+		MemberOpenID: key.MemberOpenID, ExpiresAt: expiresAt, CreatedAt: now.UTC(),
 	}
-	if err := s.store.SetKV(KVScopeGlobal, KVNamespaceEditLinks, scheduleEditTokenKey(token), record); err != nil {
+	if err := s.editLinks.SaveEditLink(ctx, record); err != nil {
 		return "", time.Time{}, fmt.Errorf("保存课表修改链接失败: %w", err)
 	}
 	return token, expiresAt, nil
@@ -68,6 +66,11 @@ func (s *Service) CreateScheduleEditLink(scopeID, userID string, ttl time.Durati
 // ResolveScheduleEditLink validates one token and returns the member it grants
 // access to. Expired tokens are removed when they are encountered.
 func (s *Service) ResolveScheduleEditLink(token string, now time.Time) (*ScheduleEditLink, error) {
+	return s.ResolveScheduleEditLinkContext(context.Background(), token, now)
+}
+
+// ResolveScheduleEditLinkContext validates a token with cancellation.
+func (s *Service) ResolveScheduleEditLinkContext(ctx context.Context, token string, now time.Time) (*ScheduleEditLink, error) {
 	token = strings.TrimSpace(token)
 	if !validScheduleEditToken(token) {
 		return nil, ErrScheduleEditLinkInvalid
@@ -76,31 +79,27 @@ func (s *Service) ResolveScheduleEditLink(token string, now time.Time) (*Schedul
 		now = time.Now()
 	}
 
-	var record storedScheduleEditLink
-	found, err := s.store.GetKV(
-		KVScopeGlobal,
-		KVNamespaceEditLinks,
+	record, found, err := s.editLinks.GetEditLink(
+		ctx,
 		scheduleEditTokenKey(token),
-		&record,
 	)
 	if err != nil {
 		return nil, err
 	}
-	if !found || strings.TrimSpace(record.ScopeID) == "" || strings.TrimSpace(record.UserID) == "" {
+	if !found || strings.TrimSpace(record.GroupOpenID) == "" || strings.TrimSpace(record.MemberOpenID) == "" {
 		return nil, ErrScheduleEditLinkInvalid
 	}
-	expiresAt, err := time.Parse(time.RFC3339Nano, record.ExpiresAt)
-	if err != nil {
+	if record.ExpiresAt.IsZero() {
 		return nil, ErrScheduleEditLinkInvalid
 	}
-	if !now.UTC().Before(expiresAt) {
-		_ = s.store.DeleteKV(KVScopeGlobal, KVNamespaceEditLinks, scheduleEditTokenKey(token))
+	if !now.UTC().Before(record.ExpiresAt) {
+		_ = s.editLinks.DeleteEditLink(ctx, scheduleEditTokenKey(token))
 		return nil, ErrScheduleEditLinkExpired
 	}
 	return &ScheduleEditLink{
-		ScopeID:   record.ScopeID,
-		UserID:    record.UserID,
-		ExpiresAt: expiresAt,
+		ScopeID:   ScopeGroup(record.GroupOpenID),
+		UserID:    record.MemberOpenID,
+		ExpiresAt: record.ExpiresAt,
 	}, nil
 }
 

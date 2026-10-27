@@ -45,8 +45,8 @@ func (e *Env) ImportWakeUp(ctx context.Context, in *Inbound, r *Replier, text st
 	if err != nil {
 		return r.Reply(ctx, err.Error())
 	}
-	result, err := e.Service.SaveWakeUpShareWithSource(
-		target.ScopeID, target.UserID, in.Username, shareData, "wakeup", in.UserOpenID,
+	result, err := e.Service.SaveWakeUpShareWithSourceContext(
+		ctx, target.ScopeID, target.UserID, in.Username, shareData, "wakeup", in.UserOpenID,
 		e.ImportSource(ctx, in, target),
 	)
 	if err != nil {

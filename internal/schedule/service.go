@@ -1,6 +1,8 @@
 package schedule
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -9,12 +11,20 @@ import (
 
 // Service is the application layer every entry point funnels through.
 type Service struct {
-	store Storage
+	members   GroupMemberRepository
+	schedules GroupScheduleRepository
+	overrides DayOverrideRepository
+	settings  SettingsStore
+	editLinks EditLinkStore
+	stats     StatsRepository
 }
 
 // NewService wires the service to its storage.
-func NewService(store Storage) *Service {
-	return &Service{store: store}
+func NewService(store ServiceStorage) *Service {
+	return &Service{
+		members: store, schedules: store, overrides: store,
+		settings: store, editLinks: store, stats: store,
+	}
 }
 
 // SaveResult describes a completed ICS import.
@@ -33,21 +43,28 @@ func (s *Service) SaveICS(scopeID, userID, name, content, sourceFile, actor stri
 
 // SaveICSWithSource saves an ICS document together with its import origin.
 func (s *Service) SaveICSWithSource(scopeID, userID, name, content, sourceFile, actor string, source ImportSource) (*SaveResult, error) {
+	return s.SaveICSWithSourceContext(
+		context.Background(), scopeID, userID, name, content, sourceFile, actor, source,
+	)
+}
+
+// SaveICSWithSourceContext is the cancellable ICS import path.
+func (s *Service) SaveICSWithSourceContext(ctx context.Context, scopeID, userID, name, content, sourceFile, actor string, source ImportSource) (*SaveResult, error) {
 	text := strings.TrimSpace(content)
 	if text == "" {
-		return nil, fmt.Errorf("ICS 内容为空，未保存。")
+		return nil, ValidationErrorf("ICS 内容为空，未保存。")
 	}
 	if len([]byte(text)) > MaxICSBytes {
-		return nil, fmt.Errorf("ICS 文件超过 %d MiB，未保存。", MaxICSBytes>>20)
+		return nil, ValidationErrorf("ICS 文件超过 %d MiB，未保存。", MaxICSBytes>>20)
 	}
 	events, scheduleText, err := ParseICSEventsAndSchedule(text)
 	if err != nil {
-		return nil, fmt.Errorf("ICS 解析失败，未保存：%v", err)
+		return nil, ValidationErrorf("ICS 解析失败，未保存：%v", err)
 	}
 	if len(events) == 0 {
-		return nil, fmt.Errorf("ICS 中没有 VEVENT，未保存。")
+		return nil, ValidationErrorf("ICS 中没有 VEVENT，未保存。")
 	}
-	return s.saveEvents(scopeID, userID, name, events, text, scheduleText, "ics", sourceFile, actor, source)
+	return s.saveEventsContext(ctx, scopeID, userID, name, events, text, scheduleText, "ics", sourceFile, actor, source)
 }
 
 // SaveWakeUpShare parses a decoded WakeUp share payload and replaces a
@@ -59,16 +76,30 @@ func (s *Service) SaveWakeUpShare(scopeID, userID, name, shareData, sourceFile, 
 // SaveWakeUpShareWithSource saves a WakeUp schedule together with its import
 // origin.
 func (s *Service) SaveWakeUpShareWithSource(scopeID, userID, name, shareData, sourceFile, actor string, source ImportSource) (*SaveResult, error) {
+	return s.SaveWakeUpShareWithSourceContext(
+		context.Background(), scopeID, userID, name, shareData, sourceFile, actor, source,
+	)
+}
+
+// SaveWakeUpShareWithSourceContext is the cancellable WakeUp import path.
+func (s *Service) SaveWakeUpShareWithSourceContext(ctx context.Context, scopeID, userID, name, shareData, sourceFile, actor string, source ImportSource) (*SaveResult, error) {
 	events, scheduleText, err := ParseWakeUpEventsAndSchedule(shareData)
 	if err != nil {
-		return nil, fmt.Errorf("WakeUp 分享解析失败，未保存：%v", err)
+		return nil, ValidationErrorf("WakeUp 分享解析失败，未保存：%v", err)
 	}
 	ics := SerializeScheduleICS(events, "", firstNonEmpty(name, "WakeUp课表"))
-	return s.saveEvents(scopeID, userID, name, events, ics, scheduleText, "wakeup", sourceFile, actor, source)
+	return s.saveEventsContext(ctx, scopeID, userID, name, events, ics, scheduleText, "wakeup", sourceFile, actor, source)
 }
 
 func (s *Service) saveEvents(scopeID, userID, name string, events []Event, icsText, scheduleText, source, sourceFile, actor string, importSource ImportSource) (*SaveResult, error) {
-	previous, found, err := s.store.GetMember(scopeID, userID)
+	return s.saveEventsContext(
+		context.Background(), scopeID, userID, name, events, icsText,
+		scheduleText, source, sourceFile, actor, importSource,
+	)
+}
+
+func (s *Service) saveEventsContext(ctx context.Context, scopeID, userID, name string, events []Event, icsText, scheduleText, source, sourceFile, actor string, importSource ImportSource) (*SaveResult, error) {
+	previous, found, err := s.getMemberContext(ctx, scopeID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +130,7 @@ func (s *Service) saveEvents(scopeID, userID, name string, events []Event, icsTe
 	if found {
 		expected = previous.Revision
 	}
-	if err := s.store.PutMember(scopeID, userID, &updated, &expected); err != nil {
+	if err := s.putMemberContext(ctx, scopeID, userID, &updated, expected); err != nil {
 		return nil, err
 	}
 	return &SaveResult{
@@ -115,7 +146,12 @@ func (s *Service) saveEvents(scopeID, userID, name string, events []Event, icsTe
 // existing member is left untouched so a self-chosen /nickname is never
 // overwritten by the platform-provided name.
 func (s *Service) EnsureMember(scopeID, userID, name string) error {
-	member, found, err := s.store.GetMember(scopeID, userID)
+	return s.EnsureMemberContext(context.Background(), scopeID, userID, name)
+}
+
+// EnsureMemberContext creates an empty member schedule when absent.
+func (s *Service) EnsureMemberContext(ctx context.Context, scopeID, userID, name string) error {
+	member, found, err := s.getMemberContext(ctx, scopeID, userID)
 	if err != nil {
 		return err
 	}
@@ -131,7 +167,7 @@ func (s *Service) EnsureMember(scopeID, userID, name string) error {
 		EventCount: 0,
 	}
 	zero := int64(0)
-	if err := s.store.PutMember(scopeID, userID, created, &zero); err != nil && err != ErrConflict {
+	if err := s.putMemberContext(ctx, scopeID, userID, created, zero); err != nil && !errors.Is(err, ErrConflict) {
 		return err
 	}
 	return nil
@@ -156,7 +192,12 @@ type DayCard struct {
 // (for example the time parsed from "/课表 10-10 8:00").
 // ok is false when the scope has no saved schedules at all.
 func (s *Service) BuildDayCard(scopeID string, selected, now, at time.Time) (*DayCard, bool, error) {
-	members, err := s.store.GetScopeMembers(scopeID)
+	return s.BuildDayCardContext(context.Background(), scopeID, selected, now, at)
+}
+
+// BuildDayCardContext loads and builds a day card with cancellation.
+func (s *Service) BuildDayCardContext(ctx context.Context, scopeID string, selected, now, at time.Time) (*DayCard, bool, error) {
+	members, err := s.listMembersContext(ctx, scopeID)
 	if err != nil {
 		return nil, false, err
 	}
@@ -209,7 +250,12 @@ func (s *Service) BuildDayCardForMembers(members map[string]*Member, selected, n
 // list of every member's courses. ok is false when the scope has no saved
 // schedules at all.
 func (s *Service) BuildDayMarkdown(scopeID string, selected, now time.Time) (string, bool, error) {
-	members, err := s.store.GetScopeMembers(scopeID)
+	return s.BuildDayMarkdownContext(context.Background(), scopeID, selected, now)
+}
+
+// BuildDayMarkdownContext loads markdown day data with cancellation.
+func (s *Service) BuildDayMarkdownContext(ctx context.Context, scopeID string, selected, now time.Time) (string, bool, error) {
+	members, err := s.listMembersContext(ctx, scopeID)
 	if err != nil {
 		return "", false, err
 	}
@@ -226,12 +272,22 @@ func (s *Service) BuildDayMarkdownForMembers(members map[string]*Member, selecte
 
 // ScopeMembers returns every member of a scope with overrides attached.
 func (s *Service) ScopeMembers(scopeID string) (map[string]*Member, error) {
-	return s.store.GetScopeMembers(scopeID)
+	return s.ScopeMembersContext(context.Background(), scopeID)
+}
+
+// ScopeMembersContext loads one group's schedules with cancellation.
+func (s *Service) ScopeMembersContext(ctx context.Context, scopeID string) (map[string]*Member, error) {
+	return s.listMembersContext(ctx, scopeID)
 }
 
 // ScopeMemberIDs returns the sorted member ids of a scope (used by tests/tools).
 func (s *Service) ScopeMemberIDs(scopeID string) ([]string, error) {
-	members, err := s.store.GetScopeMembers(scopeID)
+	return s.ScopeMemberIDsContext(context.Background(), scopeID)
+}
+
+// ScopeMemberIDsContext loads sorted member IDs with cancellation.
+func (s *Service) ScopeMemberIDsContext(ctx context.Context, scopeID string) ([]string, error) {
+	members, err := s.listMembersContext(ctx, scopeID)
 	if err != nil {
 		return nil, err
 	}

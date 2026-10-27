@@ -97,21 +97,14 @@ type Member struct {
 	DayOverrides map[string]DayOverride
 }
 
-// Storage is the persistence interface the service needs.
-type Storage interface {
-	GetMember(scopeID, userID string) (*Member, bool, error)
-	GetScopeMembers(scopeID string) (map[string]*Member, error)
-	PutMember(scopeID, userID string, member *Member, expectedRevision *int64) error
-	ListDayOverrides(scopeID string) ([]DayOverrideRow, error)
-	SetDayOverride(scopeID, userID, day string, override DayOverride, createdBy, createdAt string) error
-	DeleteDayOverride(scopeID, userID, day string) (bool, error)
-	InsertMessageStats(record MessageStats) error
-	ListMessageStats(since time.Time, scopeID string) ([]MessageStats, error)
-	PruneMessageStats(before time.Time) (int, error)
-	GetKV(scope, namespace, key string, out any) (bool, error)
-	ListKV(scope, namespace string) ([]KVEntry, error)
-	SetKV(scope, namespace, key string, value any) error
-	DeleteKV(scope, namespace, key string) error
+// ServiceStorage is the explicit repository set used by domain services.
+type ServiceStorage interface {
+	GroupMemberRepository
+	GroupScheduleRepository
+	DayOverrideRepository
+	SettingsStore
+	EditLinkStore
+	StatsRepository
 }
 
 // KVEntry is one namespaced key/value pair.

@@ -167,7 +167,7 @@ func (e *Env) recordStats(ctx context.Context, in *Inbound, r *Replier, stage sc
 	if code := qqapi.ErrorCode(err); code != 0 {
 		record.ErrCode = strconv.Itoa(code)
 	}
-	if saveErr := e.Service.RecordMessageStats(record); saveErr != nil {
+	if saveErr := e.Service.RecordMessageStatsContext(ctx, record); saveErr != nil {
 		slog.Warn("记录处理耗时失败", "err", saveErr)
 	}
 	e.logStats(record)

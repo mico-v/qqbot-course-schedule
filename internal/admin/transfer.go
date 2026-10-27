@@ -1,0 +1,245 @@
+package admin
+
+import (
+	"archive/zip"
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+
+	"github.com/mico-v/qqbot-course-schedule/internal/schedule"
+)
+
+var archiveICSNamePattern = regexp.MustCompile(`^schedule[_-](.+)\.ics$`)
+
+type archiveManifestEntry struct {
+	UserID string `json:"user_id"`
+	Name   string `json:"name"`
+	File   string `json:"file"`
+}
+
+type archiveManifest struct {
+	Version int                    `json:"version"`
+	ScopeID string                 `json:"scope_id"`
+	Members []archiveManifestEntry `json:"members"`
+}
+
+// VisibleMembers returns the schedules visible in one group export.
+func (s *Service) VisibleMembers(scopeID string) (map[string]*schedule.Member, error) {
+	return s.domain.VisibleMembers(scopeID)
+}
+
+// BuildICSArchive creates the ZIP export workflow.
+func (s *Service) BuildICSArchive(scopeID string, members map[string]*schedule.Member) ([]byte, error) {
+	ids := make([]string, 0, len(members))
+	for userID := range members {
+		ids = append(ids, userID)
+	}
+	sort.Strings(ids)
+
+	buffer := &bytes.Buffer{}
+	writer := zip.NewWriter(buffer)
+	manifest := archiveManifest{Version: 1, ScopeID: scopeID}
+	for _, userID := range ids {
+		member := members[userID]
+		if member == nil || len(member.Events) == 0 {
+			continue
+		}
+		content := strings.TrimSpace(member.ICS)
+		if content == "" {
+			content = schedule.SerializeScheduleICS(member.Events, "", member.Name)
+		}
+		fileName := "schedule_" + SafeTransferToken(userID) + ".ics"
+		entry, err := writer.Create(fileName)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := entry.Write([]byte(content)); err != nil {
+			return nil, err
+		}
+		manifest.Members = append(manifest.Members, archiveManifestEntry{
+			UserID: userID, Name: member.Name, File: fileName,
+		})
+	}
+	if len(manifest.Members) == 0 {
+		return nil, schedule.ValidationErrorf("该会话还没有课程可导出。")
+	}
+	manifestBytes, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	entry, err := writer.Create("manifest.json")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := entry.Write(manifestBytes); err != nil {
+		return nil, err
+	}
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+	return buffer.Bytes(), nil
+}
+
+// ImportArchive imports a ZIP with a manifest or filename conventions.
+func (s *Service) ImportArchive(scopeID string, data []byte) (*ImportResult, error) {
+	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return nil, schedule.ValidationErrorf("不是有效的 zip 文件。")
+	}
+	manifest := make(map[string]archiveManifestEntry)
+	for _, file := range reader.File {
+		if !strings.EqualFold(filepath.Base(file.Name), "manifest.json") {
+			continue
+		}
+		raw, err := readZipEntry(file, 1<<20)
+		if err != nil {
+			continue
+		}
+		var parsed archiveManifest
+		if err := json.Unmarshal(raw, &parsed); err != nil {
+			continue
+		}
+		for _, entry := range parsed.Members {
+			manifest[filepath.Base(entry.File)] = entry
+		}
+	}
+
+	result := &ImportResult{}
+	entries := 0
+	for _, file := range reader.File {
+		if file.FileInfo().IsDir() {
+			continue
+		}
+		entries++
+		if entries > MaxBackupMembers+10 {
+			break
+		}
+		base := filepath.Base(file.Name)
+		if strings.EqualFold(base, "manifest.json") {
+			continue
+		}
+		if !strings.HasSuffix(strings.ToLower(base), ".ics") {
+			result.Skipped = append(result.Skipped, base)
+			continue
+		}
+		entry := manifest[base]
+		targetID := strings.TrimSpace(entry.UserID)
+		if targetID == "" {
+			if matched := archiveICSNamePattern.FindStringSubmatch(base); matched != nil {
+				targetID = matched[1]
+			}
+		}
+		if targetID == "" {
+			result.Skipped = append(result.Skipped, base)
+			continue
+		}
+		raw, err := readZipEntry(file, schedule.MaxICSBytes)
+		if err != nil {
+			result.Skipped = append(result.Skipped, base)
+			continue
+		}
+		storageTarget, err := s.domain.ResolveStorageTarget(scopeID, targetID, "")
+		if err != nil {
+			result.Skipped = append(result.Skipped, base)
+			continue
+		}
+		saved, err := s.domain.SaveICS(
+			storageTarget.ScopeID, storageTarget.UserID,
+			entry.Name, string(raw), base, "webui",
+		)
+		if err != nil {
+			result.Skipped = append(result.Skipped, base)
+			continue
+		}
+		result.MemberCount++
+		result.EventCount += saved.EventCount
+		if saved.Created {
+			result.CreatedCount++
+		} else {
+			result.UpdatedCount++
+		}
+	}
+	if result.MemberCount == 0 && len(result.Skipped) == 0 {
+		return nil, schedule.ValidationErrorf("压缩包里没有可导入的课表。")
+	}
+	return result, nil
+}
+
+// ImportSingleICS imports one selected member's ICS file.
+func (s *Service) ImportSingleICS(scopeID, userID, filename string, data []byte) (*ImportResult, error) {
+	targetID := strings.TrimSpace(userID)
+	if targetID == "" {
+		if matched := archiveICSNamePattern.FindStringSubmatch(filepath.Base(filename)); matched != nil {
+			targetID = matched[1]
+		}
+	}
+	if targetID == "" {
+		return nil, schedule.ValidationErrorf("请先在左侧选中成员，或把文件命名为 schedule<OpenID>.ics。")
+	}
+	storageTarget, err := s.domain.ResolveStorageTarget(scopeID, targetID, "")
+	if err != nil {
+		return nil, err
+	}
+	saved, err := s.domain.SaveICS(
+		storageTarget.ScopeID, storageTarget.UserID,
+		"", string(data), filepath.Base(filename), "webui",
+	)
+	if err != nil {
+		return nil, err
+	}
+	result := &ImportResult{MemberCount: 1, EventCount: saved.EventCount}
+	if saved.Created {
+		result.CreatedCount = 1
+	} else {
+		result.UpdatedCount = 1
+	}
+	return result, nil
+}
+
+// ImportBackupFile decodes and imports a raw backup.
+func (s *Service) ImportBackupFile(scopeID string, data []byte, actor string) (*ImportResult, error) {
+	var backup BackupFile
+	if err := json.Unmarshal(data, &backup); err != nil {
+		return nil, schedule.ValidationErrorf("不是有效的备份文件。")
+	}
+	return s.ImportBackup(scopeID, &backup, actor)
+}
+
+func readZipEntry(file *zip.File, maxBytes int64) ([]byte, error) {
+	reader, err := file.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+	data, err := io.ReadAll(io.LimitReader(reader, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("entry too large")
+	}
+	return data, nil
+}
+
+// SafeTransferToken keeps a filename usable in ASCII headers and ZIP entries.
+func SafeTransferToken(value string) string {
+	var builder strings.Builder
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+			builder.WriteRune(r)
+		default:
+			builder.WriteByte('_')
+		}
+	}
+	result := strings.Trim(builder.String(), "_.")
+	if result == "" {
+		return "scope"
+	}
+	return result
+}

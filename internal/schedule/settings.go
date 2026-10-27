@@ -1,7 +1,7 @@
 package schedule
 
 import (
-	"fmt"
+	"context"
 	"net/url"
 	"strings"
 	"unicode"
@@ -11,12 +11,6 @@ import (
 const (
 	SendFormatImage    = "image"
 	SendFormatMarkdown = "markdown"
-)
-
-// StorageMode selects how personal schedules are partitioned.
-const (
-	StorageModeGroup  = "group"
-	StorageModeGlobal = "global"
 )
 
 // Settings holds the bot-wide runtime switches edited from the WebUI.
@@ -39,15 +33,10 @@ type Settings struct {
 	BaseURL string `json:"base_url"`
 	// ScheduleLinkTTLMinutes controls how long /修改课程表 links stay valid.
 	ScheduleLinkTTLMinutes int `json:"schedule_link_ttl_minutes"`
-	// StorageMode keeps personal schedules per group (default) or shares them
-	// globally by union_openid.
-	StorageMode string `json:"storage_mode"`
 	// AdminOpenIDs restricts chat administrator commands to these OpenIDs.
 	// Empty keeps the platform group owner/administrator fallback.
 	AdminOpenIDs []string `json:"admin_open_ids"`
 }
-
-const settingsKey = "bot"
 
 // MaxBotNicknameLength caps the bot nickname drawn on cards.
 const MaxBotNicknameLength = 24
@@ -66,7 +55,6 @@ func DefaultSettings() Settings {
 		Enabled: true, ReplyPlain: true, ReplySlash: true, ReplyMention: true,
 		SendFormat:             SendFormatImage,
 		ScheduleLinkTTLMinutes: DefaultScheduleLinkTTLMinutes,
-		StorageMode:            StorageModeGroup,
 		AdminOpenIDs:           []string{},
 	}
 }
@@ -75,14 +63,22 @@ func DefaultSettings() Settings {
 // defaults are pre-filled so a stored document missing a field keeps that
 // switch on instead of silently disabling it.
 func (s *Service) BotSettings() (Settings, error) {
+	return s.BotSettingsContext(context.Background())
+}
+
+// BotSettingsContext loads settings with request cancellation.
+func (s *Service) BotSettingsContext(ctx context.Context) (Settings, error) {
 	settings := DefaultSettings()
-	if _, err := s.store.GetKV(KVScopeGlobal, KVNamespaceSettings, settingsKey, &settings); err != nil {
+	stored, found, err := s.settings.LoadBotSettings(ctx)
+	if err != nil {
 		return DefaultSettings(), err
+	}
+	if found {
+		settings = stored
 	}
 	settings.SendFormat = NormalizeSendFormat(settings.SendFormat)
 	settings.Nickname = NormalizeNickname(settings.Nickname)
 	settings.BaseURL = normalizeStoredBaseURL(settings.BaseURL)
-	settings.StorageMode = NormalizeStorageMode(settings.StorageMode)
 	settings.AdminOpenIDs = NormalizeAdminOpenIDs(settings.AdminOpenIDs)
 	if ttl, err := NormalizeScheduleLinkTTLMinutes(settings.ScheduleLinkTTLMinutes); err == nil {
 		settings.ScheduleLinkTTLMinutes = ttl
@@ -94,9 +90,13 @@ func (s *Service) BotSettings() (Settings, error) {
 
 // SaveBotSettings stores the bot switches.
 func (s *Service) SaveBotSettings(settings Settings) error {
+	return s.SaveBotSettingsContext(context.Background(), settings)
+}
+
+// SaveBotSettingsContext validates and saves settings with cancellation.
+func (s *Service) SaveBotSettingsContext(ctx context.Context, settings Settings) error {
 	settings.SendFormat = NormalizeSendFormat(settings.SendFormat)
 	settings.Nickname = NormalizeNickname(settings.Nickname)
-	settings.StorageMode = NormalizeStorageMode(settings.StorageMode)
 	settings.AdminOpenIDs = NormalizeAdminOpenIDs(settings.AdminOpenIDs)
 	baseURL, err := NormalizeBaseURL(settings.BaseURL)
 	if err != nil {
@@ -108,7 +108,7 @@ func (s *Service) SaveBotSettings(settings Settings) error {
 	}
 	settings.BaseURL = baseURL
 	settings.ScheduleLinkTTLMinutes = ttl
-	return s.store.SetKV(KVScopeGlobal, KVNamespaceSettings, settingsKey, settings)
+	return s.settings.SaveBotSettings(ctx, settings)
 }
 
 // AllowsAdmin reports whether a sender may execute chat administrator
@@ -150,14 +150,6 @@ func NormalizeAdminOpenIDs(values []string) []string {
 	return result
 }
 
-// NormalizeStorageMode maps unknown or absent values to the per-group default.
-func NormalizeStorageMode(value string) string {
-	if value == StorageModeGlobal {
-		return StorageModeGlobal
-	}
-	return StorageModeGroup
-}
-
 // NormalizeSendFormat maps unknown or absent values to the image default so an
 // older stored document keeps the previous behaviour.
 func NormalizeSendFormat(value string) string {
@@ -187,10 +179,10 @@ func NormalizeBaseURL(value string) (string, error) {
 	}
 	parsed, err := url.ParseRequestURI(value)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
-		return "", fmt.Errorf("回调地址必须是完整的 HTTP(S) 地址，例如 https://kb.example.com。")
+		return "", ValidationErrorf("回调地址必须是完整的 HTTP(S) 地址，例如 https://kb.example.com。")
 	}
 	if parsed.RawQuery != "" || parsed.Fragment != "" {
-		return "", fmt.Errorf("回调地址不能包含查询参数或锚点。")
+		return "", ValidationErrorf("回调地址不能包含查询参数或锚点。")
 	}
 	return value, nil
 }
@@ -202,7 +194,7 @@ func NormalizeScheduleLinkTTLMinutes(value int) (int, error) {
 		return DefaultScheduleLinkTTLMinutes, nil
 	}
 	if value < MinScheduleLinkTTLMinutes || value > MaxScheduleLinkTTLMinutes {
-		return 0, fmt.Errorf(
+		return 0, ValidationErrorf(
 			"课表修改链接有效期必须在 %d 到 %d 分钟之间。",
 			MinScheduleLinkTTLMinutes,
 			MaxScheduleLinkTTLMinutes,

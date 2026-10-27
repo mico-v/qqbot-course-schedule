@@ -35,8 +35,8 @@ func (e *Env) ImportICS(ctx context.Context, in *Inbound, r *Replier, attachment
 	if err != nil {
 		return r.Reply(ctx, err.Error())
 	}
-	result, err := e.Service.SaveICSWithSource(
-		target.ScopeID, target.UserID, in.Username,
+	result, err := e.Service.SaveICSWithSourceContext(
+		ctx, target.ScopeID, target.UserID, in.Username,
 		content, attachment.Filename, in.UserOpenID,
 		e.ImportSource(ctx, in, target),
 	)

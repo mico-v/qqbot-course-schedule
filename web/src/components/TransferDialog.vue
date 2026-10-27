@@ -2,7 +2,8 @@
 import { computed, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { Download, Upload } from "@element-plus/icons-vue";
-import { downloadFile, uploadForm } from "../api";
+import { uploadAdminFile } from "../api/admin";
+import { downloadAttachment } from "../api/client";
 import {
   canExport,
   errorMessage,
@@ -15,7 +16,7 @@ import {
   state,
   timestamp,
 } from "../store/admin";
-import type { ImportResult, Scope } from "../types";
+import type { Scope } from "../types";
 
 const visible = defineModel<boolean>("visible", { required: true });
 
@@ -48,7 +49,7 @@ async function exportArchive(format: "ics" | "backup"): Promise<void> {
   const extension = isBackup ? "json" : "zip";
   const filename = `课表-${suffix}-${safeFileLabel(scope.label)}-${timestamp()}.${extension}`;
   try {
-    await downloadFile("/api/export", { scope_id: scope.scope_id, format }, filename);
+    await downloadAttachment("/api/export", { scope_id: scope.scope_id, format }, filename);
     ElMessage.success(`已开始下载 ${filename}。`);
   } catch (error) {
     ElMessage.error(errorMessage(error));
@@ -73,7 +74,7 @@ async function importArchive(): Promise<void> {
       form.append("user_id", state.selectedUserId);
     }
     form.append("file", file.value);
-    const result = await uploadForm<ImportResult>("/api/import", form);
+    const result = await uploadAdminFile(form);
     visible.value = false;
     await loadScopes();
     if (state.selectedScopeId && state.selectedUserId) {

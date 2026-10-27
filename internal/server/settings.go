@@ -12,9 +12,9 @@ import (
 // registerSettingsRoutes mounts the admin API for the bot switches.
 func registerSettingsRoutes(api *gin.RouterGroup, service *admin.Service) {
 	api.GET("/settings", func(c *gin.Context) {
-		settings, err := service.BotSettings()
+		settings, err := service.BotSettingsContext(c.Request.Context())
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			writeAPIError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"settings": settings})
@@ -23,16 +23,16 @@ func registerSettingsRoutes(api *gin.RouterGroup, service *admin.Service) {
 	api.POST("/settings", func(c *gin.Context) {
 		var payload schedule.Settings
 		if err := c.ShouldBindJSON(&payload); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "请求体必须是 JSON 对象。"})
+			writeBadRequest(c, "请求体必须是 JSON 对象。")
 			return
 		}
-		if err := service.SaveBotSettings(payload); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		if err := service.SaveBotSettingsContext(c.Request.Context(), payload); err != nil {
+			writeAPIError(c, err)
 			return
 		}
-		settings, err := service.BotSettings()
+		settings, err := service.BotSettingsContext(c.Request.Context())
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			writeAPIError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"ok": true, "settings": settings})

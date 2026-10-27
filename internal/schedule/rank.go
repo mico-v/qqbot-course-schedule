@@ -1,7 +1,7 @@
 package schedule
 
 import (
-	"fmt"
+	"context"
 	"math"
 	"sort"
 	"strings"
@@ -181,7 +181,12 @@ func BuildRankRows(members map[string]*Member, startBound, endBound time.Time, n
 
 // RankBoardRows parses a period expression and builds the leaderboard for a scope.
 func (s *Service) RankBoardRows(scopeID, period string, now time.Time) ([]RankRow, string, error) {
-	members, err := s.store.GetScopeMembers(scopeID)
+	return s.RankBoardRowsContext(context.Background(), scopeID, period, now)
+}
+
+// RankBoardRowsContext loads a rank board with cancellation.
+func (s *Service) RankBoardRowsContext(ctx context.Context, scopeID, period string, now time.Time) ([]RankRow, string, error) {
+	members, err := s.listMembersContext(ctx, scopeID)
 	if err != nil {
 		return nil, "", err
 	}
@@ -203,7 +208,7 @@ func (s *Service) RankBoardRowsForMembers(members map[string]*Member, period str
 		return nil, "", err
 	}
 	if int(window.End.Sub(window.Start).Hours()/24) > RankMaxRangeDays {
-		return nil, "", fmt.Errorf("统计范围最长 %d 天，请缩小范围。", RankMaxRangeDays)
+		return nil, "", ValidationErrorf("统计范围最长 %d 天，请缩小范围。", RankMaxRangeDays)
 	}
 	return BuildRankRows(members, window.Start, window.End, now), window.Label, nil
 }

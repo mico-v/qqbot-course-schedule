@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { Moon, Refresh, Setting, Sunny, SwitchButton } from "@element-plus/icons-vue";
-import { apiPost } from "../api";
+import { logout as requestLogout } from "../api/admin";
 import { currentScope, refresh, state } from "../store/admin";
 import { cycleTheme, themeMode } from "../theme";
 import type { Scope } from "../types";
@@ -35,7 +35,7 @@ function openTransfer(scope: Scope): void {
 
 async function logout(): Promise<void> {
   try {
-    await apiPost("/api/logout", {});
+    await requestLogout();
   } catch {
     /* 会话可能已过期，仍然回到登录页。 */
   }

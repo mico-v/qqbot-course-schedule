@@ -40,7 +40,7 @@ func (h *Handler) handleNickname(ctx context.Context, in *Inbound, r *Replier) e
 	if err != nil {
 		return r.Reply(ctx, "保存昵称失败："+err.Error())
 	}
-	saved, err := h.env.Service.SetMemberName(target.ScopeID, target.UserID, name, in.UserOpenID)
+	saved, err := h.env.Service.SetMemberNameContext(ctx, target.ScopeID, target.UserID, name, in.UserOpenID)
 	if err != nil {
 		return r.Reply(ctx, "保存昵称失败："+err.Error())
 	}

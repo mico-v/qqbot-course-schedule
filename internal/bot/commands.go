@@ -227,7 +227,7 @@ func (h *Handler) handleOverrideSet(ctx context.Context, in *Inbound, r *Replier
 	if err != nil {
 		return r.Reply(ctx, err.Error())
 	}
-	text, err := env.Service.SetDayOverridesForTargets(overrideTargets, days, kind, sourceDay, in.UserOpenID, members, today)
+	text, err := env.Service.SetDayOverridesForTargetsContext(ctx, overrideTargets, days, kind, sourceDay, in.UserOpenID, members, today)
 	if err != nil {
 		return r.Reply(ctx, err.Error())
 	}
@@ -259,7 +259,7 @@ func (h *Handler) handleCancelDayOffCommand(ctx context.Context, in *Inbound, r 
 	if err != nil {
 		return r.Reply(ctx, err.Error())
 	}
-	text, err := env.Service.ClearDayOverridesForTargets(env.Scope(in), overrideTargets, days, members)
+	text, err := env.Service.ClearDayOverridesForTargetsContext(ctx, env.Scope(in), overrideTargets, days, members)
 	if err != nil {
 		return r.Reply(ctx, err.Error())
 	}
@@ -284,7 +284,7 @@ func (h *Handler) handleDayOffListCommand(ctx context.Context, in *Inbound, r *R
 	if err != nil {
 		return err
 	}
-	text, err := env.Service.DayOverrideListTextForTargets(targets, members, env.now())
+	text, err := env.Service.DayOverrideListTextForTargetsContext(ctx, targets, members, env.now())
 	if err != nil {
 		return err
 	}
@@ -346,7 +346,7 @@ func (h *Handler) handleBindQQ(ctx context.Context, in *Inbound, r *Replier) err
 	if err != nil {
 		return r.Reply(ctx, "绑定失败："+err.Error())
 	}
-	qq, err := h.env.Service.SetMemberQQ(target.ScopeID, target.UserID, argument, in.UserOpenID)
+	qq, err := h.env.Service.SetMemberQQContext(ctx, target.ScopeID, target.UserID, argument, in.UserOpenID)
 	if err != nil {
 		return r.Reply(ctx, "绑定失败："+err.Error())
 	}
@@ -370,7 +370,7 @@ func (h *Handler) handleUnbindQQ(ctx context.Context, in *Inbound, r *Replier) e
 	if err != nil {
 		return r.Reply(ctx, "解绑失败："+err.Error())
 	}
-	if _, err := h.env.Service.SetMemberQQ(target.ScopeID, target.UserID, "", in.UserOpenID); err != nil {
+	if _, err := h.env.Service.SetMemberQQContext(ctx, target.ScopeID, target.UserID, "", in.UserOpenID); err != nil {
 		return r.Reply(ctx, "解绑失败："+err.Error())
 	}
 	return r.Reply(ctx, "已解除 QQ 绑定，卡片将恢复为昵称首字头像。")
