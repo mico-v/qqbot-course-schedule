@@ -1,59 +1,106 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
+## Scope
 
-- `cmd/bot/` — production entrypoint; `cmd/cardpreview/` renders local card previews.
-- `internal/` — Go packages: `schedule` (pure domain core), `bot` (commands/message link),
-  `admin` + `server` (web admin), `webhook`, `qqapi`, `render`, `store`, `config`, `timing`.
-- `web/` — embedded admin UI; `assets/` — fonts/images; `docs/` — official API snapshots only.
-- `deploy/`, `scripts/` — deployment and CI helpers.
+- Product scope is QQ group chat only.
+- Do not add private-chat, global schedule, cross-group union merge, active push, or AI tools.
+- Completed architecture changes are described in [ARCHITECTURE.md](ARCHITECTURE.md), not as tasks.
 
-Dependencies flow `webhook → bot → schedule`; `store → schedule/admin`. Run
-`bash scripts/check-architecture.sh` before touching imports — it enforces the boundaries.
+## Project Structure
 
-## Identity Semantics
+- `cmd/bot/` — process entrypoint.
+- `cmd/cardpreview/` — local card preview.
+- `internal/app/` — composition, routes, workers, lifecycle.
+- `internal/schedule/` — domain, use cases, ports, identity.
+- `internal/admin/` — admin/public-editor/transfer application layer.
+- `internal/bot/` — chat commands and QQ reply orchestration.
+- `internal/server/` — HTTP binding, auth, error mapping.
+- `internal/store/` — SQLite v7 adapter and v6 compatibility.
+- `internal/webhook/` — signature verification and event dispatch.
+- `tests/` — black-box unit/contract/integration/e2e tests.
+- `web/` — Vue admin UI and committed `web/dist`.
+- `docs/` — official API snapshots only.
 
-- OpenID values are opaque platform identifiers, not QQ numbers.
-- Production has returned the same `member_openid` for one user across different groups.
-  Isolated storage still keys data by `group:<group_openid>`; global identity resolution
-  prefers `union_openid` and may fall back to the local OpenID when union is unavailable.
-- `union_openid` is optional and permission-gated. Imports and rendering must remain usable
-  when the platform does not return it.
+## Identity
 
-## Build, Test, and Development Commands
+- Identity is always `(group_openid, member_openid)`.
+- `member_openid` is a platform identifier, not a nickname, QQ number, or human-chosen name.
+- Two groups may return the same `member_openid`; they remain separate members and schedules.
+- `display_name`, `qq`, and optional `union_openid` are member attributes, never identity keys.
+- `union_openid` must never merge schedules across groups.
+- New code accepts group coordinates only. Scope strings belong to HTTP and migration boundaries.
 
-- `go build ./...` — build all packages.
-- `go run ./cmd/bot` — run locally (reads `config.json`, default `127.0.0.1:18080`, path `/webhook`).
-- `go run ./cmd/cardpreview -o /tmp/card.jpg` — preview card layout (`-rank`, `-avatar`).
-- `go test ./...` — full suite; narrow with `go test ./internal/schedule/ -run TestDayoff -v`.
-- `gofmt -l . && go vet ./...` — formatting and static checks.
-- `bash scripts/check-architecture.sh` — enforce package boundaries (also run in CI).
+## Architecture Rules
 
-If `go build` hangs, set `go env -w GOPROXY=https://goproxy.cn,direct`.
+- `schedule` must not import gin, SQLite, gg, qqapi, store, or admin.
+- `admin` must not import gin, SQLite, render, or store internals.
+- `server` must not import webhook or store.
+- `bot` production code must not import store.
+- `cmd` must not import store directly.
+- I/O ports take `context.Context` first.
+- HTTP uses the error mapping in `internal/server/errors.go`.
+- Do not add generic KV APIs to application layers.
+- Run `bash scripts/check-architecture.sh` after changing imports.
 
-## Coding Style & Naming Conventions
+## Mandatory Change Workflow
 
-- Format with `gofmt`; exported symbols need doc comments; no magic numbers.
-- Comments and logs are **English**; user-visible text and Go error messages are **Chinese**.
-- Keep `schedule` free of `gin`, `sqlite`, `gg`, and `cron`; use its `Storage` interface.
-- Follow existing names: packages lowercase, exported `CamelCase`, files `snake_case_test.go`.
-- Do not add, remove, rename, or expose bot commands unless explicitly requested. Bot-wide
-  configuration belongs in the WebUI and must not be exposed as a chat command by default.
+1. Read [ARCHITECTURE.md](ARCHITECTURE.md), [PLAN.md](PLAN.md), and the relevant
+   development/connection/deployment docs before editing code.
+2. Implement against the documented contract. If the requested behavior conflicts
+   with the docs, update the contract first rather than silently diverging.
+3. Update every affected document in the same change. If no document changes are
+   needed, state why in the commit/PR.
+4. Run the relevant checks, including `COVERAGE_STAGE=p2 bash scripts/test-all.sh`
+   for Go changes and `RUN_WEB=1 ...` for Web changes.
+5. Commit with the required format, then push to `origin/main`.
 
-## Testing Guidelines
+The complete policy is [CONTRIBUTING.md](CONTRIBUTING.md).
 
-- Standard library `testing` only; no assert frameworks, golden files, or `-update` flags.
-- Name tests `TestXxx`; use `httptest` for HTTP and temp dirs for storage.
-- Rendering is verified with size assertions and pixel sampling.
+## Commands
 
-## Commit & Pull Request Guidelines
+```bash
+go run ./cmd/bot
+go run ./cmd/cardpreview -o /tmp/card.jpg
+go test ./internal/... ./tests/...
+go test ./internal/schedule -run TestDayoff -v
+gofmt -l .
+go vet ./cmd/... ./internal/... ./tests/... ./web
+COVERAGE_STAGE=p2 bash scripts/test-all.sh
+RUN_WEB=1 COVERAGE_STAGE=p2 bash scripts/test-all.sh
+```
 
-- Commit subject format: `type(scope): 中文描述`, where `type` is one of
-  `feat/fix/docs/refactor/test/chore/style/ci` (e.g. `feat(schedule): 实现 /课表 日期解析`).
-- PRs must pass CI (`gofmt`, architecture check, `go vet`, `go test ./...`, build) and should
-  describe the change, link related issues, and include screenshots for card/WebUI changes.
+If dependency downloads fail, set `GOPROXY=https://goproxy.cn,direct`.
 
-## Security & Configuration Tips
+## Tests
 
-- Never commit `config.json`, `data/`, or `bin/` (already in `.gitignore`).
-- Keep `MaxOpenConns(1)` for SQLite; never write tables directly — go through service layers.
+- Standard library `testing`; no assert framework, golden files, or `-update`.
+- Black-box tests belong under `tests/`.
+- Source-directory tests must end in `_whitebox_test.go` and genuinely need unexported state.
+- Use `httptest` for HTTP/QQ API and temporary directories for SQLite.
+- Rendering tests use size and pixel assertions.
+- Migration tests must cover v6 → v7, rollback on bad input, and cross-group isolation.
+
+## Code Style
+
+- Format Go with `gofmt`.
+- Exported symbols need doc comments.
+- Comments and logs are English; user-facing text and Go errors are Chinese.
+- No magic numbers.
+- Follow existing package/file naming and keep edits scoped.
+- Do not add, remove, rename, or expose chat commands unless explicitly requested.
+
+## Configuration And Data
+
+- Never commit `config.json`, `data/`, `bin/`, or `web/node_modules/`.
+- Keep `MaxOpenConns(1)`.
+- Do not write SQLite tables outside `internal/store`.
+- Group schedule writes use revision CAS.
+
+## Commit And PR
+
+- Commit format: `type(scope): 中文描述`.
+- Allowed types: `feat/fix/docs/refactor/test/chore/style/ci`.
+- CI must pass Go and Web gates.
+- Card/WebUI changes should include visual verification.
+- A completed code change is not finished until affected docs are updated and the
+  commit is pushed.

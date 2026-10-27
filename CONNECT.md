@@ -1,122 +1,144 @@
-# 机器人接入清单
+# QQ 群机器人接入清单
 
-> 目的：把机器人连上 QQ 开放平台并跑通全部功能（M0–M5 已实现）。
-> 当前能力：webhook 验签、课表图片、ICS 导入导出、休假调休、时长榜、指令面板、自定义菜单、
-> 卡片按钮框架（内邀）、Web 管理台。
+本文只覆盖当前产品：QQ 群聊课表机器人。
 
----
+## 1. 准备
 
-## 1. 你需要准备的
+| 项 | 要求 |
+| --- | --- |
+| QQ 开放平台 | https://q.qq.com/ |
+| 机器人凭据 | `AppID`、`AppSecret` |
+| 公网入口 | HTTPS 域名或反向代理 |
+| QQ 群 | 机器人已加入的测试群 |
+| 服务器 | 可运行单二进制并持久化 `data/` |
 
-| # | 事项 | 说明 |
-| --- | --- | --- |
-| 1 | QQ 开放平台账号 + 机器人 | https://q.qq.com/ ，个人开发者即可注册 |
-| 2 | `AppID` / `AppSecret` | 机器人详情页「开发设置」获取，**不要发到聊天里** |
-| 3 | 公网 HTTPS 入口 | 域名 + 证书；回调端口只能是 **80 / 443 / 8080 / 8443** |
-| 4 | 测试 QQ 群 | 把机器人拉进群（沙箱环境下可先自测） |
-| 5 | 服务器 | 能跑 Go 二进制即可；有静态 IP 更稳（平台可选 IP 白名单） |
+本地联调可使用：
 
-本地没有公网时，用 `cloudflared tunnel --url http://localhost:8080` 也能拿到 443 的临时 HTTPS 地址做验证。
+```bash
+cloudflared tunnel --url http://127.0.0.1:18080
+```
 
----
+## 2. 平台事件
 
-## 2. 平台侧配置
-
-1. 创建机器人，记录 `AppID` / `AppSecret`。
-2. 「开发设置 → 回调配置」：
-   - 回调地址：`https://<你的域名>/webhook`（反代到 443 时不用带端口）
-   - 直接暴露端口时必须是 80/443/8080/8443 之一
-3. 勾选事件：
+至少订阅：
 
 | 事件 | 用途 |
 | --- | --- |
-| 群 @ 消息 `GROUP_AT_MESSAGE_CREATE` | 群内指令（必需） |
-| 单聊消息 `C2C_MESSAGE_CREATE` | 私聊指令（必需） |
-| 互动事件 `INTERACTION_CREATE` | 卡片按钮回调（需 `buttons=true`，自定义按钮为内邀能力） |
-| 全量群消息 `GROUP_MESSAGE_CREATE` | 非 @ 消息处理（可选，需申请） |
+| `GROUP_AT_MESSAGE_CREATE` | 群内 @ 指令 |
+| `INTERACTION_CREATE` | 卡片按钮互动 |
 
-4. 保存回调配置时平台会立即发 `op=13` 验证请求，**服务必须已经在线**，否则保存失败。
-5. 沙箱/正式环境：沙箱用于开发联调；正式发布需平台审核，审核通过后按需配置 IP 白名单。
+需要处理普通群消息和成员观察时，再申请/开启：
 
----
+| 事件 | 用途 |
+| --- | --- |
+| `GROUP_MESSAGE_CREATE` | 全量群消息，用于 seen 成员 |
+| `GROUP_MSG_RECEIVE` | 群消息接收状态 |
 
-## 3. 服务器侧配置
+单聊事件不需要订阅。即使平台推送 `C2C_MESSAGE_CREATE`，服务也只 ACK 并忽略。
+
+## 3. 回调
+
+回调地址：
+
+```text
+https://<域名>/webhook
+```
+
+要求：
+
+- 外部由 Caddy/Nginx 终止 TLS。
+- Go 服务默认只监听 `127.0.0.1:18080`。
+- 反向代理不得改写原始 body。
+- 保存回调时平台会发送 `op=13`，服务必须在线。
+- 未通过 Ed25519 验签的请求返回 401。
+
+## 4. 本地配置
 
 ```bash
 git clone git@github.com:mico-v/qqbot-course-schedule.git
 cd qqbot-course-schedule
-go env -w GOPROXY=https://goproxy.cn,direct   # 本机 proxy.golang.org 不可达
 cp config.example.json config.json
 $EDITOR config.json
-go run ./cmd/bot            # 或 ./deploy/deploy.sh 一键部署到远端
+go run ./cmd/bot
 ```
 
-`config.json` 关键项：
+关键配置：
 
-| 键 | 值 |
+| 键 | 说明 |
 | --- | --- |
-| `bind` / `port` | 生产建议 `127.0.0.1` + 任意端口（如 `18080`），由反代对外；直接对外时 `port` 必须是 80/443/8080/8443 |
-| `appid` / `secret` | 机器人凭据（secret 同时用于 webhook 验签） |
-| `domain` | 默认 `https://api.bot.qq.com`，不用改 |
-| `public_base_url` | 你的公网地址（卡片图片与导出文件用，如 `https://kb.st.mioc.cc`） |
-| `admin_password` | Web 管理台登录密码（`/login` 登录页）；留空时仅服务器本机可访问 |
-| `buttons` | 卡片按钮（markdown+keyboard）；官方内邀能力，默认 `false` |
+| `bind` | 生产建议 `127.0.0.1` |
+| `port` | 默认 `18080`；直接对外时必须是 80/443/8080/8443 |
+| `appid` / `secret` | 平台凭据；`secret` 同时用于 Webhook 验签 |
+| `public_base_url` | 图片和文件对外 URL |
+| `database` | SQLite 路径 |
+| `data_dir` | 图片、文件、头像与失败 ICS |
+| `admin_password` | 管理台密码；空值时仅 loopback 可访问 |
+| `buttons` | 是否发送卡片按钮，平台能力可能需内邀 |
 
-Caddy 反代要点（模板见 `deploy/qqbot.caddy`）：回调、健康检查、图床与管理台使用同一个域名，
-整站反代到 `127.0.0.1:18080`；管理台由 `/login` 登录页 + 会话 Cookie 保护，不再弹 Basic Auth。
-
----
-
-## 4. 验证步骤（按顺序）
+## 5. 验证
 
 ```bash
-# 1. 健康检查
-curl -s https://<你的域名>/healthz          # {"ok":true,"version":"..."}
+curl -s http://127.0.0.1:18080/healthz
+# {"ok":true,"version":"..."}
 
-# 2. 未签名 webhook 必须被拒
-curl -s -o /dev/null -w '%{http_code}\n' -X POST https://<你的域名>/webhook -d '{}'   # 401
+curl -s -o /dev/null -w '%{http_code}\n' \
+  -X POST http://127.0.0.1:18080/webhook -d '{}'
+# 401
 ```
 
-3. 平台「回调配置」保存成功，日志出现 `webhook 验证请求已应答`。
-4. 群里 @机器人：
-   - `/ping` → `pong`；`/help` → 指令列表
-   - 发送 `日历.ics` 附件 → `已创建 <昵称> 的课表：N 个课程事件。`
-   - `/课表` → 今天的课表图片；`/课表 明天`、`/课表 9.17` → 「{日期} 的课表：」+ 当天图片，启用 `buttons=true` 且平台已开通按钮能力时附带「上一天 / 下一天」按钮，点按钮按相同格式翻到对应日期；未写年份的日期按学期解析（8 月 1 日为分界）
-   - `/调休 10-10 10-7` → 两个日期需在同一学期内，10-7 解析为本学期最近的那个 10 月 7 日
-   - `/上课时长榜` → 榜单图片
-   - `/休假 明天`、`/假期`、`/销假 明天` → 标记与取消
-   - `/nickname 小明` → 设置自己的显示昵称（渲染卡片时使用）
-5. 管理台（可选）：浏览器打开 `https://<你的域名>/login`（如 `https://kb.st.mioc.cc/login`）登录管理。
+群内验证：
 
----
+1. `/ping` 返回 `pong`。
+2. `/help` 返回指令列表。
+3. 发送 `.ics` 文件后收到导入结果。
+4. `/课表` 返回群课表图片。
+5. `/休假 明天`、`/假期`、`/销假 明天` 返回对应结果。
+6. `/上课时长榜` 返回榜单图片。
+7. `/修改课程表` 返回 token 限定的公开编辑链接。
 
-## 5. 常见失败对照
+管理台：
 
-| 现象 | 原因 | 处理 |
-| --- | --- | --- |
-| 平台保存回调失败 | 服务不在线 / 端口不合规 / 回包格式错 | 先 `curl /healthz`；看日志有没有 op=13；确认反代未改 body |
-| 请求 401（webhook） | `secret` 配错；反代压缩/重写 body | 核对 AppSecret；关闭反代 body 修改 |
-| 群里 @ 无响应 | 事件没勾、机器人未进群、消息未 @ 机器人 | 检查平台事件订阅；看日志是否收到 webhook |
-| 发消息失败 `40034005` | 被动回复窗口过期（5 分钟） | 重新发送指令 |
-| 图片/文件发送失败 | `public_base_url` 不可达或 `/images`、`/files` 未放行 | 公网 `curl` 一次卡片 URL 验证 |
-| 管理台 403 | 未设 `admin_password` 且非本机访问 | 在 `config.json` 设置 `admin_password` 后重启 |
-| 管理台被踢回登录页 | 会话过期或服务重启（内存态会话） | 重新登录 |
-| 管理台登录 429 | 密码连续输错触发限流（15 分钟） | 等待后重试 |
-| 导入提示解析失败 | 文件不是 iCalendar / 编码异常 | 失败原件留存于 `data/failed_ics/`，看日志定位 |
-| 服务起不来 | `config.json` 缺失或字段非法 | 启动日志会给出中文原因 |
+```text
+https://<域名>/login
+```
 
----
+## 6. 数据迁移
 
-## 6. 本地联调小抄
+首次使用 schema v7 的新版启动时：
+
+1. 检测 v6 数据库。
+2. 生成 `.v6.<timestamp>.bak` 备份。
+3. 在事务内迁移群数据。
+4. 保留旧表用于回滚。
+5. 健康检查成功后完成切换。
+
+部署后建议检查：
 
 ```bash
-# SSH 隧道访问管理台（无需密码时也要求 loopback；设置密码后走 /login 登录页）
-ssh -N -L 18080:127.0.0.1:18080 <host>
-# 浏览器打开 http://127.0.0.1:18080/admin
+sqlite3 /opt/qqbot-course-schedule/data/course_schedule.sqlite3 \
+  "SELECT value FROM metadata WHERE key='schema_version';"
+```
 
-# 实时日志
+期望结果：`7`。
+
+## 7. 常见问题
+
+| 现象 | 检查 |
+| --- | --- |
+| 平台保存回调失败 | 服务在线、域名/端口、op=13、反向代理 body |
+| Webhook 401 | `secret`、签名头、原始 body |
+| 群内无响应 | 机器人是否进群、是否 @、事件是否订阅 |
+| 图片发送失败 | `public_base_url`、`/images/*`、`/files/*` |
+| 管理台不可用 | `admin_password`、代理、loopback 限制 |
+| 导入失败 | ICS 编码/格式，查看 `data/failed_ics/` 和日志 |
+| 启动失败 | `config.json` 和完整启动错误 |
+
+## 8. 部署与日志
+
+```bash
+./deploy/deploy.sh
 ssh <host> 'journalctl -u qqbot-course-schedule -f'
-
-# 一键部署（本地执行）
-./deploy/deploy.sh --skip-tests
+ssh <host> 'systemctl status qqbot-course-schedule'
 ```
+
+详细部署参数见 [deploy/README.md](deploy/README.md)。

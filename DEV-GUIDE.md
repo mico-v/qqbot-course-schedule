@@ -1,7 +1,11 @@
 # qqbot-course-schedule 开发手册
 
 > 适用范围：本项目全部 Go 代码、Web 管理台、部署与联调。
-> 对应计划：[PLAN.md](PLAN.md)。当前模块边界、契约与目标文件布局以 [ARCHITECTURE.md](ARCHITECTURE.md) 为准；本手册描述开发流程与现有实现，改动代码时请同步相关文档。
+> 功能规格：[PLAN.md](PLAN.md)。当前架构：[ARCHITECTURE.md](ARCHITECTURE.md)。
+> 本文只描述现在的开发、联调、测试和部署流程。
+
+代码变更必须遵循 [CONTRIBUTING.md](CONTRIBUTING.md)：先核对文档契约，修改代码时同步更新
+受影响的文档，验证通过后提交并推送。
 
 ---
 
@@ -15,7 +19,7 @@ cd qqbot-course-schedule
 # 2. 依赖代理（本机 proxy.golang.org 不可达，必须设置）
 go env -w GOPROXY=https://goproxy.cn,direct
 
-# 3. 拉依赖并构建（M0 后）
+# 3. 拉依赖并构建
 go mod download
 go build ./...
 
@@ -27,15 +31,15 @@ $EDITOR config.json
 go run ./cmd/bot
 ```
 
-启动成功的标志：
+启动成功的关键日志：
 
 ```
-[INFO] webhook listening on :8080
-[INFO] qq access token refreshed, expires in ...
-[INFO] registered commands: /课表 /上课时长榜 /休假 /调休 /销假 /假期 /wakeup
+启动 qqbot-course-schedule version=...
+webhook 监听中 addr=127.0.0.1:18080 path=/webhook
+指令面板同步完成 created=... updated=...
 ```
 
-首次接入 QQ 开放平台的步骤见第 5.1 节。
+接入步骤见 [CONNECT.md](CONNECT.md)。
 
 ---
 
@@ -66,7 +70,7 @@ qqbot-course-schedule/
 │   ├── qqapi/                   # 官方 API 客户端（自研，不用 botgo）
 │   │   ├── client.go            #   Token 缓存刷新、请求、重试、flexInt
 │   │   ├── message.go           #   文本/markdown（msg_id / event_id 两种被动回复）
-│   │   ├── media.go             #   富媒体 URL 上传（图片/文件，群/单聊）
+│   │   ├── media.go             #   富媒体 URL 上传（业务只使用群接口）
 │   │   ├── keyboard.go          #   内联键盘 DTO（内邀能力）
 │   │   ├── menu.go              #   自定义菜单 /v2/menu
 │   │   ├── panel.go             #   指令面板 /v2/panels
@@ -79,14 +83,18 @@ qqbot-course-schedule/
 │   │   └── dispatch.go          #   事件分发、msg_id 幂等、互动回调
 │   ├── bot/
 │   │   ├── handler.go           #   指令路由、别名、args、观察成员记录
-│   │   ├── commands.go          #   全部指令处理器（课表/榜单/休假/面板）
+│   │   ├── commands.go          #   指令注册与处理器
 │   │   ├── inbound.go           #   Inbound 入站事实、Args/Command、收到时刻
 │   │   ├── replier.go           #   被动回复、event_id 回复、5 次计数
 │   │   ├── env.go               #   Env 依赖与卡片发送（媒体 / markdown+键盘）
 │   │   ├── import.go            #   .ics 附件下载与导入、失败留存
 │   │   ├── export.go            #   .ics 导出与公开文件
+│   │   ├── avatars.go           #   成员头像缓存与 QQ 头像
+│   │   ├── settings.go          #   回复策略与管理员判定
+│   │   ├── nickname.go          #   成员展示名
 │   │   ├── panel.go             #   指令面板同步
-│   │   ├── menu.go              #   自定义菜单同步
+│   │   ├── group_context.go     #   群坐标、roster、观察成员
+│   │   ├── menu.go              #   QQ API 历史能力，不在启动路径
 │   │   └── cardui.go            #   卡片键盘（日期/榜单切换按钮）
 │   ├── store/                   # SQLite v7 适配器与 v6 兼容层
 │   │   ├── store.go             #   Open/DSN/Close 与迁移前备份
@@ -97,8 +105,11 @@ qqbot-course-schedule/
 │   ├── admin/                   # 管理台应用层（无 Gin / SQLite / 渲染依赖）
 │   │   ├── service.go           #   显式窄依赖与目录用例
 │   │   ├── dto.go               #   HTTP 共用 DTO
+│   │   ├── schedule_editor.go   #   管理台课表编辑与 revision
 │   │   ├── public_editor.go     #   公开 token 编辑
+│   │   ├── day_override.go      #   管理台休假/调休
 │   │   ├── transfer.go          #   ZIP/manifest/ICS 导入导出
+│   │   ├── settings.go          #   设置用例
 │   │   └── backup.go            #   原始备份/恢复与限额
 │   ├── schedule/                # 课表领域（纯逻辑，无框架依赖）
 │   │   ├── ports.go             #   窄仓储端口
@@ -114,7 +125,7 @@ qqbot-course-schedule/
 │   │   ├── rank.go              #   时长榜口径
 │   │   ├── override.go          #   休假/调休目标解析与写入
 │   │   ├── panelstore.go        #   面板状态 DTO 与存储接口
-│   │   ├── seen.go              #   观察成员记录（管理台候选来源）
+│   │   ├── seen.go              #   群成员观察记录（管理台候选来源）
 │   │   └── service.go           #   ICS 导入与日卡数据
 │   ├── render/
 │   │   ├── font.go              #   内嵌字体、字素簇、单色 emoji 回退、富文本测量
@@ -124,9 +135,14 @@ qqbot-course-schedule/
 │   └── server/
 │       ├── admin.go             #   /admin 页面 + /api/*（会话校验）
 │       ├── auth.go              #   /login 登录页 + 会话 Cookie + 登录限流
+│       ├── public_schedule.go   #   公开 token 编辑 API
+│       ├── overrides.go         #   管理台标记 API
+│       ├── settings.go          #   管理台设置 API
+│       ├── transfer.go          #   导入/导出 HTTP 绑定
 │       ├── images.go            #   公开卡片图床 /images/:name
 │       ├── files.go             #   公开导出文件 /files/:name
 │       └── errors.go            #   错误分类到 HTTP 的唯一映射
+├── tests/                       # 黑盒单元、契约、集成和 E2E 测试
 ├── web/                         # 管理台前端（Vue 3 + Vite + TS + Element Plus）
 │   ├── src/                     #   源码（views/ components/ store/ utils/）
 │   ├── dist/                    #   npm run build 产物，入库后 go:embed
@@ -146,7 +162,7 @@ qqbot-course-schedule/
 ```
 
 上图是当前生产布局。`tests/` 已承担黑盒测试，详见
-[ARCHITECTURE.md 8.2](ARCHITECTURE.md#82-测试目录政策)；业务源码不再作为新测试的默认归属地。
+[ARCHITECTURE.md 测试目录](ARCHITECTURE.md#81-测试目录)；业务源码不再作为新测试的默认归属地。
 
 **依赖规则**（禁止反向依赖）：
 
@@ -240,7 +256,7 @@ admin 包内不得 import gin/sqlite/render/store
 ### 6.1 新增一条指令
 
 ```go
-// internal/bot/command/schedule.go（示意 API，M0 冻结）
+// internal/bot/commands.go 中的新指令示意
 func newScheduleCommand(env *Env) *Command {
     return &Command{
         Prefix:      "/课表",
@@ -251,21 +267,25 @@ func newScheduleCommand(env *Env) *Command {
 }
 
 func handleSchedule(ctx context.Context, in *Inbound, r *Replier) error {
-    target, err := dayoff.SingleDay(strings.TrimSpace(in.Args), time.Now().In(schedule.LocalTZ))
-    if err != nil {
-        return r.Reply(ctx, err.Error())
+    query, problem := schedule.ParseDayQuery(
+        strings.TrimSpace(in.Args),
+        time.Now().In(schedule.LocalTZ),
+    )
+    if query == nil {
+        return r.Reply(ctx, problem)
     }
-    imageURL, ok, err := env.RenderDayCard(ctx, in, r, target)
+    target := query.Day
+    card, ok, err := env.RenderDayCard(ctx, in, r, target, query.At)
     if err != nil || !ok {
         return r.Reply(ctx, "当前会话还没有可展示的课程表。")
     }
-    return r.ReplyImage(ctx, imageURL)
+    return env.SendCard(ctx, in, r, card, nil)
 }
 ```
 
 约定：
 
-- `Handle` 返回的 `error` 只写日志；用户可见错误必须显式 `ctx.Text(...).Send()` 或返回带用户文案的错误类型。
+- `Handle` 返回的 `error` 只写日志；用户可见错误必须显式 `r.Reply`，或返回已分类的领域错误。
 - 指令参数用 `in.Args`（`Dispatch` 已剥离命中的前缀），不要自己 `TrimPrefix`。
 - 别名在 `Command.Aliases` 声明，会注册到同一处理器；`Commands()` 会去重。`panelOrder` 只决定面板排序，
   新指令标 `Ready: true` 会自动追加进面板（见 6.7），无需手改列表。
@@ -339,7 +359,7 @@ msg.Keyboard(kb)
 | Markdown | `msg_type=2`，`markdown.content`；图片用公网 URL（`![alt #Wpx #Hpx](url)`） |
 | 图片/文件 | 先上传拿 `file_info`，再 `msg_type=7` |
 | 上传方式 | **已定：公网 URL 上传**（配合 `public_base_url` 图床）；不实现分片上传 |
-| 注意 | 群接口上传的 `file_info` 只能用于群消息，单聊同理；>20MB 图片会被降级为文件 |
+| 注意 | 群接口上传的 `file_info` 只能用于群消息，不能使用单聊上传接口；>20MB 图片会被降级为文件 |
 
 禁止使用未在官方文档出现的 `file_data` 字段（历史实现依赖此字段，已失效）。
 
@@ -383,7 +403,7 @@ msg.Keyboard(kb)
 以上 `scope_id`/`user_id` 是现有 HTTP 兼容字段，不是新的领域身份。group scope 的入口必须校验
 `scope_id == "group:"+group_openid`，并把 `user_id` 解释为 `member_openid`；不得只凭 `user_id` 读写。
 
-### 6.7 指令面板与自定义菜单
+### 6.7 群指令面板
 
 指令集合是单一事实来源：面板从已注册指令生成，不手写列表。实现见 `internal/bot/panel.go`、`internal/qqapi/panel.go`。
 
@@ -410,14 +430,13 @@ created, updated, err := bot.SyncPanels(ctx, env, handler)
 旧版 schema v6 使用 `schedule_members(scope_id, user_id, data_json)`、`course_events` 和 `kv_data`。
 启动时会自动迁移到 schema v7；旧表保留用于回滚和只读兼容。
 
-目标 schema v7 以 `(group_openid, member_openid)` 为群成员唯一键，并拆出 `groups`、`group_members`、
+当前 schema v7 以 `(group_openid, member_openid)` 为群成员唯一键，并拆出 `groups`、`group_members`、
 `group_member_schedules`、`group_member_course_events`、`group_day_overrides`、`bot_settings`、
 `schedule_edit_links`、`bot_panels`、`message_stats`、`metadata`。v6 的 `course_events` 保持原名作为兼容快照，
 避免建表冲突。
-字段、复合外键、迁移映射与回滚要求见
-[ARCHITECTURE.md 5.4](ARCHITECTURE.md#54-身份与存储不变量)、
-[5.5](ARCHITECTURE.md#55-sqlite-目标数据模型)、
-[5.6](ARCHITECTURE.md#56-schema-v7-迁移契约)。
+字段、复合外键和迁移规则见
+[ARCHITECTURE.md 身份契约](ARCHITECTURE.md#2-身份契约) 与
+[SQLite v7](ARCHITECTURE.md#6-sqlite-v7)。
 
 - `member_openid` 是群内用户标识，不是昵称或 QQ 号。
 - 同一个 `member_openid` 出现在不同群时必须保存为不同记录。
@@ -437,7 +456,7 @@ created, updated, err := bot.SyncPanels(ctx, env, handler)
 
 ### 7.3 迁移策略
 
-- `metadata.schema_version` 当前为 6；v7 迁移按 [ARCHITECTURE.md](ARCHITECTURE.md) 的契约实施。
+- `metadata.schema_version` 当前为 7；v6 → v7 迁移已实现。
 - 迁移前备份数据库，迁移在事务中完成，并校验行数、revision、事件数和失败坐标。
 - v7 首版保留旧表用于回滚或双读校验，确认稳定后再单独提交删除。
 - **不自动导入旧 Python 插件数据**：其数据坐标与当前 Go 版不保证可对应，用户重新导入 ICS 即可；
@@ -484,7 +503,7 @@ created, updated, err := bot.SyncPanels(ctx, env, handler)
 - **ICS**：解析保留 `RAW_ICAL` 与未知属性；序列化时复用原文件非 VEVENT 部分。
 - **occurrence**：展开使用 `rrule.Between(start, end, true)` 有界展开；应用覆盖后再返回；跨天事件在统计与展示时都按窗口裁剪。
 - **course_id**：位置索引，任何写入前必须重排并按 DTSTART 顺序；对外接口只保证"查询结果里的 id 在最近一次写入前有效"。
-- **文案**：所有用户可见文案与 Python 版逐字对齐（便于验收）；修改文案需同步 PLAN 与测试。
+- **文案**：用户可见文案保持中文、稳定并可测试；修改时同步对应测试和功能规格。
 
 ---
 
@@ -493,8 +512,8 @@ created, updated, err := bot.SyncPanels(ctx, env, handler)
 ```bash
 bash scripts/check-architecture.sh # 依赖边界与重构守卫
 gofmt -l .                       # 应为空
-go vet ./...                     # 静态检查
-go test -race -shuffle=on ./...  # 全量，发现竞态与顺序依赖
+go vet ./cmd/... ./internal/... ./tests/... ./web
+go test -race -shuffle=on ./internal/... ./tests/...
 go test ./internal/schedule -run TestDayoff -v
 ```
 
@@ -503,7 +522,7 @@ go test ./internal/schedule -run TestDayoff -v
 ```text
 tests/unit/          公开 API 可验证的纯领域测试
 tests/contract/      端口契约对 fake 与 SQLite 运行同一套用例
-tests/integration/   SQLite、migration、admin、server、webhook
+tests/integration/   SQLite、migration、admin、qqapi、schedule
 tests/e2e/           入站 payload 到 ReplyPlan/HTTP 的完整链路
 tests/testutil/      fake、临时数据库、fixture 工厂
 tests/testdata/      输入型 ICS、payload、备份
@@ -518,19 +537,19 @@ COVERAGE_STAGE=p2 bash scripts/test-all.sh
 RUN_WEB=1 COVERAGE_STAGE=p2 bash scripts/test-all.sh
 ```
 
-完整门禁见 [ARCHITECTURE.md 8.5](ARCHITECTURE.md#85-完整-ci)。
+完整门禁见 [ARCHITECTURE.md CI](ARCHITECTURE.md#83-必须通过的检查)。
 
 | 类型 | 要求 |
 | --- | --- |
 | 表格驱动 | 日期解析、ICS、occurrence、rank、权限矩阵必须表格化 |
-| 测试数据 | `tests/testdata/ics/*.ics` 覆盖 RRULE/RDATE/EXDATE/时区/跨天/全天 |
+| 测试数据 | 输入型 fixture 放 `tests/testdata/`；小型 ICS 可在测试代码内联 |
 | 存储 | 临时目录；必须覆盖 revision=0 创建、revision=N 更新、CAS 冲突与取消 |
 | HTTP | `httptest` 假官方服务器；覆盖 Token 刷新、重试、409、频控 |
 | Webhook | 构造真实签名；覆盖验签失败、Op=13、重复 id |
 | 渲染 | 尺寸断言 + 像素抽样；性能守卫用例（20 人卡片） |
 | 迁移 | v6 fixture → v7、幂等、坏数据中止、跨群同 `member_openid` 不合并 |
 | 身份 | 群模式无 union、union 后补、显示名变化、两群同值 |
-| 对齐 | 每条 Python 测试在 Go 侧有对应用例，命名加 `TestPy_` 前缀便于追踪（可选约定） |
+| 回归 | 修复线上行为时先补最小失败用例，再修实现 |
 
 覆盖率采用不回退的阶梯门槛，最终 Go 总覆盖率 ≥ 90%；`schedule/store/server/webhook`
 ≥ 90%，`admin/bot/render` ≥ 85%，`qqapi` ≥ 80%。不允许使用 golden 文件或 `-update` 流程。
@@ -612,10 +631,12 @@ bot.example.com {
 
 ## 14. 代码风格与提交规范
 
-- 遵循 `gofmt` / `go vet`；提交前跑 `go test ./...`。
-- 代码注释与日志用英文；用户可见文案用中文（与 Python 版一致）。
+- 遵循 `gofmt` / `go vet`；提交前跑 `scripts/test-all.sh`。
+- 行为或架构变化必须在同一提交中更新对应文档。
+- 检查通过后按 `type(scope): 中文描述` 提交，并推送 `origin/main`。
+- 代码注释与日志用英文；用户可见文案与 Go error 用中文。
 - 包名小写单词；导出符号必须有 doc comment。
-- 配置与常量集中在 `internal/config` 与各领域包，避免魔法数字；上限常量与 PLAN F1.4 一致。
+- 配置与常量集中在 `internal/config` 与各领域包，避免魔法数字；上限与 [PLAN.md](PLAN.md#33-上限) 一致。
 - 提交信息：`type(scope): 描述`，type ∈ `feat/fix/docs/refactor/test/chore`，描述用中文，例如：
 
 ```

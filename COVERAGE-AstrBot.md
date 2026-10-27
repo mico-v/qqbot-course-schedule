@@ -1,5 +1,8 @@
 # QQ 官方机器人 API v2 × AstrBot WebSocket 适配度研究
 
+> 本文是平台能力研究快照，不是当前产品规格。
+> 本项目当前只实现 QQ 群聊课表；单聊、频道和主动推送不在范围内。
+
 > 研究时间：基于 2026-07 前后抓取的 `https://bot.q.qq.com/wiki/develop/api-v2/` 文档快照。
 > 文档快照：本目录 `*.md`（191 页，含 `INDEX.md`），由 `sitemap.xml` 全量抓取。
 > 代码基线：仓库 `astrbot/core/platform/sources/qqofficial/`（WebSocket 适配器）。

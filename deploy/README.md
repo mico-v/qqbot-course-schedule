@@ -20,7 +20,7 @@ HOST=myserver ./deploy/deploy.sh   # 指定 SSH 主机别名（默认 as）
 
 脚本会：
 
-1. `gofmt` 检查 + `go test ./...`；
+1. 架构检查、`gofmt`、`go test ./...`；
 2. 构建 `linux/amd64` 静态二进制（版本号取 `git describe`）；
 3. 首次部署时创建 `qqbot` 用户、`/opt/qqbot-course-schedule/{bin,data}`，上传 `config.json`（600 权限）与 systemd unit；
 4. 二进制先传 `/tmp` 再 `install` 原子替换，随后 `systemctl restart`；
@@ -65,7 +65,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST https://<你的域名>/webhook 
 
 - `bind=127.0.0.1`、`port=18080`：不直接对外，回环监听时端口不受平台 80/443/8080/8443 限制。
 - 平台回调填 `https://<你的域名>/webhook`（Caddy 443，符合平台要求）。
-- `public_base_url` 填最终对外地址（M2 图片上传用）。
+- `public_base_url` 填最终对外地址，卡片图片和导出文件依赖它。
 
 ## 运维
 
@@ -76,4 +76,5 @@ systemctl restart qqbot-course-schedule
 ```
 
 - 数据目录：`/opt/qqbot-course-schedule/data`（SQLite、图片缓存，需可写）
-- 备份：`sqlite3 /opt/qqbot-course-schedule/data/course_schedule.sqlite3 ".backup '<目标路径>'"`（M1 起）
+- 备份：`sqlite3 /opt/qqbot-course-schedule/data/course_schedule.sqlite3 ".backup '<目标路径>'"`
+- v6 → v7 首次启动会额外生成 `course_schedule.sqlite3.v6.<timestamp>.bak`
