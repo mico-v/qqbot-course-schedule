@@ -101,6 +101,7 @@ type Member struct {
 type ServiceStorage interface {
 	GroupMemberRepository
 	GroupScheduleRepository
+	GlobalScheduleRepository
 	DayOverrideRepository
 	SettingsStore
 	EditLinkStore

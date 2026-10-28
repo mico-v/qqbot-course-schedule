@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { ElMessage } from "element-plus";
-import { Download, Plus, Upload } from "@element-plus/icons-vue";
+import { Delete, Download, Plus, Upload } from "@element-plus/icons-vue";
 import { uploadAdminFile } from "../api/admin";
 import {
   canExport,
   currentScope,
+  deleteMemberSchedule,
   errorMessage,
   exportMemberICS,
   importSummary,
@@ -63,6 +64,10 @@ async function exportICS(): Promise<void> {
   await exportMemberICS();
 }
 
+async function removeMemberSchedule(): Promise<void> {
+  await deleteMemberSchedule();
+}
+
 async function onImportFile(event: Event): Promise<void> {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0] || null;
@@ -108,6 +113,9 @@ function onCalendarAdd(defaults: { date: string; startTime: string; endTime: str
         <div class="identity-actions">
           <el-tag v-if="state.dirty" type="warning" effect="light">有未保存修改</el-tag>
           <el-button type="primary" :loading="saving" @click="submitSave">保存课表</el-button>
+          <el-button type="danger" plain :icon="Delete" @click="removeMemberSchedule">
+            删除成员课表
+          </el-button>
         </div>
       </div>
       <div class="identity-grid">
@@ -210,6 +218,8 @@ function onCalendarAdd(defaults: { date: string; startTime: string; endTime: str
 .identity-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 10px;
 }
 

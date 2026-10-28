@@ -292,9 +292,10 @@ func handleSchedule(ctx context.Context, in *Inbound, r *Replier) error {
 - 群消息的成员坐标是 `GroupMemberKey{GroupOpenID: in.GroupOpenID, MemberOpenID: in.UserOpenID}`。
   `in.UserOpenID` 在群事件中承载平台 `member_openid`，它既不是昵称也不是 QQ 号，只有与 `group_openid`
   组合后才构成完整业务身份。@ 目标从 `in.Mentions` 解析，不能按显示名反查身份。
-- 两个群即使返回相同字面值的 `member_openid`，也必须是两条记录。`union_openid` 只作为可空成员属性，
-  不参与主键，也不得据此合并两个群的课表；现有 v6 全局存储行为仅做只读兼容，不再扩展。
-  缺失 union 时仍保留当前群身份，不要求导入、查询、渲染或编辑失败。
+- 两个群即使返回相同字面值的 `member_openid`，也必须是两条存储记录。隔离模式只读当前群；
+  全局模式在当前群无有效课表时，可跨群解析同一成员。
+- 全局解析优先使用 `union_openid`。缺失或没有匹配时，才按 `member_openid` 查找最近课表。
+  `union_openid` 仍不是主键，也不会改变群成员坐标。
 
 ### 6.2 新增一个事件
 
@@ -375,6 +376,9 @@ msg.Keyboard(kb)
 - 导出的 `.ics` 写在 `data/files`，随机文件名 + 24h 清理；平台错误码分类见 `qqapi/errors.go`。
 - 前端不使用 `window.AstrBotPluginPage`，统一 `fetch('/api/...')`，错误统一 `{error: "..."}`。
 - 保存流程：读取时拿 `revision` → 提交时回传 → 409 时提示刷新，**不要自动重试覆盖**。
+- 设置页提供隔离/全局模式切换。全局模式会为当前群成员补查其最近的非空课表。
+- 全局模式下编辑或删除命中的跨群课表时，作用于实际来源课表；空课表不能遮蔽全局课表。
+- `/api/schedule/delete` 使用 revision CAS 删除成员课表并保留成员资料；WebUI 删除前必须二次确认。
 - 所有输入在服务端重新校验（长度、时间、RRULE），前端校验只是体验。
 - 观察成员：`Handler.Dispatch` 对**每条收到的群消息**调用
   `schedule.Service.RecordSeenMemberContext`
@@ -440,9 +444,10 @@ created, updated, err := bot.SyncPanels(ctx, env, handler)
 
 - `member_openid` 是群内用户标识，不是昵称或 QQ 号。
 - 同一个 `member_openid` 出现在不同群时必须保存为不同记录。
-- `union_openid` 是可空成员属性，不是跨群课表关联键；不得据此自动合并不同群的成员或课表。
-- v7 不再提供全局存储模式；`private:*` / `global-user:*` 和 `storage_mode=global` 只作为 v6 迁移输入，
-  旧数据仅允许通过兼容层读取或导出。
+- `union_openid` 是可空成员属性。隔离模式不参与跨群查找；全局模式仅把它作为精确匹配线索，
+  不改变成员主键，也不会产生跨群共享课表行。
+- 设置支持 `storage_mode=group`（隔离）和 `storage_mode=global`（全局）。
+  `private:*` / `global-user:*` 只作为 v6 兼容数据；新全局模式基于群内成员记录跨群查找。
 
 ### 7.2 写入语义
 

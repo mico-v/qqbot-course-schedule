@@ -127,6 +127,11 @@ var schemaStatements = []string{
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_group_member_schedules_updated
 		ON group_member_schedules(group_openid, updated_at)`,
+	`CREATE INDEX IF NOT EXISTS idx_group_member_schedules_member
+		ON group_member_schedules(member_openid, schedule_updated_at DESC)`,
+	`CREATE INDEX IF NOT EXISTS idx_group_member_schedules_import_union
+		ON group_member_schedules(import_union_openid)
+		WHERE import_union_openid <> ''`,
 	`CREATE TABLE IF NOT EXISTS group_member_course_events (
 		group_openid TEXT NOT NULL,
 		member_openid TEXT NOT NULL,

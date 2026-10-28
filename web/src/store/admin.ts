@@ -3,6 +3,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { ApiError } from "../api/client";
 import {
   createSchedules,
+  deleteSchedule as removeSchedule,
   downloadICS,
   fetchOverrides,
   fetchPendingMembers,
@@ -181,6 +182,42 @@ export async function saveSchedule(): Promise<void> {
   } catch (error) {
     if (error instanceof ApiError && error.status === 409) {
       ElMessage.error("课表已被其他操作更新，请点击「刷新数据」后重试。");
+      return;
+    }
+    ElMessage.error(errorMessage(error));
+  }
+}
+
+export async function deleteMemberSchedule(): Promise<void> {
+  const schedule = state.schedule;
+  if (!schedule) return;
+  try {
+    await ElMessageBox.confirm(
+      `确定删除 ${schedule.name || schedule.user_id} 的课表吗？全局模式下会同时清理可命中的跨群课表，删除后该成员会回到待创建列表。此操作不可撤销。`,
+      "删除成员课表",
+      {
+        type: "warning",
+        confirmButtonText: "确认删除",
+        cancelButtonText: "取消",
+      },
+    );
+  } catch {
+    return;
+  }
+  try {
+    await removeSchedule({
+      scope_id: schedule.scope_id,
+      user_id: schedule.user_id,
+      revision: schedule.revision,
+    });
+    state.schedule = null;
+    state.selectedUserId = "";
+    state.dirty = false;
+    await loadScopes();
+    ElMessage.success("成员课表已删除。");
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 409) {
+      ElMessage.error("课表已被其他操作更新，请刷新后重试。");
       return;
     }
     ElMessage.error(errorMessage(error));

@@ -21,8 +21,8 @@ func (e *Env) Scope(in *Inbound) string {
 	return schedule.ScopeGroup(in.GroupOpenID)
 }
 
-// ScheduleTarget resolves one exact group member coordinate.
-func (e *Env) ScheduleTarget(_ context.Context, in *Inbound, localUserID string) (schedule.StorageTarget, error) {
+// ScheduleTarget resolves the writable coordinate for the active storage mode.
+func (e *Env) ScheduleTarget(ctx context.Context, in *Inbound, localUserID string) (schedule.StorageTarget, error) {
 	if in == nil || in.Origin != OriginGroup {
 		return schedule.StorageTarget{}, schedule.ValidationErrorf("仅支持群聊课表")
 	}
@@ -30,7 +30,13 @@ func (e *Env) ScheduleTarget(_ context.Context, in *Inbound, localUserID string)
 	if err != nil {
 		return schedule.StorageTarget{}, err
 	}
-	return schedule.NewStorageTarget(key), nil
+	unionOpenID := ""
+	if localUserID == in.UserOpenID {
+		unionOpenID = strings.TrimSpace(in.GlobalUserOpenID)
+	}
+	return e.Service.ResolveStorageTargetContext(
+		ctx, key.Group().ScopeID(), key.MemberOpenID, unionOpenID,
+	)
 }
 
 // ImportTarget resolves the exact group member that receives an import.
@@ -42,8 +48,17 @@ func (e *Env) ImportTarget(ctx context.Context, in *Inbound, localUserID string)
 func (e *Env) ImportSource(ctx context.Context, in *Inbound, target schedule.StorageTarget) schedule.ImportSource {
 	source := schedule.ImportSource{}
 	if in != nil {
-		source.GroupOpenID = in.GroupOpenID
-		source.UserOpenID = target.Key.MemberOpenID
+		source.GroupOpenID = target.Key.GroupOpenID
+		if source.GroupOpenID == "" {
+			source.GroupOpenID = in.GroupOpenID
+		}
+		source.UserOpenID = strings.TrimSpace(target.Key.MemberOpenID)
+		if source.UserOpenID == "" {
+			source.UserOpenID = strings.TrimSpace(target.UserID)
+		}
+		if source.UserOpenID == "" {
+			source.UserOpenID = strings.TrimSpace(in.UserOpenID)
+		}
 		source.UnionOpenID = strings.TrimSpace(in.GlobalUserOpenID)
 	}
 	if source.UnionOpenID == "" {
@@ -62,7 +77,18 @@ func (e *Env) ScheduleMembers(ctx context.Context, in *Inbound) (map[string]*sch
 		return nil, schedule.ValidationErrorf("仅支持群聊课表")
 	}
 	e.syncGroupRoster(ctx, in)
-	return e.Service.ScopeMembersContext(ctx, scopeID)
+	settings, err := e.Service.BotSettingsContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if settings.StorageMode != schedule.StorageModeGlobal {
+		return e.Service.ScopeMembersContext(ctx, scopeID)
+	}
+	extra := make(map[string]string)
+	if in != nil && strings.TrimSpace(in.UserOpenID) != "" {
+		extra[in.UserOpenID] = strings.TrimSpace(in.GlobalUserOpenID)
+	}
+	return e.Service.SharedUserMembersContext(ctx, scopeID, extra)
 }
 
 func (e *Env) syncGroupRoster(ctx context.Context, in *Inbound) {

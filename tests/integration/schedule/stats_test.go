@@ -275,6 +275,12 @@ func (failingStorage) ListGroupSchedules(context.Context, schedule.GroupKey) (ma
 func (failingStorage) PutGroupMemberSchedule(context.Context, schedule.GroupMemberKey, *schedule.Member, schedule.Revision) (schedule.Revision, error) {
 	return 0, nil
 }
+func (failingStorage) FindGlobalSchedule(context.Context, string, string, *schedule.GroupMemberKey) (*schedule.Member, schedule.StorageTarget, bool, error) {
+	return nil, schedule.StorageTarget{}, false, nil
+}
+func (failingStorage) DeleteMemberSchedules(context.Context, schedule.StorageTarget, schedule.Revision, schedule.GroupMemberKey, string, bool) (int, error) {
+	return 0, nil
+}
 func (failingStorage) ListGroupDayOverrides(context.Context, schedule.GroupKey) ([]schedule.DayOverrideRow, error) {
 	return nil, nil
 }

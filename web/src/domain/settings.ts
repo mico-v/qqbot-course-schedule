@@ -9,6 +9,7 @@ export function normalizeSettings(input: Partial<BotSettings>): BotSettings {
     reply_slash: input.reply_slash !== false,
     reply_mention: input.reply_mention !== false,
     send_format: input.send_format === "markdown" ? "markdown" : "image",
+    storage_mode: input.storage_mode === "global" ? "global" : "group",
     nickname: input.nickname || "",
     base_url: input.base_url || "",
     schedule_link_ttl_minutes:

@@ -12,6 +12,7 @@ const form = reactive<BotSettings>({
   reply_slash: true,
   reply_mention: true,
   send_format: "image",
+  storage_mode: "group",
   nickname: "",
   base_url: "",
   schedule_link_ttl_minutes: 60,
@@ -55,6 +56,7 @@ async function submit(): Promise<void> {
       reply_slash: form.reply_slash,
       reply_mention: form.reply_mention,
       send_format: form.send_format,
+      storage_mode: form.storage_mode,
       nickname: form.nickname.trim(),
       base_url: form.base_url.trim(),
       schedule_link_ttl_minutes: form.schedule_link_ttl_minutes,
@@ -91,6 +93,16 @@ async function submit(): Promise<void> {
             <el-radio value="markdown">Markdown 列表</el-radio>
           </el-radio-group>
           <span class="setting-hint muted">Markdown 会以文字列表发送当天的课程内容。</span>
+        </el-form-item>
+        <el-form-item label="课表存储模式">
+          <el-radio-group v-model="form.storage_mode">
+            <el-radio value="group">隔离模式</el-radio>
+            <el-radio value="global">全局模式</el-radio>
+          </el-radio-group>
+          <span class="setting-hint muted">
+            隔离模式只读取当前群课表。全局模式在当前群没有有效课表时，按
+            union_openid 优先、member_openid 兜底查找该成员在其他群的最近课表。
+          </span>
         </el-form-item>
         <el-form-item label="管理员 OpenID 名单">
           <el-input

@@ -190,6 +190,69 @@ func (m *memoryStorage) PutGroupMemberSchedule(_ context.Context, key GroupMembe
 	return Revision(member.Revision), nil
 }
 
+func (m *memoryStorage) FindGlobalSchedule(
+	_ context.Context,
+	memberOpenID string,
+	unionOpenID string,
+	exclude *GroupMemberKey,
+) (*Member, StorageTarget, bool, error) {
+	for scopeID, members := range m.members {
+		ref, err := ParseLegacyScopeRef(scopeID)
+		if err != nil || ref.Kind != "group" {
+			continue
+		}
+		for memberID, member := range members {
+			if memberID != memberOpenID || len(member.Events) == 0 {
+				continue
+			}
+			key := GroupMemberKey{GroupOpenID: ref.ID, MemberOpenID: memberID}
+			if exclude != nil && key == *exclude {
+				continue
+			}
+			profile := m.profiles[ref.ID][memberID]
+			if unionOpenID != "" && profile != nil && profile.UnionOpenID != unionOpenID {
+				continue
+			}
+			return member, NewStorageTarget(key), true, nil
+		}
+	}
+	return nil, StorageTarget{}, false, nil
+}
+
+func (m *memoryStorage) DeleteMemberSchedules(
+	_ context.Context,
+	target StorageTarget,
+	expected Revision,
+	currentKey GroupMemberKey,
+	_ string,
+	global bool,
+) (int, error) {
+	member := m.members[target.ScopeID][target.UserID]
+	if member == nil {
+		return 0, nil
+	}
+	if member.Revision != int64(expected) {
+		return 0, ErrConflict
+	}
+	delete(m.members[target.ScopeID], target.UserID)
+	deleted := 1
+	if global {
+		for scopeID, members := range m.members {
+			ref, err := ParseLegacyScopeRef(scopeID)
+			if err != nil || ref.Kind != "group" {
+				continue
+			}
+			for memberID := range members {
+				if memberID == currentKey.MemberOpenID {
+					delete(members, memberID)
+					deleted++
+				}
+			}
+		}
+	}
+	return deleted, nil
+}
+
 func (m *memoryStorage) ListGroupDayOverrides(_ context.Context, group GroupKey) ([]DayOverrideRow, error) {
 	return m.ListDayOverrides(group.ScopeID())
 }

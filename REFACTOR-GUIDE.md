@@ -8,7 +8,8 @@
 2026-10-27 的架构迁移已在提交 `6ef3f04` 完成：
 
 - 群成员身份固定为 `(group_openid, member_openid)`。
-- 新业务只支持群聊；单聊与全局课表只保留 v6 兼容。
+- 新业务只支持群聊；全局模式作为同一群成员在不同群之间的显式查找策略恢复，
+  单聊与 v6 `global-user:*` 存储仍只保留兼容。
 - SQLite 从 scope + JSON + KV 迁移到 schema v7 群成员实体模型。
 - `Storage` 拆为显式仓储端口，I/O 使用 `context.Context`。
 - `admin.Service` 不再嵌入 `*schedule.Service`。

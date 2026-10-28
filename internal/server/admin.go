@@ -64,10 +64,8 @@ func RegisterAdmin(router *gin.Engine, service *admin.Service, password string) 
 				eventCount += member.EventCount
 			}
 			pendingCount := 0
-			if len(members) == 0 {
-				if pending, pendingErr := service.PendingMembers(summary.ScopeID); pendingErr == nil {
-					pendingCount = len(pending)
-				}
+			if pending, pendingErr := service.PendingMembers(summary.ScopeID); pendingErr == nil {
+				pendingCount = len(pending)
 			}
 			scopes = append(scopes, gin.H{
 				"scope_id":      summary.ScopeID,
@@ -108,6 +106,26 @@ func RegisterAdmin(router *gin.Engine, service *admin.Service, password string) 
 			return
 		}
 		c.JSON(http.StatusOK, result)
+	})
+
+	api.POST("/schedule/delete", func(c *gin.Context) {
+		var payload struct {
+			ScopeID  string `json:"scope_id"`
+			UserID   string `json:"user_id"`
+			Revision int64  `json:"revision"`
+		}
+		if err := c.ShouldBindJSON(&payload); err != nil {
+			writeBadRequest(c, "请求体必须是 JSON 对象。")
+			return
+		}
+		deleted, err := service.DeleteMemberScheduleContext(
+			c.Request.Context(), payload.ScopeID, payload.UserID, payload.Revision,
+		)
+		if err != nil {
+			writeAPIError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"ok": true, "deleted": deleted})
 	})
 
 	api.GET("/members", func(c *gin.Context) {

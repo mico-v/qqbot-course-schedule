@@ -17,16 +17,16 @@ func (s *Service) PageScheduleContext(ctx context.Context, scopeID, userID strin
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}
-	key, err := schedule.GroupMemberKeyFromLegacy(scopeID, userID)
-	if err != nil {
-		return nil, false, err
-	}
-	member, found, err := s.schedules.GetMember(key.Group().ScopeID(), key.MemberOpenID)
+	member, found, err := s.domain.VisibleMemberContext(ctx, scopeID, userID, "")
 	if err != nil {
 		return nil, false, err
 	}
 	if !found || member == nil {
 		return nil, false, nil
+	}
+	key, err := schedule.GroupMemberKeyFromLegacy(scopeID, userID)
+	if err != nil {
+		return nil, false, err
 	}
 	events := make([]WebEvent, 0, len(member.Events))
 	for index, event := range member.Events {
@@ -61,11 +61,13 @@ func (s *Service) PageScheduleAtContext(ctx context.Context, scopeID, userID str
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}
-	key, err := schedule.GroupMemberKeyFromLegacy(scopeID, userID)
-	if err != nil {
-		return nil, false, err
+	storeScope := scopeID
+	storeUser := userID
+	if key, keyErr := schedule.GroupMemberKeyFromLegacy(scopeID, userID); keyErr == nil {
+		storeScope = key.Group().ScopeID()
+		storeUser = key.MemberOpenID
 	}
-	member, found, err := s.schedules.GetMember(key.Group().ScopeID(), key.MemberOpenID)
+	member, found, err := s.schedules.GetMember(storeScope, storeUser)
 	if err != nil || !found || member == nil {
 		return nil, false, err
 	}
@@ -83,9 +85,9 @@ func (s *Service) PageScheduleAtContext(ctx context.Context, scopeID, userID str
 		})
 	}
 	return &PageSchedule{
-		ScopeID:  key.Group().ScopeID(),
-		UserID:   key.MemberOpenID,
-		Name:     firstNonEmpty(member.Name, key.MemberOpenID),
+		ScopeID:  storeScope,
+		UserID:   storeUser,
+		Name:     firstNonEmpty(member.Name, storeUser),
 		QQ:       member.QQ,
 		Revision: member.Revision,
 		Events:   events,
@@ -107,12 +109,21 @@ func (s *Service) SavePageSchedule(payload SavePagePayload, actor string) (*Save
 
 // SavePageScheduleContext validates and saves an admin page with cancellation.
 func (s *Service) SavePageScheduleContext(ctx context.Context, payload SavePagePayload, actor string) (*SavePageResult, error) {
-	key, err := schedule.GroupMemberKeyFromLegacy(payload.ScopeID, payload.UserID)
+	currentKey, currentKeyErr := schedule.GroupMemberKeyFromLegacy(payload.ScopeID, payload.UserID)
+	target, err := s.domain.ResolveStorageTargetContext(
+		ctx, payload.ScopeID, payload.UserID, "",
+	)
 	if err != nil {
 		return nil, err
 	}
-	payload.ScopeID = key.Group().ScopeID()
-	payload.UserID = key.MemberOpenID
+	payload.ScopeID = target.ScopeID
+	payload.UserID = target.UserID
+	if currentKeyErr == nil && target.Key != currentKey {
+		// Editing a globally resolved schedule must not overwrite the source
+		// group's local display name or QQ binding.
+		payload.Name = nil
+		payload.QQ = nil
+	}
 	result, err := s.SavePageScheduleAtContext(ctx, payload, actor)
 	if err != nil {
 		return nil, err
@@ -136,9 +147,17 @@ func (s *Service) SavePageScheduleAtContext(ctx context.Context, payload SavePag
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	key, err := schedule.GroupMemberKeyFromLegacy(payload.ScopeID, payload.UserID)
-	if err != nil {
-		return nil, err
+	storeScope := payload.ScopeID
+	storeUser := payload.UserID
+	groupKey, groupErr := schedule.GroupMemberKeyFromLegacy(storeScope, storeUser)
+	if groupErr == nil {
+		storeScope = groupKey.Group().ScopeID()
+		storeUser = groupKey.MemberOpenID
+	} else {
+		ref, refErr := schedule.ParseLegacyScopeRef(storeScope)
+		if refErr != nil || ref.Kind != "global-user" {
+			return nil, groupErr
+		}
 	}
 	if payload.Revision == nil {
 		return nil, schedule.ValidationErrorf("缺少有效的课程表 revision，请刷新后重试。")
@@ -147,7 +166,7 @@ func (s *Service) SavePageScheduleAtContext(ctx context.Context, payload SavePag
 	if len(payload.Events) > schedule.MaxEventsPerFile {
 		return nil, schedule.ValidationErrorf("单个成员最多保存 %d 节课程。", schedule.MaxEventsPerFile)
 	}
-	current, found, err := s.schedules.GetMember(key.Group().ScopeID(), key.MemberOpenID)
+	current, found, err := s.schedules.GetMember(storeScope, storeUser)
 	if err != nil {
 		return nil, err
 	}
@@ -228,18 +247,13 @@ func (s *Service) SavePageScheduleAtContext(ctx context.Context, payload SavePag
 	updated.ScheduleUpdatedAt = now
 	updated.LastModifiedAt = now
 	updated.LastModifiedBy = actor
-	if err := s.schedules.PutMember(
-		key.Group().ScopeID(),
-		key.MemberOpenID,
-		&updated,
-		&expected,
-	); err != nil {
+	if err := s.schedules.PutMember(storeScope, storeUser, &updated, &expected); err != nil {
 		return nil, err
 	}
 	return &SavePageResult{
-		ScopeID:    key.Group().ScopeID(),
-		UserID:     key.MemberOpenID,
-		Name:       firstNonEmpty(updated.Name, key.MemberOpenID),
+		ScopeID:    storeScope,
+		UserID:     storeUser,
+		Name:       firstNonEmpty(updated.Name, storeUser),
 		Revision:   expected + 1,
 		EventCount: len(events),
 	}, nil
@@ -257,4 +271,26 @@ func findOriginalEvent(events []schedule.Event, input WebEventInput) schedule.Ev
 		return events[input.ID-1]
 	}
 	return nil
+}
+
+// DeleteMemberScheduleContext removes the schedule selected by the active
+// storage mode and keeps the member profile.
+func (s *Service) DeleteMemberScheduleContext(
+	ctx context.Context,
+	scopeID, userID string,
+	expected int64,
+) (bool, error) {
+	if expected < 1 {
+		return false, schedule.ValidationErrorf("缺少有效的课程表 revision")
+	}
+	deleted, err := s.domain.DeleteMemberScheduleContext(
+		ctx, scopeID, userID, "", schedule.Revision(expected),
+	)
+	if err != nil {
+		return false, err
+	}
+	if !deleted {
+		return false, schedule.NotFoundErrorf("找不到指定成员的课程表")
+	}
+	return true, nil
 }

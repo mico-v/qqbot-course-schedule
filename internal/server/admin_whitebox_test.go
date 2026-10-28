@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"testing"
@@ -349,6 +350,45 @@ func TestAdminAPIFlow(t *testing.T) {
 	recorder = adminRequest(router, http.MethodGet, "/api/schedule?scope_id="+scope+"&user_id=U2", nil, true)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("created member schedule = %d", recorder.Code)
+	}
+}
+
+func TestDeleteMemberScheduleAPI(t *testing.T) {
+	router, service := newAdminRouter(t, adminPassword)
+	scope := schedule.ScopeGroup("GDELETE")
+	seedScope(t, service, scope)
+
+	recorder := adminRequest(
+		router,
+		http.MethodGet,
+		"/api/schedule?scope_id="+url.QueryEscape(scope)+"&user_id=U1",
+		nil,
+		true,
+	)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("get schedule = %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var page admin.PageSchedule
+	if err := json.Unmarshal(recorder.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	recorder = adminRequest(router, http.MethodPost, "/api/schedule/delete", map[string]any{
+		"scope_id": scope,
+		"user_id":  "U1",
+		"revision": page.Revision,
+	}, true)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("delete schedule = %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	recorder = adminRequest(
+		router,
+		http.MethodGet,
+		"/api/schedule?scope_id="+url.QueryEscape(scope)+"&user_id=U1",
+		nil,
+		true,
+	)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("deleted schedule get = %d, want 404", recorder.Code)
 	}
 }
 

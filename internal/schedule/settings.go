@@ -13,6 +13,12 @@ const (
 	SendFormatMarkdown = "markdown"
 )
 
+// Storage modes control whether schedules may be resolved across groups.
+const (
+	StorageModeGroup  = "group"
+	StorageModeGlobal = "global"
+)
+
 // Settings holds the bot-wide runtime switches edited from the WebUI.
 type Settings struct {
 	// Enabled is the master switch: when false the bot ignores every message.
@@ -33,6 +39,8 @@ type Settings struct {
 	BaseURL string `json:"base_url"`
 	// ScheduleLinkTTLMinutes controls how long /修改课程表 links stay valid.
 	ScheduleLinkTTLMinutes int `json:"schedule_link_ttl_minutes"`
+	// StorageMode keeps schedules isolated per group or enables global lookup.
+	StorageMode string `json:"storage_mode"`
 	// AdminOpenIDs restricts chat administrator commands to these OpenIDs.
 	// Empty keeps the platform group owner/administrator fallback.
 	AdminOpenIDs []string `json:"admin_open_ids"`
@@ -55,6 +63,7 @@ func DefaultSettings() Settings {
 		Enabled: true, ReplyPlain: true, ReplySlash: true, ReplyMention: true,
 		SendFormat:             SendFormatImage,
 		ScheduleLinkTTLMinutes: DefaultScheduleLinkTTLMinutes,
+		StorageMode:            StorageModeGroup,
 		AdminOpenIDs:           []string{},
 	}
 }
@@ -79,6 +88,7 @@ func (s *Service) BotSettingsContext(ctx context.Context) (Settings, error) {
 	settings.SendFormat = NormalizeSendFormat(settings.SendFormat)
 	settings.Nickname = NormalizeNickname(settings.Nickname)
 	settings.BaseURL = normalizeStoredBaseURL(settings.BaseURL)
+	settings.StorageMode = NormalizeStorageMode(settings.StorageMode)
 	settings.AdminOpenIDs = NormalizeAdminOpenIDs(settings.AdminOpenIDs)
 	if ttl, err := NormalizeScheduleLinkTTLMinutes(settings.ScheduleLinkTTLMinutes); err == nil {
 		settings.ScheduleLinkTTLMinutes = ttl
@@ -97,6 +107,7 @@ func (s *Service) SaveBotSettings(settings Settings) error {
 func (s *Service) SaveBotSettingsContext(ctx context.Context, settings Settings) error {
 	settings.SendFormat = NormalizeSendFormat(settings.SendFormat)
 	settings.Nickname = NormalizeNickname(settings.Nickname)
+	settings.StorageMode = NormalizeStorageMode(settings.StorageMode)
 	settings.AdminOpenIDs = NormalizeAdminOpenIDs(settings.AdminOpenIDs)
 	baseURL, err := NormalizeBaseURL(settings.BaseURL)
 	if err != nil {
@@ -109,6 +120,14 @@ func (s *Service) SaveBotSettingsContext(ctx context.Context, settings Settings)
 	settings.BaseURL = baseURL
 	settings.ScheduleLinkTTLMinutes = ttl
 	return s.settings.SaveBotSettings(ctx, settings)
+}
+
+// NormalizeStorageMode maps unknown values to isolated group storage.
+func NormalizeStorageMode(value string) string {
+	if value == StorageModeGlobal {
+		return StorageModeGlobal
+	}
+	return StorageModeGroup
 }
 
 // AllowsAdmin reports whether a sender may execute chat administrator

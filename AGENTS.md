@@ -3,7 +3,8 @@
 ## Scope
 
 - Product scope is QQ group chat only.
-- Do not add private-chat, global schedule, cross-group union merge, active push, or AI tools.
+- Do not add private-chat, active push, or AI tools.
+- Global schedule lookup is allowed only through the explicit `storage_mode=global` setting.
 - Completed architecture changes are described in [ARCHITECTURE.md](ARCHITECTURE.md), not as tasks.
 
 ## Project Structure
@@ -27,8 +28,8 @@
 - `member_openid` is a platform identifier, not a nickname, QQ number, or human-chosen name.
 - Two groups may return the same `member_openid`; they remain separate members and schedules.
 - `display_name`, `qq`, and optional `union_openid` are member attributes, never identity keys.
-- `union_openid` must never merge schedules across groups.
-- New code accepts group coordinates only. Scope strings belong to HTTP and migration boundaries.
+- `union_openid` may be used only by the explicit global resolver; it never replaces the group-member primary key.
+- New code accepts group coordinates only. Global lookup happens in the schedule application port, not through synthetic identity keys.
 
 ## Architecture Rules
 

@@ -84,8 +84,19 @@ func (s *Service) ScopeSummaries() ([]ScopeSummary, error) {
 		}
 	}
 	result := make([]ScopeSummary, 0, len(known))
+	settings, err := s.domain.BotSettings()
+	if err != nil {
+		return nil, err
+	}
 	for scopeID := range known {
 		members := summaries[scopeID].Members
+		if settings.StorageMode == schedule.StorageModeGlobal {
+			visible, visibleErr := s.domain.VisibleMembers(scopeID)
+			if visibleErr != nil {
+				return nil, visibleErr
+			}
+			members = memberSummaries(visible)
+		}
 		result = append(result, ScopeSummary{ScopeID: scopeID, Members: members})
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ScopeID < result[j].ScopeID })
@@ -123,7 +134,7 @@ func memberSummaries(members map[string]*schedule.Member) []ScopeMemberSummary {
 func (s *Service) CreateMemberSchedules(scopeID string, inputs []NewMember, actor string) ([]NewMember, error) {
 	scopeID = strings.TrimSpace(scopeID)
 	kind, _ := schedule.ParseScope(scopeID)
-	if kind != "group" && kind != "private" {
+	if kind != "group" {
 		return nil, schedule.ValidationErrorf("无效的 scope_id。")
 	}
 	if len(inputs) == 0 {

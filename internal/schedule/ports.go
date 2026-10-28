@@ -25,6 +25,25 @@ type GroupScheduleRepository interface {
 	) (Revision, error)
 }
 
+// GlobalScheduleRepository provides explicit cross-group lookup and schedule
+// deletion for global mode. It never changes the group-member identity key.
+type GlobalScheduleRepository interface {
+	FindGlobalSchedule(
+		ctx context.Context,
+		memberOpenID string,
+		unionOpenID string,
+		exclude *GroupMemberKey,
+	) (*Member, StorageTarget, bool, error)
+	DeleteMemberSchedules(
+		ctx context.Context,
+		target StorageTarget,
+		expected Revision,
+		currentKey GroupMemberKey,
+		unionOpenID string,
+		global bool,
+	) (int, error)
+}
+
 // DayOverrideRepository owns group-wide and member-specific day markers.
 type DayOverrideRepository interface {
 	ListGroupDayOverrides(ctx context.Context, group GroupKey) ([]DayOverrideRow, error)

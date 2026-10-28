@@ -22,7 +22,8 @@ func TestBotSettingsDefaultsWhenUnset(t *testing.T) {
 		settings.SendFormat != schedule.DefaultSettings().SendFormat ||
 		settings.Nickname != schedule.DefaultSettings().Nickname ||
 		settings.BaseURL != schedule.DefaultSettings().BaseURL ||
-		settings.ScheduleLinkTTLMinutes != schedule.DefaultSettings().ScheduleLinkTTLMinutes {
+		settings.ScheduleLinkTTLMinutes != schedule.DefaultSettings().ScheduleLinkTTLMinutes ||
+		settings.StorageMode != schedule.StorageModeGroup {
 		t.Fatalf("settings = %+v, want defaults %+v", settings, schedule.DefaultSettings())
 	}
 	if !settings.Enabled || !settings.ReplyPlain || !settings.ReplySlash || !settings.ReplyMention {
@@ -36,6 +37,7 @@ func TestBotSettingsRoundTrip(t *testing.T) {
 		Enabled: false, ReplyPlain: true, ReplySlash: false, ReplyMention: true,
 		SendFormat: schedule.SendFormatMarkdown,
 		BaseURL:    "https://kb.example.com", ScheduleLinkTTLMinutes: 90,
+		StorageMode:  schedule.StorageModeGlobal,
 		AdminOpenIDs: []string{"ADMIN-LOCAL", "ADMIN-UNION"},
 	}
 	if err := service.SaveBotSettings(want); err != nil {
@@ -49,7 +51,8 @@ func TestBotSettingsRoundTrip(t *testing.T) {
 		got.Enabled != want.Enabled || got.ReplyPlain != want.ReplyPlain ||
 		got.ReplySlash != want.ReplySlash || got.ReplyMention != want.ReplyMention ||
 		got.SendFormat != want.SendFormat || got.Nickname != want.Nickname ||
-		got.BaseURL != want.BaseURL || got.ScheduleLinkTTLMinutes != want.ScheduleLinkTTLMinutes {
+		got.BaseURL != want.BaseURL || got.ScheduleLinkTTLMinutes != want.ScheduleLinkTTLMinutes ||
+		got.StorageMode != want.StorageMode {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}
 }
@@ -119,6 +122,15 @@ func TestNicknameNormalization(t *testing.T) {
 	long := strings.Repeat("字", schedule.MaxBotNicknameLength+5)
 	if got := schedule.NormalizeNickname(long); len([]rune(got)) != schedule.MaxBotNicknameLength {
 		t.Fatalf("NormalizeNickname length = %d, want %d", len([]rune(got)), schedule.MaxBotNicknameLength)
+	}
+}
+
+func TestStorageModeNormalization(t *testing.T) {
+	if got := schedule.NormalizeStorageMode("global"); got != schedule.StorageModeGlobal {
+		t.Fatalf("global mode = %q", got)
+	}
+	if got := schedule.NormalizeStorageMode("unknown"); got != schedule.StorageModeGroup {
+		t.Fatalf("unknown mode = %q", got)
 	}
 }
 

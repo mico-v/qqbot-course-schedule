@@ -25,6 +25,17 @@ export function saveSchedule(payload: unknown): Promise<SavePageResult> {
   });
 }
 
+export function deleteSchedule(payload: {
+  scope_id: string;
+  user_id: string;
+  revision: number;
+}): Promise<{ ok: boolean; deleted: boolean }> {
+  return requestJSON("/api/schedule/delete", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function fetchOverrides(scopeId: string): Promise<DayOverrideRow[]> {
   const data = await requestJSON<{ overrides?: DayOverrideRow[] }>(
     withQuery("/api/overrides", { scope_id: scopeId }),

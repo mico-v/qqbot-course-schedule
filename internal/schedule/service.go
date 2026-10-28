@@ -13,6 +13,7 @@ import (
 type Service struct {
 	members   GroupMemberRepository
 	schedules GroupScheduleRepository
+	global    GlobalScheduleRepository
 	overrides DayOverrideRepository
 	settings  SettingsStore
 	editLinks EditLinkStore
@@ -22,7 +23,7 @@ type Service struct {
 // NewService wires the service to its storage.
 func NewService(store ServiceStorage) *Service {
 	return &Service{
-		members: store, schedules: store, overrides: store,
+		members: store, schedules: store, global: store, overrides: store,
 		settings: store, editLinks: store, stats: store,
 	}
 }

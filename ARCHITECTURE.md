@@ -33,7 +33,7 @@ type GroupMemberKey struct {
 - `member_openid` 是平台签发的群内标识，不是昵称、QQ 号或展示名。
 - 两个群即使返回相同字面值的 `member_openid`，也必须保存为两个成员、两份课表。
 - `display_name`、`qq`、`union_openid` 都只是 `group_members` 属性。
-- `union_openid` 可空，不参与默认身份解析，也不能用于自动合并跨群课表。
+- `union_openid` 可空。隔离模式不跨群读取；全局模式只在显式开启后用于优先匹配同一成员的跨群课表。
 - `scope_id` / `user_id` 只允许出现在 HTTP、Webhook DTO 和迁移边界；进入应用层后
   必须立即转换成 `GroupKey` / `GroupMemberKey`。
 
@@ -47,10 +47,23 @@ type GroupMemberKey struct {
 ### 2.2 不变量
 
 1. 所有新查询和新写入必须带 `group_openid`。
-2. 禁止只按 `member_openid` 查询、更新或删除成员课表。
+2. 禁止只按 `member_openid` 更新或删除成员课表。
 3. 课表、事件、编辑链接、成员标记必须验证成员属于同一群。
 4. 删除成员时，课表、事件、编辑链接和成员标记由外键级联清理。
 5. 群级标记使用 `group_day_overrides.member_openid IS NULL`，不使用 `*` 伪外键。
+6. 全局模式是可切换的读取/编辑策略，不改变 `(group_openid, member_openid)` 主键。
+
+### 2.3 隔离与全局模式
+
+- `storage_mode=group`：默认隔离模式，只读取和写入当前群课表。
+- `storage_mode=global`：群内成员没有可用课表时，允许跨群查找该成员已有课表。
+- 全局查找顺序：
+  1. 当前群已有事件课表。
+  2. `union_openid` 精确匹配的跨群课表或 v6 `global-user:<union_openid>`。
+  3. 平台未提供 union 时，按相同 `member_openid` 查找最近更新的跨群课表。
+- 空课表（0 个事件）不能遮蔽可用的全局课表。
+- 全局模式下，WebUI 编辑全局命中课表时写入其实际来源群；来源不存在时才在当前群创建。
+- 删除课表时删除当前模式下命中的实际课表记录，保留群成员资料和 seen 状态。
 
 ## 3. 运行时与依赖
 
@@ -213,11 +226,17 @@ type GroupScheduleRepository interface {
 	ListGroupSchedules(ctx context.Context, group GroupKey) (map[string]*Member, error)
 	PutGroupMemberSchedule(ctx context.Context, key GroupMemberKey, member *Member, expected Revision) (Revision, error)
 }
+
+type GlobalScheduleRepository interface {
+	FindGlobalSchedule(ctx context.Context, memberOpenID, unionOpenID string, exclude *GroupMemberKey) (*Member, StorageTarget, bool, error)
+	DeleteMemberSchedules(ctx context.Context, target StorageTarget, expected Revision, currentKey GroupMemberKey, unionOpenID string, global bool) (int, error)
+}
 ```
 
 其余端口：
 
 - `DayOverrideRepository`
+- `GlobalScheduleRepository`
 - `SettingsStore`
 - `EditLinkStore`
 - `StatsRepository`
@@ -271,6 +290,12 @@ HTTP 响应同时包含 `error` 和稳定 `code`。客户端不应解析 SQL、�
 | `schedule_edit_links` | token SHA-256 主键，复合外键到成员 |
 | `bot_panels` | `panel_scope` 主键 |
 | `message_stats` | append-only 统计，不设成员外键 |
+
+全局模式查询使用：
+
+- `group_members(union_openid)` 非唯一索引。
+- `group_member_schedules(member_openid, schedule_updated_at)` 跨群最近课表索引。
+- `group_member_schedules(import_union_openid)` 部分索引。
 
 ### 6.2 连接与事务
 
@@ -326,8 +351,16 @@ Webhook 先 ACK，再创建带超时的 context 异步处理。重复事件按�
 /api/schedule/save
   → session auth
   → validation
+  → global/isolated target resolution
   → expectedRevision CAS
   → 200 或 409
+
+/api/schedule/delete
+  → session auth
+  → target resolution
+  → revision-checked deletion
+  → remove current/global shadow rows
+  → retain member profile
 ```
 
 ### 7.3 公开编辑
@@ -361,14 +394,14 @@ ZIP、manifest、ICS 和 backup 工作流在 `internal/admin/transfer.go`。
 | 包 | 覆盖率 |
 | --- | ---: |
 | Go 总计 | 75.1% |
-| `internal/admin` | 76.1% |
-| `internal/bot` | 68.7% |
+| `internal/admin` | 75.7% |
+| `internal/bot` | 68.9% |
 | `internal/config` | 94.3% |
 | `internal/qqapi` | 70.1% |
 | `internal/render` | 79.8% |
-| `internal/schedule` | 78.2% |
-| `internal/server` | 78.1% |
-| `internal/store` | 65.7% |
+| `internal/schedule` | 78.4% |
+| `internal/server` | 77.6% |
+| `internal/store` | 66.7% |
 | `internal/timing` | 100.0% |
 | `internal/wakeup` | 91.3% |
 | `internal/webhook` | 74.6% |
@@ -432,5 +465,5 @@ Web job：
 - 不为 `qqapi.Client` 再包同形接口。
 - 不引入 ORM、第二数据库或分布式调度。
 - 不把 `web/dist` 改成运行时构建。
-- 不恢复单聊、全局课表、主动推送或跨群 union 合并。
+- 不恢复单聊、主动推送或频道能力；全局模式必须由设置显式开启。
 - 不通过文档中的“未来计划”暗示已完成能力尚未实现。

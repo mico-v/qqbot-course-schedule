@@ -40,6 +40,7 @@ func TestSettingsAPI(t *testing.T) {
 		Enabled: false, ReplyPlain: true, ReplySlash: false, ReplyMention: true,
 		SendFormat: schedule.SendFormatMarkdown, Nickname: "课表小助手",
 		BaseURL: "https://kb.example.com", ScheduleLinkTTLMinutes: 90,
+		StorageMode:  schedule.StorageModeGlobal,
 		AdminOpenIDs: []string{"ADMIN-1"},
 	}
 	if recorder := adminRequest(router, http.MethodPost, "/api/settings", want, true); recorder.Code != http.StatusOK {
@@ -54,7 +55,8 @@ func TestSettingsAPI(t *testing.T) {
 		got.Settings.ReplySlash != want.ReplySlash || got.Settings.ReplyMention != want.ReplyMention ||
 		got.Settings.SendFormat != want.SendFormat || got.Settings.Nickname != want.Nickname ||
 		got.Settings.BaseURL != want.BaseURL ||
-		got.Settings.ScheduleLinkTTLMinutes != want.ScheduleLinkTTLMinutes {
+		got.Settings.ScheduleLinkTTLMinutes != want.ScheduleLinkTTLMinutes ||
+		got.Settings.StorageMode != want.StorageMode {
 		t.Fatalf("round-trip = %+v, want %+v", got.Settings, want)
 	}
 
